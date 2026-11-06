@@ -567,6 +567,23 @@ body.autoscrolling[data-autodir=e],body.autoscrolling[data-autodir=e] *{cursor:e
 .pcs-night{background:#1a1a1a}
 .pcs-sepia{background:#efe1c0}
 .thememenu small{margin-left:auto;color:var(--ink3);font-size:11px;padding-left:12px}
+
+/* inline text box editor */
+.tbed{position:absolute;z-index:30;transform-origin:0 0;min-width:24px;padding:4px;outline:1.2px dashed #1c64d9;outline-offset:0;white-space:pre;line-height:1.3;
+  font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;cursor:text;user-select:text;-webkit-user-select:text;color:#1f2328}
+.tbed div{min-height:1em}
+.tbed:focus{outline-color:#1c64d9}
+html[data-page="night"] .tbveil,html[data-page="night"] .tbed{filter:invert(.9) hue-rotate(180deg)}
+html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
+.tbveil{position:absolute;z-index:29;background:#fff;pointer-events:none}
+.tfmt{min-width:26px;height:26px;padding:0 6px;border:1px solid var(--line);border-radius:5px;background:var(--surface);color:var(--ink);font-size:13px;cursor:pointer}
+.tfmt:hover{background:#fff3bf;color:#1f2328}
+.tfmt.on{background:#d0ebff;border-color:#1c64d9;color:#1c64d9}
+.tm-sizes,.tm-cols{display:flex;gap:4px;padding:4px 10px;flex-wrap:wrap;max-width:290px}
+.tm-sizes button{width:auto;min-width:28px;padding:3px 6px;border:1px solid var(--line);border-radius:4px;justify-content:center}
+.tm-cols button{width:22px;height:22px;padding:0;border-radius:50%;border:1px solid rgba(0,0,0,.2);justify-content:center;font-size:11px}
+.tb-thumb{display:inline-flex;height:26px;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:#fff}
+.tb-thumb img{height:100%;width:auto;max-width:60px;object-fit:contain}
 </style>
 </head>
 <body>
@@ -602,7 +619,8 @@ body.autoscrolling[data-autodir=e],body.autoscrolling[data-autodir=e] *{cursor:e
   </div><div class="cap">工具</div></div>
   <div class="grp"><div class="btns">
     <button class="rb" data-tool="note" data-need title="便利貼註解"><i data-i="note"></i>便利貼</button>
-    <button class="rb" data-tool="textbox" data-need title="文字方塊"><i data-i="text"></i>文字方塊</button>
+    <button class="rb" data-tool="textbox" data-need title="文字方塊：點一下（左鍵或右鍵）直接在十字處輸入；反白文字即可修改字級、顏色與底色"><i data-i="text"></i>文字方塊</button>
+    <button class="rb" data-act="insertImage" data-need title="插入圖片：選擇圖片後點一下放置或拖曳決定大小；也可以直接把圖片檔拖到頁面上"><i data-i="insImg"></i>插入圖片</button>
     <button class="rb split" data-menu="markText" data-need title="文字標記：點按使用目前工具，點 ▾ 選擇其他（高亮、刪除線、底線、區域螢光筆）"><span class="sp-main"><i data-i="hlText"></i><span class="sp-lab">高亮</span></span><span class="sp-arr" title="選擇其他文字標記工具">▾</span></button>
     <button class="rb split" data-menu="drawMenu" data-need title="繪圖：點按使用目前工具，點 ▾ 選擇其他（箭頭、線條、矩形、橢圓形、多邊形、雲狀）"><span class="sp-main"><i data-i="arrow"></i><span class="sp-lab">箭頭</span></span><span class="sp-arr" title="選擇其他繪圖工具">▾</span></button>
     <button class="rb" data-tool="pen" data-need title="畫筆：自由手繪"><i data-i="pen2"></i>畫筆</button>
@@ -788,6 +806,7 @@ const ICONS = {
   image:'M3 3h4M3 3v4M21 3h-4M21 3v4M3 21h4M3 21v-4M21 21h-4M21 21v-4M7 16l3.5-4 2.5 3 2-2 2 3zM15 8.5h.01',
   note:'M4 4h16v12H9l-5 4zM8 8.5h8M8 12h5',
   text:'M5 6V4.5h14V6M12 4.5v15M9 19.5h6',
+  insImg:'M13 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7M3 16l4.5-5 3.5 4 2.5-2.5L19 18M18 2.5v6M15 5.5h6M8.5 8.5h.01',
   hl:'m9 11-6 6v3h9l3-3M22 12l-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4',
   pen:'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z',
   shield:'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4',
@@ -916,7 +935,7 @@ function docField(d, k){ return d === activeDoc() ? S[k] : d[k]; }
 
 function switchTab(i){
   if (i === active || !docs[i]) return;
-  if (PEN.strokes.length || PEN.busy || NP) { (async () => { await closeNote(true); await flushPen(); switchTab(i); })(); return; }
+  if (PEN.strokes.length || PEN.busy || NP || TBE) { (async () => { await closeNote(true); await flushPen(); await commitTextEditor(); switchTab(i); })(); return; }
   stashActive(); hideCtx(); hideTip(); pop.style.display = 'none';
   active = i; applyDoc(docs[i]);
   mountDoc({scroll:'restore', scrollTop:docs[i].scrollTop, scrollLeft:docs[i].scrollLeft});
@@ -1423,7 +1442,8 @@ const HINTS = {
   rect:'拖曳畫出矩形（按住 Shift 為正方形）。', ellipse:'拖曳畫出橢圓形（按住 Shift 為正圓）。', cloud:'拖曳畫出雲狀框。',
   polyline:'逐一點選各點，雙擊或按 Enter 完成；Backspace 刪除上一點，Esc 取消。', polygon:'逐一點選各點，點回第一點、雙擊或按 Enter 完成；Esc 取消。',
   pen:'按住拖曳即可手繪，停筆約 1 秒後自動儲存。', eraser:'在畫筆筆跡上拖曳即可擦除經過的部分。', stamp:'在頁面上點一下放置戳記，或拖曳決定大小。',
-  textbox:'在頁面上拖曳出文字方塊的範圍（或點一下使用預設大小）。',
+  textbox:'在頁面上點一下（左鍵或右鍵）即可在十字處輸入文字；反白文字可修改字級、顏色、底色；點現有文字方塊可再編輯。',
+  image:'在頁面上點一下放置圖片，或拖曳決定寬度；放好後可直接拖曳移動、拉把手調整大小。',
   highlight:'在頁面上拖曳要標示的範圍。',
   signature:'在頁面上點一下要放置簽名的位置。',
   digisign:'在頁面上拖曳出簽章外觀要顯示的位置（或點一下使用預設大小）。',
@@ -1433,13 +1453,27 @@ function setTool(t){
   if (!S.pdf) return;
   if (t !== 'extract') cancelXSel();
   if (t !== 'select') deselectAnnot();
-  if (t !== S.tool) { cancelPoly(); if (S.tool === 'pen') flushPen(); }
+  if (t !== S.tool) { cancelPoly(); if (S.tool === 'pen') flushPen(); if (S.tool === 'textbox') commitTextEditor(); }
+  if (t === 'image' && !PENDING_IMG) { chooseImage(); return; }
   S.tool = t; updateUI();
+  $$('[data-act="insertImage"]').forEach(b => b.classList.toggle('on', t === 'image'));
   $$('[data-menu]').forEach(b => b.classList.toggle('on', (TOOL_MENUS[b.dataset.menu] || []).includes(t)));
   rememberTool(t);
   const h = $('#hint');
   h.classList.toggle('styl', !!DRAW_TOOLS[t]);
   if (!HINTS[t]) { h.classList.remove('show'); h.innerHTML = ''; return; }
+  if (t === 'textbox') {
+    h.classList.add('styl');
+    h.innerHTML = `<b class="sb-t" title="${esc(HINTS[t])}">${icon('text')}文字方塊</b><span class="sb-q" title="${esc(HINTS[t])}">?</span><span class="sb-row">${textBarHTML()}</span><span class="sp"></span><button data-h="done">完成 (Esc)</button>`;
+    h.classList.add('show');
+    if (S.lastHintTool !== t) { S.lastHintTool = t; toast(HINTS[t]); }
+    return;
+  }
+  if (t === 'image') {
+    h.classList.add('styl');
+    h.innerHTML = `<b class="sb-t">${icon('insImg')}插入圖片</b><span class="tb-thumb"><img src="${PENDING_IMG.url}" alt=""></span><span class="sb-tip">${esc(PENDING_IMG.name || '')}　${HINTS[t]}</span><span class="sp"></span><button data-h="pickimg">換一張…</button><button data-h="done">完成 (Esc)</button>`;
+    h.classList.add('show'); return;
+  }
   if (DRAW_TOOLS[t]) {
     const sw = toolSwitcher(t);
     h.innerHTML = `${sw || `<b class="sb-t" title="${esc(HINTS[t])}">${icon(DRAW_TOOLS[t].ic)}${DRAW_TOOLS[t].label}</b>`}<span class="sb-q" title="${esc(HINTS[t])}">?</span><span class="sb-row">${styleBar(t)}</span><span class="sp"></span><button data-h="done">完成 (Esc)</button>`;
@@ -1464,6 +1498,7 @@ $('#hint').addEventListener('click', e => {
   if (b.dataset.c) { S.hlColor = b.dataset.c; setTool('highlight'); }
   if (b.dataset.h === 'done') setTool('select');
   if (b.dataset.h === 'resign') openSigPad();
+  if (b.dataset.h === 'pickimg') chooseImage();
 });
 
 /* ====================================================================
@@ -1989,6 +2024,7 @@ function startExtractDraw(i, e){
 pagesEl.addEventListener('contextmenu', e => {
   const pel = e.target.closest('.page'); if (!pel) return;
   e.preventDefault(); const i = +pel.dataset.i;
+  if (S.tool === 'textbox') { textboxAt(i, e); return; }   // right-click inserts a text box at the crosshair
   if (!S.thumbSel.has(i)) { S.thumbSel = new Set([i]); S.current = i; updatePager(); }
   showPageMenu(e, i);
 });
@@ -2003,7 +2039,8 @@ pagesEl.addEventListener('pointerdown', e => {
   if (t === 'note') { if (NP) return; const p = snapPoint(i, pagePoint(i, e), {mark:false}); newNoteAt(i, p.x, p.y); return; }
   if (t === 'signature') { const p = snapPoint(i, pagePoint(i, e), {mark:false}); placeSignature(i, p.x, p.y); return; }
   if (t === 'extract') { e.preventDefault(); startExtractDraw(i, e); return; }
-  if (t === 'textbox' || t === 'highlight' || t === 'digisign') {
+  if (t === 'textbox') { e.preventDefault(); if (performance.now() - tbCommittedAt > 250) textboxAt(i, e); return; }
+  if (t === 'image' || t === 'highlight' || t === 'digisign') {
     e.preventDefault();
     const p0 = snapPoint(i, pagePoint(i, e));
     const d = document.createElement('div'); d.className = 'draft' + (t === 'highlight' ? ' hl' : '');
@@ -2022,8 +2059,8 @@ pagesEl.addEventListener('pointerdown', e => {
       d.remove(); clearSnapMarks();
       const pg = S.pages[i], tiny = box.w < 5 || box.h < 5;
       if (t === 'highlight') { if (!tiny) addHighlight(i, box); return; }
+      if (t === 'image') { if (PENDING_IMG) insertImage(i, box.w < 8 ? {cx:p0.x, cy:p0.y} : box, PENDING_IMG); return; }
       if (tiny) { const dw = t === 'digisign' ? 190 : 200, dh = t === 'digisign' ? 64 : 60; box = {x:clamp(p0.x, 0, pg.w - dw), y:clamp(p0.y, 0, pg.h - dh), w:dw, h:dh}; }
-      if (t === 'textbox') addTextBox(i, box);
       if (t === 'digisign') openDigiSign(i, box);
     };
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
@@ -2991,7 +3028,7 @@ async function pasteClip(at){
   }, {scrollToCurrent:true, highlight:{from:at, count:clip.count, label:'貼上的頁面'}});
 }
 const ctx = $('#ctx');
-function hideCtx(){ ctx.style.display = 'none'; }
+function hideCtx(){ ctx.style.display = 'none'; ctx.onpointerdown = null; }
 document.addEventListener('pointerdown', e => { if (!ctx.contains(e.target)) hideCtx(); }, true);
 let ctxShownAt = 0;
 viewer.addEventListener('scroll', () => { if (performance.now() - ctxShownAt > 600) hideCtx(); });   // ignore the scroll a right-click itself causes
@@ -3031,6 +3068,7 @@ function showPageMenu(e, i){
 }
 
 const actions = {
+  insertImage(){ chooseImage(); },
   async open(){
     if (DESK) { const list = await DESK.openDialog(); for (const p of (Array.isArray(list) ? list : list ? [list] : [])) await openPath(p); return; }
     if (canPick()) {
@@ -3049,7 +3087,7 @@ const actions = {
   sample: () => makeSample(),
   async save(){
     if (!S.pdf) return;
-    await closeNote(true); await flushPen();
+    await closeNote(true); await flushPen(); await commitTextEditor();
     if (S.handle) { primeWrite(); await writeBack(S.bytes); return; }
     const fn = /\.pdf$/i.test(S.name) ? S.name : S.name + '.pdf';
     if (await saveFile(fn, new Blob([S.bytes], {type:'application/pdf'}))) { S.dirty = false; updateUI(); }
@@ -3138,57 +3176,6 @@ function wrapText(ctx, text, maxW){
   });
   return lines;
 }
-async function textToPng(text, wPt, {size, color, bold, bg}){
-  try { await document.fonts.load(`${bold ? 700 : 400} ${size}px "Noto Sans TC"`, text); } catch (_) {}
-  const K = 4, pad = 4;
-  const m = document.createElement('canvas').getContext('2d');
-  m.font = `${bold ? 700 : 400} ${size * K}px ${FONT}`;
-  const lines = wrapText(m, text, (wPt - pad * 2) * K);
-  const lh = size * 1.4;
-  const hPt = Math.max(size * 1.4 + pad * 2, lines.length * lh + pad * 2);
-  const c = document.createElement('canvas'); c.width = Math.ceil(wPt * K); c.height = Math.ceil(hPt * K);
-  const ctx = c.getContext('2d');
-  if (bg) { ctx.fillStyle = bg; ctx.fillRect(0, 0, c.width, c.height); ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = K * 0.75; ctx.strokeRect(K * 0.4, K * 0.4, c.width - K * 0.8, c.height - K * 0.8); }
-  ctx.font = m.font; ctx.fillStyle = color; ctx.textBaseline = 'middle';
-  lines.forEach((ln, k) => ctx.fillText(ln, pad * K, (pad + lh * k + lh / 2) * K));
-  const blob = await new Promise(r => c.toBlob(r, 'image/png'));
-  return {png:new Uint8Array(await blob.arrayBuffer()), hPt};
-}
-async function addTextBox(i, box){
-  const f = document.createElement('div');
-  f.innerHTML = `<div class="field"><label>文字內容</label><textarea id="tbTxt" style="width:420px" placeholder="輸入文字…"></textarea></div>
-  <div class="frow"><div class="field"><label>字級 (pt)</label><select id="tbSize">${[8,9,10,11,12,14,16,18,20,24,28,32,40].map(s => `<option${s === 12 ? ' selected' : ''}>${s}</option>`).join('')}</select></div>
-  <div class="field"><label>顏色</label><select id="tbColor"><option value="#1f2328">黑色</option><option value="#c8371d">紅色</option><option value="#1c64d9">藍色</option><option value="#1f7a4d">綠色</option></select></div>
-  <div class="field"><label>背景</label><select id="tbBg"><option value="">透明</option><option value="#ffffff">白色</option><option value="#fff7c2">淡黃</option></select></div></div>
-  <label class="chk" style="padding:0"><input type="checkbox" id="tbBold"> 粗體</label>`;
-  const ok = await openModal({title:'新增文字方塊', body:f, buttons:[{label:'取消', value:false}, {label:'新增', primary:true, handler:() => $('#tbTxt').value.trim() ? {
-      text:$('#tbTxt').value, size:+$('#tbSize').value, color:$('#tbColor').value, bg:$('#tbBg').value, bold:$('#tbBold').checked} : undefined}],
-    onOpen:() => setTimeout(() => $('#tbTxt').focus(), 30)});
-  if (!ok) return;
-  const {png, hPt} = await textToPng(ok.text, box.w, ok);
-  const pg = S.pages[i];
-  const b = {x:box.x, y:box.y, w:box.w, h:Math.min(Math.max(box.h, hPt), pg.h - box.y)};
-  const {png:png2} = b.h !== hPt ? await textToPngFixed(ok, b) : {png};
-  await mutate('已新增文字方塊', async doc => {
-    const g = visToPdf(i, b);
-    const ap = await imageAP(doc, png2, b.w, b.h, g.rot);
-    const c = hexColor(ok.color);
-    addAnnot(doc, i, {Type:'Annot', Subtype:'FreeText', Rect:g.rect, Contents:PDFHexString.fromText(ok.text), T:PDFHexString.fromText(AUTHOR),
-      M:nowStr(), F:4, DA:PDFString.of(`/Helv ${ok.size} Tf ${c.map(v => v.toFixed(3)).join(' ')} rg`), AP:{N:ap}});
-  });
-}
-async function textToPngFixed(opt, b){
-  // re-render at the final box height so the image is not stretched
-  try { await document.fonts.load(`${opt.bold ? 700 : 400} ${opt.size}px "Noto Sans TC"`, opt.text); } catch (_) {}
-  const K = 4, pad = 4, lh = opt.size * 1.4;
-  const c = document.createElement('canvas'); c.width = Math.ceil(b.w * K); c.height = Math.ceil(b.h * K);
-  const ctx = c.getContext('2d');
-  if (opt.bg) { ctx.fillStyle = opt.bg; ctx.fillRect(0, 0, c.width, c.height); ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = K * 0.75; ctx.strokeRect(K * 0.4, K * 0.4, c.width - K * 0.8, c.height - K * 0.8); }
-  ctx.font = `${opt.bold ? 700 : 400} ${opt.size * K}px ${FONT}`; ctx.fillStyle = opt.color; ctx.textBaseline = 'middle';
-  wrapText(ctx, opt.text, (b.w - pad * 2) * K).forEach((ln, k) => ctx.fillText(ln, pad * K, (pad + lh * k + lh / 2) * K));
-  const blob = await new Promise(r => c.toBlob(r, 'image/png'));
-  return {png:new Uint8Array(await blob.arrayBuffer())};
-}
 async function addHighlight(i, box){
   await mutate('已加上螢光筆標示', doc => {
     const g = visToPdf(i, box), [x1, y1, x2, y2] = g.rect, c = hexColor(S.hlColor);
@@ -3205,6 +3192,345 @@ async function deleteAnnot(i, id){
     removeAnnotRefs(doc, i, ref);
   });
 }
+
+/* ====================================================================
+   Inline rich-text boxes (文字方塊) and image insertion (插入圖片)
+   ==================================================================== */
+const TB_DEF = {size:14, color:'#1f2328', bg:'', bold:false, italic:false, underline:false, boxBg:'', border:false};
+const TB_STYLE = (() => { try { return {...TB_DEF, ...(JSON.parse(localStorage.getItem('pdfeditor.textbox.v1')) || {})}; } catch (_) { return {...TB_DEF}; } })();
+const saveTB = () => { try { localStorage.setItem('pdfeditor.textbox.v1', JSON.stringify(TB_STYLE)); } catch (_) {} };
+const TB_PAD = 4;
+let TBE = null;   // {i, id, x, y, el, veil, range}
+
+// the editor is laid out in PDF points (1 CSS px = 1 pt) and scaled with the page zoom
+function placeTBE(){
+  if (!TBE) return;
+  const pg = S.pages[TBE.i];
+  TBE.el.style.left = TBE.x / pg.w * 100 + '%'; TBE.el.style.top = TBE.y / pg.h * 100 + '%';
+  TBE.el.style.transform = `scale(${S.scale})`;
+  TBE.el.style.maxWidth = Math.max(60, pg.w - TBE.x - 4) + 'px';
+}
+function runsToHTML(lines){
+  return lines.map(line => `<div>${line.length ? line.map(r => {
+    const st = [`font-size:${r.size}px`, `color:${r.color}`, r.bg ? `background-color:${r.bg}` : '', r.bold ? 'font-weight:700' : '', r.italic ? 'font-style:italic' : '', r.underline ? 'text-decoration:underline' : ''].filter(Boolean).join(';');
+    return `<span style="${st}">${esc(r.text)}</span>`;
+  }).join('') : '<br>'}</div>`).join('');
+}
+function htmlToRuns(root){
+  // walk the editable DOM: block elements and <br> end a line; every text node becomes a styled run
+  const lines = [[]];
+  const styleOf = node => {
+    const el = node.parentElement, cs = getComputedStyle(el);
+    let bg = '', underline = false;
+    for (let e = el; e && e !== root.parentElement; e = e.parentElement) {
+      const c = getComputedStyle(e);
+      if (!bg && c.backgroundColor && !/rgba\(0, 0, 0, 0\)|transparent/.test(c.backgroundColor) && e !== root) bg = c.backgroundColor;
+      if (/underline/.test(c.textDecorationLine)) underline = true;
+      if (e === root) break;
+    }
+    const rgb2hex = v => { const m = v.match(/\d+(\.\d+)?/g); return m ? '#' + m.slice(0, 3).map(n => pad2((+n).toString(16))).join('') : v; };
+    return {size:Math.round(parseFloat(cs.fontSize) * 10) / 10, color:rgb2hex(cs.color), bg:bg ? rgb2hex(bg) : '', bold:+cs.fontWeight >= 600, italic:cs.fontStyle === 'italic', underline};
+  };
+  const walk = n => {
+    if (n.nodeType === 3) { const txt = n.nodeValue.replace(/[\u00a0]/g, ' ').replace(/\u200b/g, ''); if (txt) { const st = styleOf(n), parts = txt.split('\n'); parts.forEach((p, k) => { if (k) lines.push([]); if (p) lines[lines.length - 1].push({text:p, ...st}); }); } return; }
+    if (n.nodeName === 'BR') { lines.push([]); return; }
+    const block = /^(DIV|P|LI)$/.test(n.nodeName) && n !== root;
+    if (block && lines[lines.length - 1].length) lines.push([]);
+    n.childNodes.forEach(walk);
+    if (block && lines[lines.length - 1].length) lines.push([]);
+  };
+  walk(root);
+  while (lines.length > 1 && !lines[lines.length - 1].length) lines.pop();
+  // merge neighbouring runs with identical style
+  return lines.map(l => l.reduce((acc, r) => { const p = acc[acc.length - 1]; if (p && ['size', 'color', 'bg', 'bold', 'italic', 'underline'].every(k => p[k] === r[k])) p.text += r.text; else acc.push({...r}); return acc; }, []));
+}
+const runFont = (r, K) => `${r.italic ? 'italic ' : ''}${r.bold ? 700 : 400} ${r.size * K}px ${FONT}`;
+function layoutRuns(lines, ctx){
+  const out = []; let y = TB_PAD, w = 0;
+  lines.forEach(line => {
+    const fs = line.length ? Math.max(...line.map(r => r.size)) : TB_STYLE.size, lh = fs * 1.3;
+    let x = TB_PAD; const items = [];
+    line.forEach(r => { ctx.font = runFont(r, 1); const rw = ctx.measureText(r.text).width; items.push({r, x, w:rw}); x += rw; });
+    out.push({y, lh, fs, items}); y += lh; w = Math.max(w, x + TB_PAD);
+  });
+  return {rows:out, w:Math.max(20, w), h:Math.max(14, y + TB_PAD)};
+}
+async function renderTextBox(lines, box){
+  try { await document.fonts.load(`400 16px "Noto Sans TC"`, lines.flat().map(r => r.text).join('').slice(0, 200) || '字'); } catch (_) {}
+  const m = document.createElement('canvas').getContext('2d'), L = layoutRuns(lines, m), K = 4;
+  const c = document.createElement('canvas'); c.width = Math.ceil(L.w * K); c.height = Math.ceil(L.h * K);
+  const g = c.getContext('2d'); g.scale(K, K);
+  if (box.boxBg) { g.fillStyle = box.boxBg; g.fillRect(0, 0, L.w, L.h); }
+  if (box.border) { g.strokeStyle = 'rgba(0,0,0,.55)'; g.lineWidth = .8; g.strokeRect(.4, .4, L.w - .8, L.h - .8); }
+  g.textBaseline = 'alphabetic';
+  L.rows.forEach(row => row.items.forEach(({r, x, w}) => {
+    const base = row.y + row.lh / 2 + r.size * .36;
+    if (r.bg) { g.fillStyle = r.bg; g.fillRect(x, row.y + (row.lh - r.size * 1.25) / 2, w, r.size * 1.25); }
+    g.font = runFont(r, 1); g.fillStyle = r.color; g.fillText(r.text, x, base);
+    if (r.underline) { g.fillRect(x, base + r.size * .12, w, Math.max(.6, r.size * .06)); }
+  }));
+  const png = new Uint8Array(await (await blobOf(c, 'image/png')).arrayBuffer());
+  return {png, w:L.w, h:L.h};
+}
+function richTextXHTML(lines){
+  const sp = r => `<span style="font-size:${r.size}pt;color:${r.color}${r.bold ? ';font-weight:bold' : ''}${r.italic ? ';font-style:italic' : ''}${r.underline ? ';text-decoration:underline' : ''}${r.bg ? ';background-color:' + r.bg : ''}">${esc(r.text)}</span>`;
+  return `<?xml version="1.0"?><body xmlns="http://www.w3.org/1999/xhtml" xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/" xfa:APIVersion="Acrobat:11.0.0" xfa:spec="2.0.2">${lines.map(l => `<p>${l.map(sp).join('') || ' '}</p>`).join('')}</body>`;
+}
+function openTextEditor(i, x, y, {id = null, lines = null, box = null, veilBox = null} = {}){
+  commitTextEditor();
+  const pg = S.pages[i], el = document.createElement('div');
+  el.className = 'tbed'; el.contentEditable = 'true'; el.spellcheck = false;
+  const bx = box || {boxBg:TB_STYLE.boxBg, border:TB_STYLE.border};
+  el.dataset.boxbg = bx.boxBg || ''; el.dataset.border = bx.border ? '1' : '';
+  el.style.background = bx.boxBg || 'transparent'; el.style.outlineStyle = 'dashed';
+  if (bx.border) el.style.boxShadow = '0 0 0 .8px rgba(0,0,0,.55) inset';
+  const d = TB_STYLE;
+  el.style.fontSize = d.size + 'px'; el.style.color = d.color; el.style.fontWeight = d.bold ? 700 : 400; el.style.fontStyle = d.italic ? 'italic' : 'normal';
+  el.style.textDecoration = d.underline ? 'underline' : 'none';
+  el.innerHTML = lines ? runsToHTML(lines) : '<div><br></div>';
+  S.els[i].appendChild(el); S.els[i].style.zIndex = 6;
+  let veil = null;
+  if (veilBox) {   // hide the old appearance while it is being edited
+    veil = document.createElement('div'); veil.className = 'tbveil';
+    Object.assign(veil.style, {left:veilBox.x / pg.w * 100 + '%', top:veilBox.y / pg.h * 100 + '%', width:veilBox.w / pg.w * 100 + '%', height:veilBox.h / pg.h * 100 + '%'});
+    S.els[i].appendChild(veil);
+  }
+  TBE = {i, id, x, y, el, veil, range:null, orig:lines ? JSON.stringify(lines) : null};
+  placeTBE();
+  try { document.execCommand('styleWithCSS', false, true); } catch (_) {}
+  el.focus();
+  const r = document.createRange(); r.selectNodeContents(el); r.collapse(false); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  if (d.bg && !lines) document.execCommand('hiliteColor', false, d.bg);
+  el.addEventListener('pointerdown', e => e.stopPropagation());
+  el.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (ctx.style.display === 'block' || $('#cpMenu').style.display === 'block') { hideCtx(); $('#cpMenu').style.display = 'none'; } else commitTextEditor(); }
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); commitTextEditor(); }
+    e.stopPropagation();
+  });
+  el.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); saveTBRange(); showTextMenu(e); });
+  el.addEventListener('paste', e => {   // paste as plain text so foreign styles do not leak in
+    e.preventDefault(); const t = (e.clipboardData || window.clipboardData).getData('text/plain'); document.execCommand('insertText', false, t);
+  });
+  syncTBBar();
+}
+function saveTBRange(){
+  if (!TBE) return;
+  const sel = getSelection();
+  if (sel.rangeCount && TBE.el.contains(sel.anchorNode)) TBE.range = sel.getRangeAt(0).cloneRange();
+}
+document.addEventListener('selectionchange', () => { if (TBE && document.activeElement === TBE.el) { saveTBRange(); syncTBBar(); } });
+function restoreTBRange(){
+  if (!TBE) return false;
+  TBE.el.focus();
+  if (TBE.range) { const sel = getSelection(); sel.removeAllRanges(); sel.addRange(TBE.range); }
+  return true;
+}
+// apply a format: to the highlighted text while editing, and as the default for new text boxes
+function applyTextFormat(k, v){
+  // with text highlighted only that text changes; with nothing highlighted it also becomes the default for new text
+  const hasSel = TBE && TBE.range && !TBE.range.collapsed;
+  if (k in TB_STYLE && !['boxBg', 'border'].includes(k) && !hasSel) { TB_STYLE[k] = v; saveTB(); }
+  if (k === 'boxBg' || k === 'border') { TB_STYLE[k] = v; saveTB(); if (TBE) { TBE.el.dataset.boxbg = k === 'boxBg' ? v : TBE.el.dataset.boxbg; if (k === 'border') TBE.el.dataset.border = v ? '1' : '';
+    TBE.el.style.background = TBE.el.dataset.boxbg || 'transparent'; TBE.el.style.boxShadow = TBE.el.dataset.border ? '0 0 0 .8px rgba(0,0,0,.55) inset' : ''; } syncTBBar(); return; }
+  if (!TBE) { syncTBBar(); return; }
+  restoreTBRange();
+  const sel = getSelection(), collapsed = !sel.rangeCount || sel.getRangeAt(0).collapsed;
+  if (collapsed && TBE.el.textContent.length === 0) {   // empty box: style the whole box
+    const st = TBE.el.style;
+    if (k === 'size') st.fontSize = v + 'px'; if (k === 'color') st.color = v; if (k === 'bold') st.fontWeight = v ? 700 : 400;
+    if (k === 'italic') st.fontStyle = v ? 'italic' : 'normal'; if (k === 'underline') st.textDecoration = v ? 'underline' : 'none';
+    if (k === 'bg' && v) document.execCommand('hiliteColor', false, v);
+  } else if (k === 'size' && collapsed) {   // caret only: start a run with the new size at the caret
+    const sp = document.createElement('span'); sp.style.fontSize = v + 'px'; sp.textContent = '\u200b';
+    const r = sel.getRangeAt(0); r.insertNode(sp); const r2 = document.createRange(); r2.setStart(sp.firstChild, 1); r2.collapse(true); sel.removeAllRanges(); sel.addRange(r2);
+  } else if (k === 'size') {
+    document.execCommand('fontSize', false, '7');
+    TBE.el.querySelectorAll('font[size="7"]').forEach(f => { const s = document.createElement('span'); s.style.fontSize = v + 'px'; s.innerHTML = f.innerHTML; f.replaceWith(s); });
+    TBE.el.querySelectorAll('span').forEach(s => { if (/xxx-large|-webkit-xxx-large/.test(s.style.fontSize)) s.style.fontSize = v + 'px'; });
+  } else if (k === 'color') document.execCommand('foreColor', false, v);
+  else if (k === 'bg') document.execCommand('hiliteColor', false, v || 'transparent');
+  else if (k === 'bold') document.execCommand('bold');
+  else if (k === 'italic') document.execCommand('italic');
+  else if (k === 'underline') document.execCommand('underline');
+  saveTBRange(); syncTBBar();
+}
+function currentTBStyle(){
+  if (!TBE || !TBE.range) return TB_STYLE;
+  let n = TBE.range.startContainer; if (n.nodeType === 3) n = n.parentElement;
+  if (!TBE.el.contains(n)) return TB_STYLE;
+  const cs = getComputedStyle(n);
+  const rgb2hex = v => { const m = v.match(/\d+(\.\d+)?/g); return m ? '#' + m.slice(0, 3).map(x => pad2((+x).toString(16))).join('') : v; };
+  return {...TB_STYLE, size:Math.round(parseFloat(cs.fontSize)), color:rgb2hex(cs.color), bold:+cs.fontWeight >= 600, italic:cs.fontStyle === 'italic', underline:/underline/.test(cs.textDecorationLine),
+    boxBg:TBE.el.dataset.boxbg || '', border:!!TBE.el.dataset.border};
+}
+const TB_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 60, 72];
+function textBarHTML(){
+  const st = currentTBStyle();
+  return `<label class="sb-l">字級<select data-tb="size">${TB_SIZES.map(v => `<option value="${v}"${+st.size === v ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
+    <span class="sb-h">顏色</span><button class="cpick" data-tbc="color" style="--c:${st.color}"><i></i>▾</button>
+    <span class="sb-h">文字底色</span><button class="cpick none" data-tbc="bg" data-none="1" style="--c:transparent"><i></i>▾</button>
+    <button class="tfmt${st.bold ? ' on' : ''}" data-tb="bold" title="粗體 (Ctrl+B)"><b>B</b></button><button class="tfmt${st.italic ? ' on' : ''}" data-tb="italic" title="斜體 (Ctrl+I)"><i>I</i></button><button class="tfmt${st.underline ? ' on' : ''}" data-tb="underline" title="底線 (Ctrl+U)"><u>U</u></button>
+    <span class="sb-h">方塊背景</span><button class="cpick${st.boxBg ? '' : ' none'}" data-tbc="boxBg" data-none="1" style="--c:${st.boxBg || 'transparent'}"><i></i>▾</button>
+    <label class="sb-l"><input type="checkbox" data-tb="border"${st.border ? ' checked' : ''}>框線</label>
+    <span class="sb-tip">${TBE ? '反白文字即可個別修改字級、顏色與底色；Esc 或點空白處完成' : '在頁面上點一下（左鍵或右鍵）即可在十字處輸入文字'}</span>`;
+}
+function syncTBBar(){
+  if (S.tool !== 'textbox') return;
+  const row = $('#hint .sb-row'); if (row) row.innerHTML = textBarHTML();
+}
+$('#hint').addEventListener('pointerdown', e => { if (S.tool === 'textbox' && TBE && e.target.closest('button')) e.preventDefault(); });   // keep the text selection
+$('#hint').addEventListener('click', e => {
+  if (S.tool !== 'textbox') return;
+  const b = e.target.closest('[data-tb]'); if (b && b.tagName === 'BUTTON') { const k = b.dataset.tb; applyTextFormat(k, !currentTBStyle()[k]); return; }
+  const c = e.target.closest('[data-tbc]'); if (c) showTextColorMenu(c, c.dataset.tbc);
+});
+$('#hint').addEventListener('change', e => {
+  if (S.tool !== 'textbox') return;
+  const el = e.target; if (!el.dataset.tb) return;
+  applyTextFormat(el.dataset.tb, el.type === 'checkbox' ? el.checked : +el.value);
+});
+function showTextColorMenu(btn, key, at){
+  const m = $('#cpMenu');
+  m.innerHTML = `<div class="cp-grid">${btn && btn.dataset.none || key !== 'color' ? `<button class="cp-sw none" data-v="" title="無">∅</button>` : ''}${SWATCHES.concat(['#c92a2a', '#e8590c', '#5c940d', '#0b7285', '#364fc7', '#862e9c', '#868e96', '#fff3bf', '#d3f9d8', '#d0ebff']).map(c => `<button class="cp-sw" data-v="${c}" style="background:${c}"></button>`).join('')}</div>
+    <label class="cp-custom">自訂 <input type="color" value="#ff0000"></label>`;
+  const r = at || btn.getBoundingClientRect(); m.style.display = 'block';
+  m.style.left = Math.min(r.left, innerWidth - m.offsetWidth - 8) + 'px'; m.style.top = Math.min((r.bottom || r.top) + 4, innerHeight - m.offsetHeight - 8) + 'px';
+  m.onpointerdown = e => { if (e.target.closest('[data-v]')) e.preventDefault(); };
+  m.onclick = e => { const b = e.target.closest('[data-v]'); if (!b) return; m.style.display = 'none'; applyTextFormat(key, b.dataset.v); };
+  m.querySelector('input').onchange = e => { m.style.display = 'none'; applyTextFormat(key, e.target.value); };
+}
+function showTextMenu(e){
+  ctx.innerHTML = `<div class="hd">文字格式（套用到反白的文字）</div>
+    <div class="tm-sizes">${[10, 12, 14, 18, 24, 32, 48].map(v => `<button data-sz="${v}">${v}</button>`).join('')}</div>
+    <div class="tm-cols">${['#1f2328', '#e03131', '#1c64d9', '#2b8a3e', '#f76707', '#7048e8'].map(c => `<button data-col="${c}" style="background:${c}" title="文字顏色"></button>`).join('')}</div>
+    <div class="tm-cols">${['#ffd43b', '#b2f2bb', '#a5d8ff', '#fcc2d7', ''].map(c => `<button data-hl="${c}" style="background:${c || '#fff'}" title="${c ? '文字底色' : '清除底色'}">${c ? '' : '∅'}</button>`).join('')}</div>
+    <hr><button data-f="bold"><b>B</b>　粗體</button><button data-f="italic"><i>I</i>　斜體</button><button data-f="underline"><u>U</u>　底線</button>
+    <hr><button data-f="done">完成編輯</button>`;
+  ctx.style.display = 'block'; ctxShownAt = performance.now();
+  ctx.style.left = Math.min(e.clientX, innerWidth - ctx.offsetWidth - 8) + 'px'; ctx.style.top = Math.min(e.clientY, innerHeight - ctx.offsetHeight - 8) + 'px';
+  ctx.onpointerdown = ev => ev.preventDefault();
+  ctx.onclick = ev => {
+    const b = ev.target.closest('button'); if (!b) return;
+    if (b.dataset.sz) applyTextFormat('size', +b.dataset.sz);
+    else if (b.dataset.col) applyTextFormat('color', b.dataset.col);
+    else if (b.dataset.hl != null) applyTextFormat('bg', b.dataset.hl);
+    else if (b.dataset.f === 'done') { hideCtx(); commitTextEditor(); return; }
+    else if (b.dataset.f) applyTextFormat(b.dataset.f, !currentTBStyle()[b.dataset.f]);
+    hideCtx();
+  };
+}
+let tbSaving = Promise.resolve();
+function commitTextEditor(){
+  if (!TBE) return tbSaving;
+  const {i, id, x, y, el, veil, orig} = TBE;
+  const lines = htmlToRuns(el), box = {boxBg:el.dataset.boxbg || '', border:!!el.dataset.border};
+  el.remove(); veil && veil.remove(); if (S.els[i]) S.els[i].style.zIndex = '';
+  TBE = null; syncTBBar();
+  const empty = !lines.some(l => l.some(r => r.text.trim()));
+  if (empty) { if (id) tbSaving = deleteAnnot(i, id); return tbSaving; }
+  const data = JSON.stringify({lines, box});
+  if (id && orig && orig === JSON.stringify(lines) && !TBE) { /* unchanged text; box style may still differ */ }
+  tbSaving = (async () => {
+    const r = await renderTextBox(lines, box);
+    const plain = lines.map(l => l.map(x => x.text).join('')).join('\n');
+    const b = {x, y, w:r.w, h:r.h};
+    await mutate(id ? '已更新文字方塊' : '已新增文字方塊', async doc => {
+      const g = visToPdf(i, b), ap = await imageAP(doc, r.png, b.w, b.h, g.rot);
+      const f = lines[0] && lines[0][0] || TB_STYLE, col = hexColor(f.color || '#000000');
+      const fields = {Rect:g.rect, Contents:PDFHexString.fromText(plain), RC:PDFHexString.fromText(richTextXHTML(lines)),
+        DA:PDFString.of(`/Helv ${f.size || 12} Tf ${col.map(v => v.toFixed(3)).join(' ')} rg`), M:nowStr(), PDFE:true, PDFE_RT:PDFHexString.fromText(data), AP:{N:ap}};
+      if (id) {
+        const ref = findAnnotRef(doc, i, id); if (!ref) return false;
+        const dict = doc.context.lookup(ref, PDFDict);
+        Object.entries(fields).forEach(([k, v]) => dict.set(PDFName.of(k), doc.context.obj(v)));
+      } else addAnnot(doc, i, {Type:'Annot', Subtype:'FreeText', T:PDFHexString.fromText(AUTHOR), CreationDate:nowStr(), Subj:PDFHexString.fromText('文字方塊'), F:4, ...fields});
+    });
+  })();
+  return tbSaving;
+}
+async function editTextBox(i, a){
+  await tbSaving;
+  let rt = null;
+  try {
+    const doc = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false});
+    const ref = findAnnotRef(doc, i, a.id), dict = ref && doc.context.lookup(ref, PDFDict);
+    const v = dict && dict.lookupMaybe(PDFName.of('PDFE_RT'), PDFHexString, PDFString);
+    if (v) rt = JSON.parse(v.decodeText());
+  } catch (_) {}
+  const lines = rt ? rt.lines : (a.contents || '').split('\n').map(t => t ? [{text:t, ...TB_DEF, color:'#1f2328', size:12}] : []);
+  openTextEditor(i, a.x, a.y, {id:a.id, lines, box:rt ? rt.box : {boxBg:'', border:false}, veilBox:a});
+}
+let tbCommittedAt = 0;
+document.addEventListener('pointerdown', e => { if (TBE && !TBE.el.contains(e.target) && !e.target.closest('#hint,#cpMenu,#ctx')) { if (e.button === 0) tbCommittedAt = performance.now(); commitTextEditor(); } }, true);
+async function textboxAt(i, e){
+  const p = snapPoint(i, pagePoint(i, e), {mark:false});
+  await tbSaving;
+  if (!S.pages[i]) return;
+  const hit = (await getAnns(i)).filter(a => a.subtype === 'FreeText' && p.x >= a.x && p.x <= a.x + a.w && p.y >= a.y && p.y <= a.y + a.h).pop();
+  if (hit) { editTextBox(i, hit); return; }
+  const pg = S.pages[i], lh = TB_STYLE.size * 1.3;
+  openTextEditor(i, clamp(p.x - TB_PAD, 0, pg.w - 20), clamp(p.y - lh / 2 - TB_PAD, 0, pg.h - lh));
+}
+
+/* ---------------- 插入圖片 ---------------- */
+let PENDING_IMG = null;   // {png|jpg bytes, kind, w, h, name, url}
+async function loadImageFile(file){
+  const url = URL.createObjectURL(file);
+  const img = new Image(); img.src = url;
+  try { await img.decode(); } catch (_) { URL.revokeObjectURL(url); throw new Error('無法讀取這張圖片'); }
+  let w = img.naturalWidth || 300, h = img.naturalHeight || 200;
+  const isJpg = /jpe?g$/i.test(file.type) || /\.jpe?g$/i.test(file.name);
+  let bytes, kind;
+  if (isJpg && Math.max(w, h) <= 6000) { bytes = new Uint8Array(await file.arrayBuffer()); kind = 'jpg'; }   // keep the original JPEG data
+  else {
+    const k = Math.min(1, 4000 / Math.max(w, h)), c = document.createElement('canvas');
+    c.width = Math.round(w * k); c.height = Math.round(h * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    bytes = new Uint8Array(await (await blobOf(c, 'image/png')).arrayBuffer()); kind = 'png';
+  }
+  return {bytes, kind, w, h, name:file.name, url};
+}
+async function chooseImage(){
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/png,image/jpeg,image/webp,image/gif,image/bmp,image/svg+xml,.png,.jpg,.jpeg,.webp,.gif,.bmp,.svg';
+  inp.onchange = async () => {
+    const f = inp.files[0]; if (!f) return;
+    try { PENDING_IMG = await loadImageFile(f); setTool('image'); toast('在頁面上點一下放置圖片，或拖曳決定大小'); }
+    catch (e) { toast(e.message || '無法讀取圖片', 'err'); }
+  };
+  inp.click();
+}
+function defaultImgSize(pg, img){
+  let w = img.w * .75, h = img.h * .75;   // 96 dpi pixels → points
+  const k = Math.min(1, pg.w * .6 / w, pg.h * .6 / h); return {w:w * k, h:h * k};
+}
+async function insertImage(i, box, img){
+  const pg = S.pages[i];
+  let {w, h} = box.w > 8 ? {w:box.w, h:box.w * img.h / img.w} : defaultImgSize(pg, img);
+  const b = {x:clamp(box.cx != null ? box.cx - w / 2 : box.x, 0, Math.max(0, pg.w - w)), y:clamp(box.cy != null ? box.cy - h / 2 : box.y, 0, Math.max(0, pg.h - h)), w, h};
+  let newId = null;
+  const ok = await mutate('已插入圖片', async doc => {
+    const g = visToPdf(i, b);
+    const emb = img.kind === 'jpg' ? await doc.embedJpg(img.bytes) : await doc.embedPng(img.bytes);
+    const ap = formAP(doc, `q ${b.w.toFixed(3)} 0 0 ${b.h.toFixed(3)} 0 0 cm /Im0 Do Q`, b.w, b.h, g.rot, {XObject:{Im0:emb.ref}});
+    const ref = addAnnot(doc, i, {Type:'Annot', Subtype:'Stamp', Rect:g.rect, Name:'Image', Contents:PDFHexString.fromText(img.name || '圖片'),
+      T:PDFHexString.fromText(AUTHOR), M:nowStr(), CreationDate:nowStr(), Subj:PDFHexString.fromText('圖片'), F:4, PDFE:true, AP:{N:ap}});
+    newId = ref.objectNumber + 'R';
+  });
+  if (ok) {   // select it right away so it can be dragged
+    setTool('select');
+    const a = (await getAnns(i)).find(x => parseInt(x.id, 10) === parseInt(newId, 10));
+    if (a && S.els[i]) selectAnnot(i, a);
+  }
+}
+// drop image files straight onto a page
+viewer.addEventListener('drop', async e => {
+  const files = [...(e.dataTransfer && e.dataTransfer.files || [])].filter(f => /^image\//.test(f.type) || /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(f.name));
+  if (!files.length || !S.pdf) return;
+  const pel = e.target.closest && e.target.closest('.page'); if (!pel) return;
+  e.preventDefault(); e.stopPropagation();
+  const i = +pel.dataset.i, p = pagePointXY(i, e.clientX, e.clientY);
+  for (const f of files) { try { await insertImage(i, {cx:p.x, cy:p.y}, await loadImageFile(f)); } catch (err) { toast(err.message, 'err'); } }
+}, true);
 
 /* ====================================================================
    Annotation tools: sticky notes (Acrobat-style popup), text markup,
@@ -3991,19 +4317,20 @@ function snapshot(i, box){
 function selectAnnot(i, a){
   deselectAnnot();
   const pg = S.pages[i], ovl = S.els[i].querySelector('.ovl');
-  const movable = !NO_MOVE.has(a.subtype), resizable = movable && a.subtype !== 'Text';
+  const movable = !NO_MOVE.has(a.subtype), resizable = movable && a.subtype !== 'Text' && a.subtype !== 'FreeText';
   const el = document.createElement('div'); el.className = 'asel' + (movable ? '' : ' fixed');
   if (resizable) el.innerHTML = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].map(d => `<div class="h" data-d="${d}"></div>`).join('');
   const bar = document.createElement('div'); bar.className = 'xbar abar';
   const snip = a.contents && a.subtype !== 'Stamp' ? `：${esc(a.contents.slice(0, 24))}${a.contents.length > 24 ? '…' : ''}` : '';
-  bar.innerHTML = `<span class="dim">${esc(a.label)}${snip}</span>${movable ? `<span class="dim hintk">拖曳移動${resizable ? '・把手調整大小' : ''}</span>` : ''}<button data-x="del">🗑 刪除 (Del)</button>`;
+  bar.innerHTML = `<span class="dim">${esc(a.label)}${snip}</span>${movable ? `<span class="dim hintk">拖曳移動${resizable ? '・把手調整大小' : ''}</span>` : ''}${a.subtype === 'FreeText' ? '<button data-x="edit">✎ 編輯文字</button>' : ''}<button data-x="del">🗑 刪除 (Del)</button>`;
+  if (a.subtype === 'FreeText') el.addEventListener('dblclick', e => { e.stopPropagation(); const k = AS.i; deselectAnnot(); editTextBox(k, a); });
   ovl.appendChild(el); ovl.appendChild(bar); S.els[i].style.zIndex = 4;
   AS = {i, a, box:{x:a.x, y:a.y, w:a.w, h:a.h}, el, bar, movable, resizable, keep:a.subtype === 'Stamp'};
   const hp = {nw:[0, 0], n:[50, 0], ne:[100, 0], e:[100, 50], se:[100, 100], s:[50, 100], sw:[0, 100], w:[0, 50]};
   el.querySelectorAll('.h').forEach(h => { const [x, y] = hp[h.dataset.d]; h.style.left = x + '%'; h.style.top = y + '%'; });
   el.addEventListener('pointerdown', e => { if (e.button !== 0 || S.spaceDown) return; e.preventDefault(); e.stopPropagation(); if (AS && AS.movable) dragAnnot(e, e.target.dataset.d || 'move'); });
   bar.addEventListener('pointerdown', e => e.stopPropagation());
-  bar.addEventListener('click', e => { if (e.target.closest('[data-x="del"]')) deleteSelected(); });
+  bar.addEventListener('click', e => { if (e.target.closest('[data-x="del"]')) deleteSelected(); if (e.target.closest('[data-x="edit"]')) { deselectAnnot(); editTextBox(i, a); } });
   drawASel();
 }
 function drawASel(){
@@ -5041,7 +5368,7 @@ function showThemeMenu(){
 document.addEventListener('pointerdown', e => { const m = $('#themeMenu'); if (m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('#bTheme')) m.style.display = 'none'; }, true);
 if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyTheme();
 paintSplitButtons();
-window.__pdfapp = {S, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box}};
+window.__pdfapp = {S, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box}};
 </script>
 </body>
 </html>
