@@ -95,7 +95,36 @@ ipcMain.handle('file:open-dialog', async () => {
   });
   return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
 });
+/* folders the renderer may export into: ones the user picked, or where an opened PDF lives */
+const allowedDirs = new Set();
+const allowDir = d => { if (d) allowedDirs.add(path.resolve(d)); };
+// folders the user explicitly picked are remembered across launches
+const pickedFile = () => path.join(app.getPath('userData'), 'export-dirs.json');
+let picked = [];
+async function loadPicked() {
+  try { picked = JSON.parse(await fs.readFile(pickedFile(), 'utf8')).filter(x => typeof x === 'string'); } catch (_) { picked = []; }
+  picked.forEach(allowDir);
+}
+async function rememberPicked(d) {
+  picked = [path.resolve(d), ...picked.filter(x => x !== path.resolve(d))].slice(0, 20);
+  allowDir(d);
+  await fs.writeFile(pickedFile(), JSON.stringify(picked)).catch(() => {});
+}
+const isAllowed = d => {
+  const r = path.resolve(d);
+  for (const a of allowedDirs) if (r === a || r.startsWith(a + path.sep)) return true;
+  return false;
+};
+const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+function safeName(n) {
+  let s = String(n || '').replace(/[\x00-\x1f\\/:*?"<>|]/g, '_').replace(/[. ]+$/, '').trim();
+  if (!s || s === '.' || s === '..') s = 'page';
+  if (RESERVED.test(s)) s = '_' + s;
+  return s.slice(0, 200);
+}
+
 ipcMain.handle('file:read', async (_e, p) => {
+  allowDir(path.dirname(p));
   const data = await fs.readFile(p);
   return { name: path.basename(p), path: p, data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength) };
 });
@@ -115,8 +144,53 @@ ipcMain.handle('file:save-as', async (_e, suggested, data) => {
   });
   if (r.canceled || !r.filePath) return null;
   await fs.writeFile(r.filePath, toBuf(data));
+  allowDir(path.dirname(r.filePath));
   return r.filePath;
 });
+ipcMain.handle('export:default-dir', (_e, pdfPath, last) => {
+  if (last && picked.includes(path.resolve(last))) return path.resolve(last);
+  if (pdfPath && isAllowed(path.dirname(pdfPath))) return path.dirname(pdfPath);
+  const pics = app.getPath('pictures'); allowDir(pics); return pics;
+});
+ipcMain.handle('export:choose-dir', async (_e, current) => {
+  const r = await dialog.showOpenDialog(win, {
+    title: '選擇圖片輸出位置', defaultPath: current || app.getPath('pictures'),
+    properties: ['openDirectory', 'createDirectory', 'promptToCreate'],
+  });
+  if (r.canceled || !r.filePaths.length) return null;
+  await rememberPicked(r.filePaths[0]);
+  return r.filePaths[0];
+});
+// resolve final names inside root/sub according to the conflict policy, without writing
+ipcMain.handle('export:plan', async (_e, root, sub, names, policy) => {
+  if (!isAllowed(root)) throw new Error('不允許寫入這個資料夾');
+  const dir = sub ? path.join(root, safeName(sub)) : root;
+  const taken = new Set();
+  const out = [];
+  for (const raw of names) {
+    const ext = path.extname(raw), base = safeName(raw.slice(0, raw.length - ext.length)) ;
+    let name = base + ext, k = 1, exists = false;
+    const existsOnDisk = async nm => fs.access(path.join(dir, nm)).then(() => true, () => false);
+    if (policy === 'rename') {
+      while (taken.has(name.toLowerCase()) || await existsOnDisk(name)) name = `${base} (${++k})${ext}`;
+    } else {
+      exists = await existsOnDisk(name);
+    }
+    taken.add(name.toLowerCase());
+    out.push({ name, exists, skip: policy === 'skip' && exists });
+  }
+  return { dir, files: out };
+});
+ipcMain.handle('export:write', async (_e, root, sub, name, data) => {
+  if (!isAllowed(root)) throw new Error('不允許寫入這個資料夾');
+  const dir = sub ? path.join(root, safeName(sub)) : root;
+  await fs.mkdir(dir, { recursive: true });
+  const full = path.join(dir, safeName(path.basename(name, path.extname(name))) + path.extname(name));
+  if (path.dirname(full) !== dir) throw new Error('檔名無效');
+  await fs.writeFile(full, toBuf(data));
+  return full;
+});
+ipcMain.handle('export:open-folder', (_e, dir) => { if (isAllowed(dir)) shell.openPath(dir); });
 ipcMain.handle('app:info', () => ({ version: app.getVersion(), dev: isDev, platform: process.platform }));
 ipcMain.handle('app:open-external', (_e, url) => { if (/^https:\/\//i.test(url)) shell.openExternal(url); });
 
@@ -163,7 +237,8 @@ ipcMain.handle('update:install', () => {
 });
 
 /* ---------------- app lifecycle ---------------- */
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await loadPicked();
   const root = __dirname;
   protocol.handle('app', req => {
     const { host, pathname } = new URL(req.url);

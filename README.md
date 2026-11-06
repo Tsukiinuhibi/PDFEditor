@@ -9,6 +9,7 @@ Windows 桌面版 PDF 閱讀與編輯工具，會自動檢查並安裝新版本�
 - 插入 PDF：從其他 PDF 勾選頁面，插入到指定位置
 - 頁面左轉 / 右轉
 - 自動偵測頁面中的圖片，上下左右裁切後輸出 PNG / JPG，或全部打包成 ZIP
+- 轉存圖片：將選擇的頁面另存成 PNG / JPG / WebP / BMP / TIFF / GIF，可設定解析度、輸出位置與檔名（檔案名稱、頁碼、日期、自動編號）
 - 附加檔案到 PDF 內
 - 註解：便利貼、文字方塊、螢光筆
 - 手寫簽名、數位簽章（.p12 / .pfx 憑證，或測試用自簽憑證）
@@ -55,4 +56,4 @@ npm run dist       # 產生安裝檔到 dist/
 ## 授權
 
 MIT。使用 [PDF.js](https://github.com/mozilla/pdf.js)（Apache-2.0）、[pdf-lib](https://github.com/Hopding/pdf-lib)（MIT）、
-[node-forge](https://github.com/digitalbazaar/forge)（BSD-3 / GPL-2）、[Electron](https://www.electronjs.org/)（MIT）。
+[node-forge](https://github.com/digitalbazaar/forge)（BSD-3 / GPL-2）、[gifenc](https://github.com/mattdesl/gifenc)（MIT）、[Electron](https://www.electronjs.org/)（MIT）。

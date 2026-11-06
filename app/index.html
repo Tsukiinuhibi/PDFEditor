@@ -142,6 +142,43 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 @keyframes npb{0%,75%{opacity:1}100%{opacity:0}}
 @keyframes np{0%,70%{outline-color:var(--seal)}100%{outline-color:transparent}}
 .thumb.newpage .tc{outline:3px solid var(--seal);outline-offset:2px}
+.ex-grid{display:grid;grid-template-columns:minmax(300px,1fr) minmax(380px,1.15fr);gap:20px}
+.ex-h{font-weight:700;font-size:13px;margin-bottom:8px;color:var(--ink)}
+.ex-pages{max-height:min(62vh,640px);--tw:104px}
+.ex-fmts{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.ex-fmt{border:1.5px solid var(--line2);background:#fff;border-radius:8px;padding:7px 9px;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:2px}
+.ex-fmt b{font-size:13px}
+.ex-fmt small{font-size:11px;color:var(--ink3);line-height:1.35}
+.ex-fmt:hover{border-color:var(--ink3)}
+.ex-fmt.on{border-color:var(--seal);background:#fffaf8}
+.ex-fmt.on b{color:var(--seal-ink)}
+.ex-dir{display:flex;gap:8px;align-items:center;background:#f6f4ef;border-radius:7px;padding:7px 9px}
+.ex-dir span{flex:1;font-size:12px;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+.ex-in{font:inherit;border:1px solid var(--line2);border-radius:7px;padding:6px 9px;font-size:13px;background:#fff;width:100%}
+.ex-in:disabled{background:#f3f1ec;color:var(--ink3)}
+.ex-tokens{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-top:6px}
+.ex-tokens select{font:inherit;border:1px solid var(--line2);border-radius:6px;padding:2px 6px;font-size:12px}
+.ex-names{max-height:190px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:6px;padding:4px}
+.ex-row{display:flex;align-items:center;gap:8px;padding:3px 4px;border-radius:5px}
+.ex-row .pg{font-size:12px;color:var(--ink3);width:56px;flex:none;font-variant-numeric:tabular-nums}
+.ex-row input{flex:1;font:inherit;font-size:12.5px;border:1px solid transparent;border-radius:5px;padding:3px 6px;background:transparent;min-width:0}
+.ex-row input:hover{border-color:var(--line2)}
+.ex-row input:focus{border-color:var(--seal);background:#fff;outline:none}
+.ex-row.custom input{background:#fffaf0}
+.ex-row .ext{font-size:12px;color:var(--ink3)}
+.ex-mode{display:flex;gap:14px;align-items:center;margin-bottom:8px}
+.mac-list{display:flex;gap:6px;flex-wrap:wrap}
+.mac{display:flex;align-items:center;gap:4px;border:1.5px solid var(--line2);border-radius:8px;padding:5px 6px 5px 9px;background:#fff;font-size:13px}
+.mac.on{border-color:var(--seal);background:#fffaf8;color:var(--seal-ink)}
+.mac label{display:flex;align-items:center;gap:5px;cursor:pointer}
+.mac .mv{display:flex;gap:1px}
+.mac .mv button{border:0;background:#f1eee8;border-radius:4px;width:20px;height:20px;cursor:pointer;font-size:14px;line-height:1;color:var(--ink2)}
+.mac .mv button:hover:not(:disabled){background:var(--seal-soft);color:var(--seal-ink)}
+.mac .mv button:disabled{opacity:.3;cursor:default}
+.ex-opts{display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.ex-opt{display:inline-flex;align-items:center;gap:6px;font-size:12.5px}
+.ex-opt select,.ex-opt input{font:inherit;border:1px solid var(--line2);border-radius:6px;padding:3px 6px;font-size:12.5px;background:#fff}
+.ex-warn{font-size:12px;color:#a15c00;min-height:18px;margin-top:6px}
 .ap-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px}
 .ap-row .field{margin:0}
 .ap-row select,.ap-row input{font:inherit;border:1px solid var(--line2);border-radius:7px;padding:6px 9px;background:#fff;font-size:13px}
@@ -274,6 +311,7 @@ input[type=file]{display:none}
   <div class="grp"><div class="btns">
     <button class="rb" data-act="open" title="開啟 (Ctrl+O)"><i data-i="open"></i>開啟</button>
     <button class="rb primary" data-act="save" data-need title="儲存 (Ctrl+S)"><i data-i="save"></i>儲存</button>
+    <button class="rb" data-act="exportImages" data-need title="將頁面轉存成 PNG、JPG、WebP、BMP、TIFF、GIF 圖片"><i data-i="toImage"></i>轉存圖片</button>
   </div><div class="cap">檔案</div></div>
   <div class="grp"><div class="btns">
     <button class="rb" data-act="undo" id="bUndo" title="復原 (Ctrl+Z)"><i data-i="undo"></i>復原</button>
@@ -393,6 +431,8 @@ input[type=file]{display:none}
 import * as pdfjs from '../node_modules/pdfjs-dist/build/pdf.min.mjs';
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../node_modules/pdfjs-dist/build/pdf.worker.min.mjs', location.href).href;
 window.pdfjsLib = pdfjs;
+import { GIFEncoder, quantize, applyPalette } from '../node_modules/gifenc/dist/gifenc.esm.js';
+window.gifenc = { GIFEncoder, quantize, applyPalette };
 </script>
 <script type="module">
 "use strict";
@@ -424,6 +464,7 @@ const ICONS = {
   redo:'m15 14 5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13',
   pageAdd:'M6 3h8l4 4v14H6zM14 3v4h4M12 11v6M9 14h6',
   pageDel:'M6 3h8l4 4v14H6zM14 3v4h4M9 14h6',
+  toImage:'M4 4h10l4 4v5M14 4v4h4M4 4v16h7M14 15h7v6h-7zM15.5 19l2-2 1.5 1.5 1-1 1 1.5M12 18h-1',
   pageIns:'M9 3h7l4 4v10H9zM16 3v4h4M5 7v14h10M14.5 9.5v5M12 12h5',
   rotL:'M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5',
   rotR:'M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8M21 3v5h-5',
@@ -496,7 +537,7 @@ function openModal({title, body, buttons, width, onOpen}){
   });
 }
 function closeModal(v){ $('#mask').classList.remove('show'); const r = modalResolve; modalResolve = null; r && r(v); }
-$('#mask').addEventListener('pointerdown', e => { if (e.target.id === 'mask') closeModal(undefined); });
+$('#mask').addEventListener('pointerdown', e => { if (e.target.id === 'mask' && !S.exporting) closeModal(undefined); });
 function confirmDlg(title, msg, okLabel = '確定'){ return openModal({title, body:`<div style="max-width:380px">${esc(msg)}</div>`, buttons:[{label:'取消', value:false},{label:okLabel, value:true, primary:true}]}).then(v => !!v); }
 
 /* ---------------- downloads ---------------- */
@@ -1015,7 +1056,7 @@ new ResizeObserver(() => {
 }).observe(viewer);
 
 window.addEventListener('keydown', e => {
-  if ($('#mask').classList.contains('show')) { if (e.key === 'Escape') closeModal(undefined); return; }
+  if ($('#mask').classList.contains('show')) { if (e.key === 'Escape' && !S.exporting) closeModal(undefined); return; }
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); actions.open(); return; }
   if (!S.pdf) return;
@@ -1162,6 +1203,424 @@ function pageThumb(i, h){
   })().catch(() => ''));
   return thumbCache.get(key);
 }
+/* ====================================================================
+   Export pages as images
+   ==================================================================== */
+const IMG_FORMATS = {
+  png: {label:'PNG', ext:'png', alpha:true, quality:false, note:'無損壓縮，適合文字與線條'},
+  jpg: {label:'JPG', ext:'jpg', alpha:false, quality:true, note:'檔案小，適合照片'},
+  webp:{label:'WebP', ext:'webp', alpha:true, quality:true, note:'新式格式，檔案最小'},
+  bmp: {label:'BMP', ext:'bmp', alpha:false, quality:false, note:'未壓縮點陣圖，檔案大'},
+  tiff:{label:'TIFF', ext:'tif', alpha:true, quality:false, note:'無損（PackBits），適合印刷與存檔'},
+  gif: {label:'GIF', ext:'gif', alpha:false, quality:false, note:'最多 256 色'},
+};
+const EXP_KEY = 'pdfeditor.export.v1';
+const loadExpPrefs = () => { try { return JSON.parse(localStorage.getItem(EXP_KEY)) || {}; } catch (_) { return {}; } };
+const saveExpPrefs = p => { try { localStorage.setItem(EXP_KEY, JSON.stringify(p)); } catch (_) {} };
+const MAX_SIDE = 16384, MAX_AREA = 180e6;
+function exportSize(i, dpi){
+  const pg = S.pages[i], s = dpi / 72, w = pg.w * s, h = pg.h * s;
+  let k = 1;
+  if (w > MAX_SIDE || h > MAX_SIDE) k = Math.min(MAX_SIDE / w, MAX_SIDE / h);
+  if (w * h * k * k > MAX_AREA) k = Math.min(k, Math.sqrt(MAX_AREA / (w * h)));
+  return {scale:s * k, w:Math.max(1, Math.round(w * k)), h:Math.max(1, Math.round(h * k)), capped:k < 1};
+}
+async function renderForExport(i, dpi, {transparent, annots}){
+  const pg = S.pages[i], {scale} = exportSize(i, dpi);
+  const vp = pg.page.getViewport({scale});
+  const c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+  await pg.page.render({canvasContext:c.getContext('2d'), viewport:vp, background:transparent ? 'rgba(0,0,0,0)' : '#ffffff',
+    annotationMode:annots ? pdfjsLib.AnnotationMode.ENABLE : pdfjsLib.AnnotationMode.DISABLE}).promise;
+  return c;
+}
+const blobOf = (c, type, q) => new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('影像編碼失敗（圖片可能太大）')), type, q));
+function pngWithDpi(u8, dpi){
+  // insert a pHYs chunk right after IHDR (8-byte signature + 25-byte IHDR chunk)
+  const ppm = Math.round(dpi / 0.0254), ch = new Uint8Array(21), dv = new DataView(ch.buffer);
+  dv.setUint32(0, 9); ch.set([0x70, 0x48, 0x59, 0x73], 4); dv.setUint32(8, ppm); dv.setUint32(12, ppm); ch[16] = 1;
+  dv.setUint32(17, crc32(ch.subarray(4, 17)));
+  const out = new Uint8Array(u8.length + 21); out.set(u8.subarray(0, 33)); out.set(ch, 33); out.set(u8.subarray(33), 54);
+  return out;
+}
+function jpegWithDpi(u8, dpi){
+  // patch the JFIF APP0 density fields (units = dots per inch)
+  if (u8[2] === 0xFF && u8[3] === 0xE0 && u8[6] === 0x4A && u8[7] === 0x46 && u8[8] === 0x49 && u8[9] === 0x46 && u8[10] === 0) {
+    const d = clamp(Math.round(dpi), 1, 65535);
+    u8[13] = 1; u8[14] = d >> 8; u8[15] = d & 255; u8[16] = d >> 8; u8[17] = d & 255;
+  }
+  return u8;
+}
+function encodeBMP({width:w, height:h, data}, dpi){
+  const row = (w * 3 + 3) & ~3, size = 54 + row * h, b = new Uint8Array(size), dv = new DataView(b.buffer), ppm = Math.round(dpi / 0.0254);
+  b[0] = 0x42; b[1] = 0x4D; dv.setUint32(2, size, true); dv.setUint32(10, 54, true);
+  dv.setUint32(14, 40, true); dv.setInt32(18, w, true); dv.setInt32(22, h, true); dv.setUint16(26, 1, true); dv.setUint16(28, 24, true);
+  dv.setUint32(34, row * h, true); dv.setInt32(38, ppm, true); dv.setInt32(42, ppm, true);
+  for (let y = 0; y < h; y++) {
+    let s = (h - 1 - y) * w * 4, o = 54 + y * row;
+    for (let x = 0; x < w; x++, s += 4) { b[o++] = data[s + 2]; b[o++] = data[s + 1]; b[o++] = data[s]; }
+  }
+  return b;
+}
+function packBits(src, len, out, op){
+  let i = 0;
+  while (i < len) {
+    let run = 1; while (i + run < len && run < 128 && src[i + run] === src[i]) run++;
+    if (run >= 3) { out[op++] = (257 - run) & 0xFF; out[op++] = src[i]; i += run; continue; }
+    const s0 = i; let lit = 0;
+    while (i < len && lit < 128) {
+      if (lit > 0 && i + 2 < len && src[i] === src[i + 1] && src[i] === src[i + 2]) break;
+      i++; lit++;
+    }
+    out[op++] = lit - 1; for (let k = 0; k < lit; k++) out[op++] = src[s0 + k];
+  }
+  return op;
+}
+function encodeTIFF({width:w, height:h, data}, dpi, alpha){
+  const spp = alpha ? 4 : 3, rowLen = w * spp, row = new Uint8Array(rowLen);
+  const comp = new Uint8Array(h * (rowLen + Math.ceil(rowLen / 128) + 2)); let op = 0;
+  for (let y = 0; y < h; y++) {
+    let s = y * w * 4, o = 0;
+    for (let x = 0; x < w; x++, s += 4) { row[o++] = data[s]; row[o++] = data[s + 1]; row[o++] = data[s + 2]; if (alpha) row[o++] = data[s + 3]; }
+    op = packBits(row, rowLen, comp, op);
+  }
+  const T = [[256, 4, 1, w], [257, 4, 1, h], [258, 3, spp, 0], [259, 3, 1, 32773], [262, 3, 1, 2], [273, 4, 1, 8], [277, 3, 1, spp],
+    [278, 4, 1, h], [279, 4, 1, op], [282, 5, 1, 0], [283, 5, 1, 0], [284, 3, 1, 1], [296, 3, 1, 2]];
+  if (alpha) T.push([338, 3, 1, 2]);
+  const ifd = 8 + op + ((8 + op) % 2), ifdSize = 2 + T.length * 12 + 4;
+  const bps = ifd + ifdSize, xres = bps + spp * 2, yres = xres + 8, total = yres + 8;
+  T[2][3] = bps; T[9][3] = xres; T[10][3] = yres;
+  const b = new Uint8Array(total), dv = new DataView(b.buffer);
+  b[0] = 0x49; b[1] = 0x49; dv.setUint16(2, 42, true); dv.setUint32(4, ifd, true);
+  b.set(comp.subarray(0, op), 8);
+  dv.setUint16(ifd, T.length, true); let q = ifd + 2;
+  for (const [tag, type, count, val] of T) {
+    dv.setUint16(q, tag, true); dv.setUint16(q + 2, type, true); dv.setUint32(q + 4, count, true);
+    if (type === 3 && count === 1) dv.setUint16(q + 8, val, true); else dv.setUint32(q + 8, val, true);
+    q += 12;
+  }
+  dv.setUint32(q, 0, true);
+  for (let k = 0; k < spp; k++) dv.setUint16(bps + k * 2, 8, true);
+  const d = Math.round(dpi);
+  dv.setUint32(xres, d, true); dv.setUint32(xres + 4, 1, true); dv.setUint32(yres, d, true); dv.setUint32(yres + 4, 1, true);
+  return b;
+}
+function encodeGIF(img){
+  const {GIFEncoder, quantize, applyPalette} = window.gifenc;
+  const palette = quantize(img.data, 256), index = applyPalette(img.data, palette);
+  const g = GIFEncoder(); g.writeFrame(index, img.width, img.height, {palette}); g.finish();
+  return g.bytes();
+}
+async function encodePage(c, fmt, {dpi, quality, alpha}){
+  if (fmt === 'png') return pngWithDpi(new Uint8Array(await (await blobOf(c, 'image/png')).arrayBuffer()), dpi);
+  if (fmt === 'jpg') return jpegWithDpi(new Uint8Array(await (await blobOf(c, 'image/jpeg', quality / 100)).arrayBuffer()), dpi);
+  if (fmt === 'webp') return new Uint8Array(await (await blobOf(c, 'image/webp', quality / 100)).arrayBuffer());
+  const img = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+  if (fmt === 'bmp') return encodeBMP(img, dpi);
+  if (fmt === 'tiff') return encodeTIFF(img, dpi, alpha);
+  return encodeGIF(img);
+}
+const cleanFileName = s => String(s).replace(/[\x00-\x1f\\/:*?"<>|]/g, '_').replace(/[. ]+$/, '').trim().slice(0, 200);
+// date formats keep the YYYY/MM/DD order; "/" itself is not allowed in Windows file names
+const DATE_FMTS = {dash:'YYYY-MM-DD', dot:'YYYY.MM.DD', none:'YYYYMMDD', cjk:'YYYY年MM月DD日'};
+function fmtDate(kind){
+  const d = new Date(), y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0');
+  return kind === 'dot' ? `${y}.${m}.${dd}` : kind === 'none' ? `${y}${m}${dd}` : kind === 'cjk' ? `${y}年${m}月${dd}日` : `${y}-${m}-${dd}`;
+}
+function fillTemplate(tpl, {page, seq, total, pad, seqPad, dateFmt}){
+  const P = (n, w) => w ? String(n).padStart(w, '0') : String(n);
+  return tpl.replace(/\{(檔案名稱|檔名)\}/g, S.name.replace(/\.pdf$/i, ''))
+            .replace(/\{頁碼\}/g, P(page, pad)).replace(/\{(自動編號|序號)\}/g, P(seq, seqPad ?? pad))
+            .replace(/\{總頁數\}/g, String(total)).replace(/\{日期\}/g, fmtDate(dateFmt));
+}
+const MACROS = {name:{label:'檔案名稱', tok:'{檔案名稱}'}, page:{label:'頁碼', tok:'{頁碼}'}, date:{label:'日期', tok:'{日期}'}, seq:{label:'自動編號', tok:'{自動編號}'}};
+const PAGE_STYLES = {plain:['{頁碼}', '1'], cjk:['第{頁碼}頁', '第1頁'], p:['p{頁碼}', 'p1'], page:['page{頁碼}', 'page1']};
+const SEPS = {us:'_', dash:'-', space:' ', none:''};
+
+async function openExportImages(){
+  if (!S.pdf) return;
+  const n = S.pages.length, pr = loadExpPrefs();
+  const st = {
+    sel:new Set([S.current]), custom:new Map(),
+    fmt:IMG_FORMATS[pr.fmt] ? pr.fmt : 'png', dpi:pr.dpi || 150, quality:pr.quality || 92,
+    transparent:!!pr.transparent, annots:pr.annots !== false,
+    tpl:pr.tpl || '{檔案名稱}_第{頁碼}頁', pad:pr.pad ?? 'auto', policy:pr.policy || 'rename',
+    nameMode:pr.nameMode || 'macro',
+    macOrder:Array.isArray(pr.macOrder) && pr.macOrder.length === 4 ? pr.macOrder : ['name', 'page', 'date', 'seq'],
+    macOn:pr.macOn || {name:true, page:true, date:false, seq:false},
+    pageStyle:pr.pageStyle || 'cjk', dateFmt:pr.dateFmt || 'dash', sep:pr.sep || 'us', seqStart:pr.seqStart || 1,
+    useSub:!!pr.useSub, subTpl:pr.subTpl || '{檔案名稱}_圖片', dir:null,
+  };
+  // default output folder: the last folder the user picked, otherwise the PDF's own folder, otherwise Pictures
+  if (DESK) st.dir = await DESK.exportImages.defaultDir(S.handle && S.handle.path, pr.keepDir ? pr.lastDir : null);
+  const body = document.createElement('div');
+  body.innerHTML = `
+  <div class="ex-grid">
+    <section>
+      <div class="ex-h">1　選擇頁面</div>
+      <div class="pp-bar">
+        <button class="mini" data-q="all">全部 ${n} 頁</button><button class="mini" data-q="cur">目前頁</button><button class="mini" data-q="none">全不選</button>
+        <input type="text" id="exRange" placeholder="範圍，例如 1-3, 5, 8-" style="width:150px">
+        <button class="mini" data-q="range">套用</button>
+        <span class="cnt" id="exCnt"></span>
+      </div>
+      <div class="pp-grid ex-pages" id="exGrid"></div>
+    </section>
+    <section>
+      <div class="ex-h">2　格式與品質</div>
+      <div class="ex-fmts" id="exFmts">${Object.entries(IMG_FORMATS).map(([k, f]) => `<button class="ex-fmt" data-f="${k}"><b>${f.label}</b><small>${f.note}</small></button>`).join('')}</div>
+      <div class="ap-row" style="margin-top:10px">
+        <div class="field"><label>解析度</label>
+          <select id="exDpi">${[72, 96, 150, 200, 300, 400, 600].map(d => `<option value="${d}">${d} DPI${d === 72 ? '（原始大小）' : d === 150 ? '（螢幕／一般）' : d === 300 ? '（列印）' : ''}</option>`).join('')}<option value="custom">自訂…</option></select></div>
+        <div class="field" id="exDpiCF" style="display:none"><label>自訂 DPI</label><input type="number" id="exDpiC" min="24" max="1200" style="width:80px"></div>
+        <div class="field" id="exQF"><label>品質 <span id="exQV"></span></label><input type="range" id="exQ" min="10" max="100" step="1" style="width:140px;padding:0"></div>
+      </div>
+      <label class="chk" id="exTrF" style="padding:0;margin-right:14px"><input type="checkbox" id="exTr"> 透明背景</label>
+      <label class="chk" style="padding:0"><input type="checkbox" id="exAn"> 包含註解與簽名</label>
+      <div class="cropinfo" id="exPx"></div>
+
+      <div class="ex-h" style="margin-top:14px">3　輸出位置與檔名</div>
+      ${DESK ? `<div class="ex-dir"><span id="exDir" title=""></span><button class="mini" id="exDirB">選擇資料夾…</button></div>
+      <label class="chk" style="padding:0;margin:6px 0"><input type="checkbox" id="exSub"> 另建子資料夾</label>
+      <input type="text" id="exSubT" class="ex-in" style="width:200px;margin-left:6px">`
+      : `<div class="note">預覽環境無法選擇資料夾，圖片會打包成 ZIP 下載。</div>`}
+      <div class="ex-mode" style="margin-top:10px">
+        <span class="flab">命名方式</span>
+        <label class="chk" style="padding:0"><input type="radio" name="exNm" value="macro"> 勾選要保留的項目</label>
+        <label class="chk" style="padding:0"><input type="radio" name="exNm" value="tpl"> 自訂範本</label>
+      </div>
+      <div id="exMacBox">
+        <div class="mac-list" id="exMac"></div>
+        <div class="ex-opts">
+          <span class="ex-opt"><span class="flab">分隔符號</span><select id="exSep"><option value="us">底線 _</option><option value="dash">連字號 -</option><option value="space">空格</option><option value="none">不分隔</option></select></span>
+          <span class="ex-opt" data-for="page"><span class="flab">頁碼樣式</span><select id="exPS">${Object.entries(PAGE_STYLES).map(([k, v]) => `<option value="${k}">${v[1]}</option>`).join('')}</select></span>
+          <span class="ex-opt" data-for="date"><span class="flab">日期格式</span><select id="exDF">${Object.entries(DATE_FMTS).map(([k, v]) => `<option value="${k}">${v}（${fmtDate(k)}）</option>`).join('')}</select></span>
+          <span class="ex-opt" data-for="seq"><span class="flab">編號從</span><input type="number" id="exSS" min="0" max="999999" style="width:70px">開始</span>
+        </div>
+      </div>
+      <div id="exTplBox" style="display:none">
+        <input type="text" id="exTpl" class="ex-in" placeholder="例如：{檔案名稱}_{日期}_{自動編號}">
+        <div class="ex-tokens">${['{檔案名稱}', '{頁碼}', '{日期}', '{自動編號}', '{總頁數}'].map(t => `<button class="mini" data-t="${t}">${t}</button>`).join('')}</div>
+      </div>
+      <div class="ex-opts" style="margin-top:6px">
+        <span class="ex-opt"><span class="flab">數字補零</span><select id="exPad"><option value="auto">自動</option><option value="0">不補</option><option value="2">2 位</option><option value="3">3 位</option><option value="4">4 位</option></select></span>
+        <span class="ex-opt" style="color:var(--ink2);font-size:12px">範例：<b id="exEg" style="color:var(--ink)"></b></span>
+      </div>
+      ${DESK ? `<div class="ap-row" style="margin:0 0 8px"><div class="field"><label>同名檔案已存在時</label>
+        <select id="exPol"><option value="rename">自動加上編號（不覆蓋）</option><option value="overwrite">覆蓋原檔案</option><option value="skip">略過該頁</option></select></div></div>` : ''}
+      <div class="flab" style="display:flex;justify-content:space-between;align-items:center"><span>各頁檔名（可個別修改）</span><button class="mini" id="exReset">全部套用範本</button></div>
+      <div class="ex-names" id="exNames"></div>
+      <div class="ex-warn" id="exWarn"></div>
+    </section>
+  </div>`;
+  const $b = q => body.querySelector(q);
+  // ---- page grid
+  const grid = $b('#exGrid'), cards = [];
+  for (let i = 0; i < n; i++) {
+    const c = document.createElement('div'); c.className = 'pp-card' + (i === S.current ? ' cur' : ''); c.dataset.i = i;
+    c.innerHTML = `<span class="ck">✓</span><div class="th" style="aspect-ratio:${S.pages[i].w / S.pages[i].h}">${i + 1}</div><span class="num">第 ${i + 1} 頁</span>`;
+    grid.appendChild(c); cards.push(c);
+  }
+  const obs = new IntersectionObserver(ents => ents.forEach(en => {
+    if (!en.isIntersecting) return; obs.unobserve(en.target);
+    const i = +en.target.dataset.i;
+    pageThumb(i, 150).then(u => { if (u) { const th = en.target.querySelector('.th'); th.textContent = ''; const im = new Image(); im.src = u; im.style.cssText = 'width:100%;height:100%;display:block'; th.appendChild(im); } });
+  }), {root:grid, rootMargin:'200px'});
+  cards.forEach(c => obs.observe(c));
+  let last = -1;
+  grid.addEventListener('click', e => {
+    const c = e.target.closest('.pp-card'); if (!c) return; const i = +c.dataset.i;
+    if (e.shiftKey && last >= 0) { const on = !st.sel.has(i); for (let k = Math.min(last, i); k <= Math.max(last, i); k++) on ? st.sel.add(k) : st.sel.delete(k); }
+    else st.sel.has(i) ? st.sel.delete(i) : st.sel.add(i);
+    last = i; refresh();
+  });
+  const applyRange = () => { const r = parseRange($b('#exRange').value, n); if (!r) { toast('頁碼範圍格式不正確，例如：1-3, 5, 8-', 'err'); return; } st.sel = r; refresh(); };
+  body.querySelector('.pp-bar').addEventListener('click', e => {
+    const q = e.target.dataset.q; if (!q) return;
+    if (q === 'all') st.sel = new Set(S.pages.map((_, i) => i));
+    if (q === 'cur') st.sel = new Set([S.current]);
+    if (q === 'none') st.sel = new Set();
+    if (q === 'range') return applyRange();
+    refresh();
+  });
+  $b('#exRange').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); applyRange(); } });
+  // ---- settings
+  $b('#exFmts').addEventListener('click', e => { const b = e.target.closest('.ex-fmt'); if (b) { st.fmt = b.dataset.f; refresh(); } });
+  const dpiSel = $b('#exDpi');
+  if ([...dpiSel.options].some(o => o.value === String(st.dpi))) dpiSel.value = String(st.dpi); else { dpiSel.value = 'custom'; $b('#exDpiC').value = st.dpi; }
+  dpiSel.onchange = () => { if (dpiSel.value !== 'custom') st.dpi = +dpiSel.value; else { $b('#exDpiC').value = st.dpi; } refresh(); };
+  $b('#exDpiC').oninput = () => { const v = parseInt($b('#exDpiC').value, 10); if (v >= 24 && v <= 1200) { st.dpi = v; refresh(); } };
+  $b('#exQ').value = st.quality; $b('#exQ').oninput = () => { st.quality = +$b('#exQ').value; refresh(); };
+  $b('#exTr').checked = st.transparent; $b('#exTr').onchange = () => { st.transparent = $b('#exTr').checked; refresh(); };
+  $b('#exAn').checked = st.annots; $b('#exAn').onchange = () => { st.annots = $b('#exAn').checked; };
+  $b('#exTpl').value = st.tpl; $b('#exTpl').oninput = () => { st.tpl = $b('#exTpl').value; refresh(); };
+  body.querySelectorAll('input[name=exNm]').forEach(r => { r.checked = r.value === st.nameMode; r.onchange = () => {
+    if (r.value === 'tpl' && st.nameMode === 'macro') { st.tpl = composeTpl(); $b('#exTpl').value = st.tpl; }   // start the template from the current selection
+    st.nameMode = r.value; refresh(); }; });
+  $b('#exSep').value = st.sep; $b('#exSep').onchange = () => { st.sep = $b('#exSep').value; refresh(); };
+  $b('#exPS').value = st.pageStyle; $b('#exPS').onchange = () => { st.pageStyle = $b('#exPS').value; refresh(); };
+  $b('#exDF').value = st.dateFmt; $b('#exDF').onchange = () => { st.dateFmt = $b('#exDF').value; refresh(); };
+  $b('#exSS').value = st.seqStart; $b('#exSS').oninput = () => { const v = parseInt($b('#exSS').value, 10); if (v >= 0) { st.seqStart = v; refresh(); } };
+  const drawMacros = () => {
+    const box = $b('#exMac'); box.innerHTML = '';
+    st.macOrder.forEach((m, k) => {
+      const d = document.createElement('div'); d.className = 'mac' + (st.macOn[m] ? ' on' : ''); d.dataset.m = m;
+      d.innerHTML = `<label><input type="checkbox"${st.macOn[m] ? ' checked' : ''}> ${MACROS[m].label}</label>
+        <span class="mv"><button data-mv="-1" title="往前移"${k === 0 ? ' disabled' : ''}>‹</button><button data-mv="1" title="往後移"${k === st.macOrder.length - 1 ? ' disabled' : ''}>›</button></span>`;
+      box.appendChild(d);
+    });
+  };
+  $b('#exMac').addEventListener('change', e => { const m = e.target.closest('.mac').dataset.m; st.macOn[m] = e.target.checked; drawMacros(); refresh(); });
+  $b('#exMac').addEventListener('click', e => {
+    const b = e.target.closest('[data-mv]'); if (!b) return;
+    const m = b.closest('.mac').dataset.m, k = st.macOrder.indexOf(m), j = k + +b.dataset.mv;
+    if (j < 0 || j >= st.macOrder.length) return;
+    [st.macOrder[k], st.macOrder[j]] = [st.macOrder[j], st.macOrder[k]]; drawMacros(); refresh();
+  });
+  drawMacros();
+  $b('#exPad').value = String(st.pad); $b('#exPad').onchange = () => { st.pad = $b('#exPad').value; refresh(); };
+  body.querySelectorAll('[data-t]').forEach(b => b.onclick = () => {
+    const inp = $b('#exTpl'), a = inp.selectionStart ?? inp.value.length, z = inp.selectionEnd ?? a;
+    inp.value = inp.value.slice(0, a) + b.dataset.t + inp.value.slice(z); st.tpl = inp.value;
+    inp.focus(); inp.setSelectionRange(a + b.dataset.t.length, a + b.dataset.t.length); refresh();
+  });
+  $b('#exReset').onclick = () => { st.custom.clear(); refresh(); };
+  if (DESK) {
+    $b('#exPol').value = st.policy; $b('#exPol').onchange = () => { st.policy = $b('#exPol').value; refresh(); };
+    $b('#exSub').checked = st.useSub; $b('#exSubT').value = st.subTpl;
+    $b('#exSub').onchange = () => { st.useSub = $b('#exSub').checked; refresh(); };
+    $b('#exSubT').oninput = () => { st.subTpl = $b('#exSubT').value; refresh(); };
+    $b('#exDirB').onclick = async () => { const d = await DESK.exportImages.chooseDir(st.dir); if (d) { st.dir = d; st.dirPicked = true; refresh(); } };
+  }
+  const pages = () => [...st.sel].sort((a, b) => a - b);
+  const padLen = () => st.pad === 'auto' ? String(n).length : +st.pad;
+  const seqPadLen = () => st.pad === 'auto' ? String(st.seqStart + Math.max(1, st.sel.size) - 1).length : +st.pad;
+  function composeTpl(){
+    const parts = st.macOrder.filter(m => st.macOn[m]).map(m => m === 'page' ? PAGE_STYLES[st.pageStyle][0] : MACROS[m].tok);
+    return parts.join(SEPS[st.sep]);
+  }
+  const activeTpl = () => st.nameMode === 'macro' ? composeTpl() : st.tpl;
+  const ctx = (i, k) => ({page:i + 1, seq:st.seqStart + k - 1, total:n, pad:padLen(), seqPad:seqPadLen(), dateFmt:st.dateFmt});
+  const nameFor = (i, k) => st.custom.has(i) ? st.custom.get(i) : cleanFileName(fillTemplate(activeTpl(), ctx(i, k)));
+  const subName = () => cleanFileName(fillTemplate(st.subTpl || '', {page:1, seq:1, total:n, pad:0, dateFmt:st.dateFmt}));
+  let okBtn = null;
+  const renderNames = () => {
+    const list = $b('#exNames'), ext = IMG_FORMATS[st.fmt].ext, ps = pages();
+    const focused = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.pi;
+    if (focused !== undefined && list.contains(document.activeElement)) return;   // do not rebuild while typing
+    list.innerHTML = '';
+    const shown = ps.slice(0, 300);
+    shown.forEach((i, k) => {
+      const r = document.createElement('div'); r.className = 'ex-row' + (st.custom.has(i) ? ' custom' : '');
+      r.innerHTML = `<span class="pg">第 ${i + 1} 頁</span><input type="text" data-pi="${i}" value="${esc(nameFor(i, k + 1))}"><span class="ext">.${ext}</span>`;
+      list.appendChild(r);
+    });
+    if (ps.length > shown.length) list.insertAdjacentHTML('beforeend', `<div class="empty-note">…另有 ${ps.length - shown.length} 頁，依範本命名</div>`);
+    if (!ps.length) list.innerHTML = '<div class="empty-note">尚未選擇頁面</div>';
+  };
+  $b('#exNames').addEventListener('input', e => {
+    const i = e.target.dataset.pi; if (i === undefined) return;
+    st.custom.set(+i, e.target.value); e.target.parentNode.classList.add('custom'); refresh(true);
+  });
+  $b('#exNames').addEventListener('focusout', () => setTimeout(() => refresh(), 0));
+  function refresh(keepNames){
+    cards.forEach((c, i) => c.classList.toggle('on', st.sel.has(i)));
+    const ps = pages();
+    $b('#exCnt').innerHTML = `已選 <b>${ps.length}</b> / ${n} 頁`;
+    if (document.activeElement !== $b('#exRange')) $b('#exRange').value = rangeText(st.sel);
+    const f = IMG_FORMATS[st.fmt];
+    body.querySelectorAll('.ex-fmt').forEach(b => b.classList.toggle('on', b.dataset.f === st.fmt));
+    $b('#exQF').style.display = f.quality ? '' : 'none'; $b('#exQV').textContent = st.quality;
+    $b('#exTrF').style.opacity = f.alpha ? 1 : .4; $b('#exTr').disabled = !f.alpha;
+    $b('#exDpiCF').style.display = dpiSel.value === 'custom' ? '' : 'none';
+    if (ps.length) {
+      const z = exportSize(ps[0], st.dpi);
+      $b('#exPx').innerHTML = `輸出尺寸：第 ${ps[0] + 1} 頁 → <b>${z.w} × ${z.h}</b> px${z.capped ? '　<span style="color:var(--seal)">（超過上限，已自動縮小）</span>' : ''}`;
+    } else $b('#exPx').textContent = '';
+    if (DESK) {
+      const sub = st.useSub ? subName() : '';
+      $b('#exSubT').disabled = !st.useSub;
+      const shown = (st.dir || '（未選擇）') + (sub ? (st.dir && st.dir.includes('\\') ? '\\' : '/') + sub : '');
+      $b('#exDir').textContent = '\u200E' + shown + '\u200E'; $b('#exDir').title = shown;   // LRM keeps the path's own direction inside the rtl-truncated box
+    }
+    $b('#exMacBox').style.display = st.nameMode === 'macro' ? '' : 'none';
+    $b('#exTplBox').style.display = st.nameMode === 'tpl' ? '' : 'none';
+    body.querySelectorAll('.ex-opt[data-for]').forEach(o => o.style.display = st.nameMode === 'macro' && st.macOn[o.dataset.for] ? '' : 'none');
+    $b('#exEg').textContent = ps.length ? (cleanFileName(fillTemplate(activeTpl(), ctx(ps[0], 1))) || '（空白）') + '.' + f.ext : '';
+    if (!keepNames) renderNames();
+    // duplicates / empty names
+    const ext = f.ext, seen = new Map(); let dup = 0, empty = 0;
+    ps.forEach((i, k) => { const nm = cleanFileName(nameFor(i, k + 1)); if (!nm) empty++; const key = (nm + '.' + ext).toLowerCase(); seen.set(key, (seen.get(key) || 0) + 1); });
+    seen.forEach(v => { if (v > 1) dup += v; });
+    let warn = '', block = !ps.length || empty > 0 || (DESK && !st.dir);
+    if (empty) warn = st.nameMode === 'macro' && !st.macOrder.some(m => st.macOn[m]) ? '請至少勾選一個要保留的項目，或改用自訂範本。' : '有頁面的檔名是空的。';
+    else if (dup) { if (!DESK || st.policy === 'rename') warn = `有 ${dup} 個檔名重複，將自動加上編號。`; else { warn = `有 ${dup} 個檔名重複，請修改檔名或改用「自動加上編號」。`; block = true; } }
+    $b('#exWarn').textContent = warn;
+    if (okBtn) { okBtn.disabled = block; okBtn.textContent = ps.length ? `轉存 ${ps.length} 張 ${f.label}` : '轉存'; }
+  }
+  const res = await openModal({title:'將頁面轉存成圖片', body, width:Math.min(1120, innerWidth - 40), buttons:[
+    {label:'取消', value:null},
+    {label:'轉存', primary:true, id:'exOk', handler:() => {
+      const ps = pages(); if (!ps.length) return;
+      return {ps, names:ps.map((i, k) => cleanFileName(nameFor(i, k + 1)) + '.' + IMG_FORMATS[st.fmt].ext)};
+    }}],
+    onOpen:(mb, mf) => { okBtn = mf.querySelector('#exOk'); refresh(); setTimeout(() => cards[S.current] && cards[S.current].scrollIntoView({block:'center'}), 30); }});
+  obs.disconnect();
+  if (!res) return;
+  saveExpPrefs({fmt:st.fmt, dpi:st.dpi, quality:st.quality, transparent:st.transparent, annots:st.annots, tpl:st.tpl, pad:st.pad,
+    nameMode:st.nameMode, macOrder:st.macOrder, macOn:st.macOn, pageStyle:st.pageStyle, dateFmt:st.dateFmt, sep:st.sep, seqStart:st.seqStart,
+    policy:st.policy, useSub:st.useSub, subTpl:st.subTpl, lastDir:st.dir, keepDir:!!st.dirPicked || !!pr.keepDir});
+  await runImageExport({...st, sub:DESK && st.useSub ? subName() : ''}, res.ps, res.names);
+}
+
+async function runImageExport(st, ps, names){
+  const f = IMG_FORMATS[st.fmt], alpha = f.alpha && st.transparent;
+  let plan = null;
+  if (DESK) {
+    try { plan = await DESK.exportImages.plan(st.dir, st.sub, names, st.policy); }
+    catch (e) { toast('無法寫入輸出資料夾：' + (e.message || e), 'err'); return; }
+  }
+  let cancel = false, done = 0, skipped = 0, failed = 0;
+  const zip = [], written = [];
+  S.exporting = true;
+  openModal({title:'轉存圖片中', width:440,
+    body:`<div id="xpTxt">準備中…</div><div class="updbar show" style="background:transparent;padding:10px 0 0"><span class="bar" style="background:#e6e2d9;width:100%;height:8px"><i id="xpBar" style="background:var(--seal)"></i></span></div>`,
+    buttons:[{label:'取消', handler:() => { cancel = true; $('#xpTxt').textContent = '正在取消…'; }}]});
+  const t0 = performance.now();
+  for (let k = 0; k < ps.length && !cancel; k++) {
+    const i = ps[k], target = plan ? plan.files[k] : {name:names[k]};
+    $('#xpTxt').innerHTML = `正在轉存第 <b>${i + 1}</b> 頁（${k + 1} / ${ps.length}）<br><span style="color:var(--ink3);font-size:12px">${esc(target.name)}</span>`;
+    $('#xpBar').style.width = (k / ps.length * 100) + '%';
+    if (target.skip) { skipped++; continue; }
+    let c = null;
+    try {
+      c = await renderForExport(i, st.dpi, {transparent:alpha, annots:st.annots});
+      const bytes = await encodePage(c, st.fmt, {dpi:st.dpi, quality:st.quality, alpha});
+      if (DESK) written.push(await DESK.exportImages.write(st.dir, st.sub, target.name, bytes));
+      else zip.push({name:target.name, data:bytes});
+      done++;
+    } catch (e) { console.error(e); failed++; toast(`第 ${i + 1} 頁轉存失敗：${e.message || e}`, 'err'); }
+    finally { if (c) { c.width = c.height = 0; } }
+    await new Promise(r => setTimeout(r, 0));
+  }
+  $('#xpBar').style.width = '100%';
+  S.exporting = false;
+  closeModal(undefined);
+  const secs = ((performance.now() - t0) / 1000).toFixed(1);
+  if (!DESK) {
+    if (zip.length === 1) await saveFile(zip[0].name, new Blob([zip[0].data]));
+    else if (zip.length) await saveFile(S.name.replace(/\.pdf$/i, '') + '_圖片.zip', new Blob([makeZip(zip)], {type:'application/zip'}));
+    return;
+  }
+  const parts = [`已轉存 <b>${done}</b> 張 ${f.label}`];
+  if (skipped) parts.push(`略過 ${skipped} 張（同名檔案已存在）`);
+  if (failed) parts.push(`<span style="color:var(--seal)">${failed} 張失敗</span>`);
+  if (cancel) parts.push('（已取消）');
+  const r = await openModal({title:cancel ? '轉存已取消' : '轉存完成', width:480,
+    body:`<div>${parts.join('，')}，耗時 ${secs} 秒。</div><div class="note" style="margin-top:10px;word-break:break-all">輸出位置：${esc(plan.dir)}</div>`,
+    buttons:[{label:'完成', value:false}, {label:'開啟資料夾', primary:true, value:true}]});
+  if (r) DESK.exportImages.openFolder(plan.dir);
+}
+
 const PAPER = {a4:[595.28, 841.89], a3:[841.89, 1190.55], a5:[419.53, 595.28], letter:[612, 792], legal:[612, 1008]};
 
 async function openAddPage(){
@@ -1551,6 +2010,7 @@ const actions = {
     await loadDoc(r.bytes, {keepView:true}); toast('已重做'); await afterEdit();
   },
   addPage(){ return openAddPage(); },
+  exportImages(){ return openExportImages(); },
   async delPage(){
     const n = S.pages.length;
     if (n <= 1) { toast('文件至少要保留一頁', 'err'); return; }

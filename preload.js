@@ -11,6 +11,13 @@ contextBridge.exposeInMainWorld('desktop', {
   saveAs: (name, data) => ipcRenderer.invoke('file:save-as', name, data),
   pathForFile: f => { try { return webUtils.getPathForFile(f) || ''; } catch (_) { return ''; } },
   openExternal: url => ipcRenderer.invoke('app:open-external', url),
+  exportImages: {
+    defaultDir: (pdfPath, last) => ipcRenderer.invoke('export:default-dir', pdfPath, last),
+    chooseDir: current => ipcRenderer.invoke('export:choose-dir', current),
+    plan: (root, sub, names, policy) => ipcRenderer.invoke('export:plan', root, sub, names, policy),
+    write: (root, sub, name, data) => ipcRenderer.invoke('export:write', root, sub, name, data),
+    openFolder: dir => ipcRenderer.invoke('export:open-folder', dir),
+  },
   onOpenPath: cb => ipcRenderer.on('open-path', (_e, p) => cb(p)),
   update: {
     state: () => ipcRenderer.invoke('update:state'),

@@ -1,7 +1,7 @@
 {
   "name": "pdfeditor",
   "productName": "PDF 工作台",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "PDF 閱讀與編輯工具：頁面增減與插入、圖片擷取裁切、旋轉、附件、註解、手寫簽名與數位簽章",
   "main": "main.js",
   "author": "Tsukiinuhibi",
@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "electron-updater": "6.8.11",
+    "gifenc": "1.0.3",
     "node-forge": "1.4.3",
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "4.10.38"
