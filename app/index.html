@@ -277,6 +277,7 @@ svg.dsvg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;ov
 .hint.styl{background:#fff8f5;color:var(--ink);border-bottom:1px solid #f1d5cc;flex-wrap:nowrap;overflow-x:auto;padding:5px 12px;white-space:nowrap;scrollbar-width:thin}
 .hint.styl button{color:var(--ink);border-color:var(--line2);background:#fff}
 .hint.styl button:hover{background:#fff;border-color:var(--seal)}
+.hint.styl [data-h=done]{position:sticky;right:-12px;box-shadow:-10px 0 10px #fff8f5;flex:none}
 .sb-t{display:inline-flex;align-items:center;gap:5px;color:var(--seal-ink)}
 .sb-t svg.i{width:17px;height:17px;stroke:var(--seal)}
 .sb-tip{color:var(--ink2);font-size:12px}
@@ -318,6 +319,32 @@ svg.dsvg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;ov
 .st-item.on{border-color:var(--seal);background:#fff7e0;box-shadow:0 0 0 2px #ffe08a inset}
 .st-prev{background:#f6f4ef;border-radius:8px;padding:18px;display:grid;place-items:center;min-height:120px}
 
+.asel{position:absolute;z-index:4;outline:1.5px dashed #1c64d9;outline-offset:2px;cursor:move;box-shadow:0 0 0 4px rgba(28,100,217,.10)}
+.asel.fixed{cursor:default}
+.asel.noteMove{outline-color:#8a7f00}
+.asel .h{position:absolute;width:11px;height:11px;background:#fff;border:2px solid #1c64d9;border-radius:2px;margin:-5.5px 0 0 -5.5px;z-index:2}
+.asel .h[data-d=n],.asel .h[data-d=s]{cursor:ns-resize}
+.asel .h[data-d=e],.asel .h[data-d=w]{cursor:ew-resize}
+.asel .h[data-d=nw],.asel .h[data-d=se]{cursor:nwse-resize}
+.asel .h[data-d=ne],.asel .h[data-d=sw]{cursor:nesw-resize}
+.aghost{position:absolute;inset:0;width:100%;height:100%;opacity:.9;pointer-events:none}
+.aveil{position:absolute;background:rgba(255,255,255,.72);pointer-events:none;z-index:3;outline:1px dashed #adb5bd}
+.abar .hintk{color:#9aa2ab;font-size:11px}
+.abar button[data-x=del]{background:var(--seal)}
+.rb.split{flex-direction:row;align-items:stretch;padding:0;gap:0}
+.rb.split .sp-main{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:5px 2px 4px 6px;min-width:38px;border-radius:7px 0 0 7px}
+.rb.split .sp-arr{display:flex;align-items:center;padding:0 5px;font-size:10px;color:var(--ink3);border-left:1px solid transparent;border-radius:0 7px 7px 0}
+.rb.split:hover .sp-arr{border-left-color:var(--line2)}
+.rb.split .sp-arr:hover{background:#e6e2d9;color:var(--ink)}
+.rb.split .sp-main:hover{background:#e6e2d9}
+.rb.split.on .sp-main svg{stroke:var(--seal)}
+.tsw{display:inline-flex;gap:2px;background:#fff;border:1px solid #f1d5cc;border-radius:8px;padding:2px;flex:none}
+.tsb{display:inline-flex!important;align-items:center;gap:4px;border:0!important;background:transparent!important;border-radius:6px!important;padding:3px 8px!important;font-size:12px!important;color:var(--ink2)!important;cursor:pointer}
+.tsb svg.i{width:16px;height:16px}
+.tsb:hover{background:#f6f1ea!important;color:var(--ink)!important}
+.tsb.on{background:var(--seal)!important;color:#fff!important}
+.tsb.on svg.i{stroke:#fff}
+@media (max-width:1500px){ .tsw .tsb span{display:none} .tsw .tsb.on span{display:inline} }
 .ex-warn{font-size:12px;color:#a15c00;min-height:18px;margin-top:6px}
 .ap-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px}
 .ap-row .field{margin:0}
@@ -498,8 +525,8 @@ input[type=file]{display:none}
   <div class="grp"><div class="btns">
     <button class="rb" data-tool="note" data-need title="便利貼註解"><i data-i="note"></i>便利貼</button>
     <button class="rb" data-tool="textbox" data-need title="文字方塊"><i data-i="text"></i>文字方塊</button>
-    <button class="rb" data-menu="markText" data-need title="高亮文字、刪除線、底線、區域螢光筆"><i data-i="markText"></i>文字標記 ▾</button>
-    <button class="rb" data-menu="drawMenu" data-need title="箭頭、線條、矩形、橢圓形、多邊形、雲狀"><i data-i="shapes"></i>繪圖 ▾</button>
+    <button class="rb split" data-menu="markText" data-need title="文字標記：點按使用目前工具，點 ▾ 選擇其他（高亮、刪除線、底線、區域螢光筆）"><span class="sp-main"><i data-i="hlText"></i><span class="sp-lab">高亮</span></span><span class="sp-arr" title="選擇其他文字標記工具">▾</span></button>
+    <button class="rb split" data-menu="drawMenu" data-need title="繪圖：點按使用目前工具，點 ▾ 選擇其他（箭頭、線條、矩形、橢圓形、多邊形、雲狀）"><span class="sp-main"><i data-i="arrow"></i><span class="sp-lab">箭頭</span></span><span class="sp-arr" title="選擇其他繪圖工具">▾</span></button>
     <button class="rb" data-tool="pen" data-need title="畫筆：自由手繪"><i data-i="pen2"></i>畫筆</button>
     <button class="rb" data-tool="eraser" data-need title="橡皮擦：擦除畫筆筆跡"><i data-i="eraser"></i>橡皮擦</button>
     <button class="rb" data-tool="stamp" data-need title="戳記：核准、草稿、機密、日期章…"><i data-i="stamp"></i>戳記</button>
@@ -895,7 +922,7 @@ function mountDoc({scroll = 'current', anchorOffset = 0, scrollTop = 0, scrollLe
     return d;
   });
   S.st = S.pages.map(() => ({rendered:0, ver:-1, task:null, ovlVer:-1}));
-  XS = null; clearSnapMarks(); if (NP) closeNoteDom(); POLY = null;
+  XS = null; AS = null; clearSnapMarks(); if (NP) closeNoteDom(); POLY = null;
   $('#welcome').style.display = 'none';
   $$('[data-need]').forEach(b => b.disabled = false);
   if (S.zoomMode !== 'custom') S.scale = fitScale(S.zoomMode);
@@ -1134,15 +1161,21 @@ async function ensureOverlay(i){
     if (a.subtype === 'Text') {
       if (a.noap) d.innerHTML = NOTE_SVG;
       d.title = (a.author ? a.author + '：' : '') + (a.contents || '').slice(0, 80);
-      d.addEventListener('pointerdown', ev => { if ((S.tool === 'select' || S.tool === 'note') && !S.spaceDown) ev.stopPropagation(); });
-      d.addEventListener('click', ev => { if ((S.tool === 'select' || S.tool === 'note') && !S.spaceDown) { ev.stopPropagation(); if (NP && NP.note.id === a.id) return; closeNote(true); openNoteById(i, a.id); } });
+      d.addEventListener('pointerdown', ev => { if ((S.tool === 'select' || S.tool === 'note') && !S.spaceDown && ev.button === 0) { ev.stopPropagation(); if (S.tool === 'select') noteIconDown(ev, i, a); } });
+      d.addEventListener('click', ev => { if (S.tool === 'note' && !S.spaceDown) { ev.stopPropagation(); if (NP && NP.note.id === a.id) return; closeNote(true); openNoteById(i, a.id); } });
       ovl.appendChild(d); return;
     }
     d.addEventListener('pointerenter', ev => showTip(ev, a.label + (a.contents ? '\n' + a.contents : '')));
     d.addEventListener('pointermove', moveTip);
     d.addEventListener('pointerleave', hideTip);
-    d.addEventListener('pointerdown', ev => { if (S.tool === 'select' && !S.spaceDown) { ev.stopPropagation(); } });
-    d.addEventListener('click', ev => { if (S.tool === 'select' && !S.spaceDown) { ev.stopPropagation(); hideTip(); showAnnPop(ev, i, a); } });
+    d.addEventListener('pointerdown', ev => {
+      if (S.tool !== 'select' || S.spaceDown || ev.button !== 0) return;
+      ev.stopPropagation(); hideTip();
+      if (a.sig) return;
+      selectAnnot(i, a);
+      if (AS && AS.movable) dragAnnot(ev, 'move');
+    });
+    d.addEventListener('click', ev => { if (S.tool === 'select' && !S.spaceDown && a.sig) { ev.stopPropagation(); hideTip(); showAnnPop(ev, i, a); } });
     ovl.appendChild(d);
   });
   imgs.forEach((b, k) => {
@@ -1315,14 +1348,17 @@ const HINTS = {
 function setTool(t){
   if (!S.pdf) return;
   if (t !== 'extract') cancelXSel();
+  if (t !== 'select') deselectAnnot();
   if (t !== S.tool) { cancelPoly(); if (S.tool === 'pen') flushPen(); }
   S.tool = t; updateUI();
   $$('[data-menu]').forEach(b => b.classList.toggle('on', (TOOL_MENUS[b.dataset.menu] || []).includes(t)));
+  rememberTool(t);
   const h = $('#hint');
   h.classList.toggle('styl', !!DRAW_TOOLS[t]);
   if (!HINTS[t]) { h.classList.remove('show'); h.innerHTML = ''; return; }
   if (DRAW_TOOLS[t]) {
-    h.innerHTML = `<b class="sb-t" title="${esc(HINTS[t])}">${icon(DRAW_TOOLS[t].ic)}${DRAW_TOOLS[t].label}<span class="sb-q">?</span></b><span class="sb-row">${styleBar(t)}</span><span class="sp"></span><button data-h="done">完成 (Esc)</button>`;
+    const sw = toolSwitcher(t);
+    h.innerHTML = `${sw || `<b class="sb-t" title="${esc(HINTS[t])}">${icon(DRAW_TOOLS[t].ic)}${DRAW_TOOLS[t].label}</b>`}<span class="sb-q" title="${esc(HINTS[t])}">?</span><span class="sb-row">${styleBar(t)}</span><span class="sp"></span><button data-h="done">完成 (Esc)</button>`;
     h.classList.add('show');
     if (S.lastHintTool !== t) { S.lastHintTool = t; toast(HINTS[t]); }
     if (t === 'stamp') { let picked = false; try { picked = !!localStorage.getItem('pdfeditor.stamp.v1'); } catch (_) {} if (!picked) setTimeout(openStampPicker, 0); }
@@ -1332,7 +1368,9 @@ function setTool(t){
   let extra = '';
   if (t === 'highlight') extra = ['#ffd43b', '#8ce99a', '#74c0fc', '#ffa8a8'].map(c => `<button class="swatch${c === S.hlColor ? ' on' : ''}" data-c="${c}" style="background:${c}"></button>`).join('');
   if (t === 'signature') extra = `<button data-h="resign">重新簽名</button>`;
-  h.innerHTML = `<span>${HINTS[t]}</span><span class="sp"></span>${extra}<button data-h="done">完成 (Esc)</button>`;
+  const swh = t === 'highlight' ? toolSwitcher(t) : '';
+  h.classList.toggle('styl', !!swh);
+  h.innerHTML = `${swh}<span${swh ? ' class="sb-tip"' : ''}>${HINTS[t]}</span><span class="sp"></span>${extra}<button data-h="done">完成 (Esc)</button>`;
   h.classList.add('show');
   if (t === 'signature' && !S.sigImg) openSigPad();
   if (t === 'extract') S.pos.forEach((p, i) => p && ensureOverlay(i));
@@ -1412,6 +1450,12 @@ window.addEventListener('keydown', e => {
   if (mod && (e.key === '=' || e.key === '+')) { e.preventDefault(); actions.zoomIn(); return; }
   if (mod && e.key === '-') { e.preventDefault(); actions.zoomOut(); return; }
   if (mod && e.key === '0') { e.preventDefault(); setZoomMode('actual'); return; }
+  if (AS && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); deleteSelected(); return; }
+  if (AS && e.key === 'Escape') { e.preventDefault(); deselectAnnot(); return; }
+  if (AS && AS.movable && /^Arrow/.test(e.key) && !mod) {
+    e.preventDefault(); const d = e.shiftKey ? 10 : 1;
+    nudgeSelected(e.key === 'ArrowLeft' ? -d : e.key === 'ArrowRight' ? d : 0, e.key === 'ArrowUp' ? -d : e.key === 'ArrowDown' ? d : 0); return;
+  }
   if (POLY && e.key === 'Enter') { e.preventDefault(); finishPoly(); return; }
   if (POLY && e.key === 'Escape') { e.preventDefault(); cancelPoly(); return; }
   if (POLY && e.key === 'Backspace') { e.preventDefault(); POLY.pts.pop(); POLY.svg.innerHTML = previewMarkup(S.tool, {pts:POLY.pts}); if (!POLY.pts.length) cancelPoly(); return; }
@@ -1806,6 +1850,7 @@ pagesEl.addEventListener('contextmenu', e => {
 });
 pagesEl.addEventListener('pointerdown', e => {
   if (S.panning || S.spaceDown || e.button !== 0) return;
+  if (AS && !(e.target.closest && e.target.closest('.asel,.abar'))) deselectAnnot();
   const pel = e.target.closest('.page'); if (!pel) return;
   const i = +pel.dataset.i;
   if (S.current !== i) { S.current = i; updatePager(); }
@@ -3251,7 +3296,7 @@ const loc = (b, p) => [(p.x - b.x).toFixed(2), (b.y + b.h - p.y).toFixed(2)];
 const toPdfPts = (i, pts) => pts.flatMap(p => S.pages[i].vp1.convertToPdfPoint(p.x, p.y));
 function bsDict(st){ return {W:+st.width || 1, S:st.dash ? 'D' : 'S', ...(st.dash ? {D:[3 * (+st.width || 1), 2.2 * (+st.width || 1)]} : {})}; }
 function baseDict(sub, label, st, extra = {}){
-  return {Type:'Annot', Subtype:sub, T:PDFHexString.fromText(AUTHOR), M:nowStr(), CreationDate:nowStr(), Subj:PDFHexString.fromText(label), F:4,
+  return {Type:'Annot', Subtype:sub, T:PDFHexString.fromText(AUTHOR), M:nowStr(), CreationDate:nowStr(), Subj:PDFHexString.fromText(label), F:4, PDFE:true,
     ...(st.color ? {C:hexColor(st.color)} : {}), ...((st.opacity ?? 1) < 1 ? {CA:st.opacity} : {}), ...extra};
 }
 function arrowHead(tip, from, st){
@@ -3743,6 +3788,29 @@ const TOOL_MENUS = {
   markText:['hlText', 'strike', 'underline', 'highlight'],
   drawMenu:['arrow', 'line', 'rect', 'ellipse', 'polyline', 'polygon', 'cloud'],
 };
+const SHORT = {hlText:'高亮', strike:'刪除線', underline:'底線', highlight:'螢光筆', arrow:'箭頭', line:'線條', rect:'矩形', ellipse:'橢圓',
+  polyline:'折線', polygon:'多邊形', cloud:'雲狀', pen:'畫筆', eraser:'橡皮擦'};
+const TOOL_GROUPS = {...TOOL_MENUS, inkGroup:['pen', 'eraser']};
+const groupOf = t => Object.keys(TOOL_GROUPS).find(g => TOOL_GROUPS[g].includes(t));
+const LAST_TOOL = (() => { try { return JSON.parse(localStorage.getItem('pdfeditor.lasttool.v1')) || {}; } catch (_) { return {}; } })();
+const lastToolOf = menu => (TOOL_MENUS[menu] || []).includes(LAST_TOOL[menu]) ? LAST_TOOL[menu] : TOOL_MENUS[menu][0];
+function rememberTool(t){
+  const g = groupOf(t); if (!g) return;
+  LAST_TOOL[g] = t; try { localStorage.setItem('pdfeditor.lasttool.v1', JSON.stringify(LAST_TOOL)); } catch (_) {}
+  paintSplitButtons();
+}
+function paintSplitButtons(){
+  $$('[data-menu]').forEach(b => {
+    const t = lastToolOf(b.dataset.menu), m = b.querySelector('.sp-main'); if (!m) return;
+    m.innerHTML = `${icon(toolIcon(t))}<span class="sp-lab">${SHORT[t] || toolLabel(t)}</span>`;
+  });
+}
+// a row of sibling tools in the style bar: one click switches within the group
+function toolSwitcher(t){
+  const g = groupOf(t); if (!g) return '';
+  return `<span class="tsw">${TOOL_GROUPS[g].map(x => `<button class="tsb${x === t ? ' on' : ''}" data-sw="${x}" title="${toolLabel(x)}">${icon(toolIcon(x))}<span>${SHORT[x] || toolLabel(x)}</span></button>`).join('')}</span>`;
+}
+document.addEventListener('click', e => { const b = e.target.closest('[data-sw]'); if (b) { e.stopPropagation(); setTool(b.dataset.sw); } }, true);
 const toolLabel = t => DRAW_TOOLS[t] ? DRAW_TOOLS[t].label : t === 'highlight' ? '區域螢光筆' : t;
 const toolIcon = t => DRAW_TOOLS[t] ? DRAW_TOOLS[t].ic : t === 'highlight' ? 'hl' : 'select';
 function showToolMenu(btn, which){
@@ -3755,6 +3823,212 @@ function showToolMenu(btn, which){
   m.onclick = e => { const b = e.target.closest('[data-t]'); if (!b) return; m.style.display = 'none'; setTool(b.dataset.t); };
 }
 document.addEventListener('pointerdown', e => { const m = $('#toolMenu'); if (m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('[data-menu]')) m.style.display = 'none'; }, true);
+
+/* ====================================================================
+   Select / move / resize existing annotations (選取工具)
+   ==================================================================== */
+const NO_MOVE = new Set(['Highlight', 'StrikeOut', 'Underline', 'Squiggly', 'Widget', 'Popup', 'Link']);
+const REGEN = new Set(['Line', 'Square', 'Circle', 'Polygon', 'PolyLine', 'Ink']);
+let AS = null;   // {i, a, box, el, bar, ghost, veil}
+function deselectAnnot(){
+  if (!AS) return;
+  AS.el.remove(); AS.bar.remove(); AS.veil && AS.veil.remove();
+  if (S.els[AS.i]) S.els[AS.i].style.zIndex = '';
+  AS = null; clearSnapMarks();
+}
+function snapshot(i, box){
+  const src = S.els[i] && S.els[i].querySelector('canvas.pc'); if (!src) return null;
+  const pg = S.pages[i], k = src.width / pg.w;
+  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(box.w * k)); c.height = Math.max(1, Math.round(box.h * k));
+  try { c.getContext('2d').drawImage(src, box.x * k, box.y * k, box.w * k, box.h * k, 0, 0, c.width, c.height); } catch (_) { return null; }
+  return c;
+}
+function selectAnnot(i, a){
+  deselectAnnot();
+  const pg = S.pages[i], ovl = S.els[i].querySelector('.ovl');
+  const movable = !NO_MOVE.has(a.subtype), resizable = movable && a.subtype !== 'Text';
+  const el = document.createElement('div'); el.className = 'asel' + (movable ? '' : ' fixed');
+  if (resizable) el.innerHTML = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].map(d => `<div class="h" data-d="${d}"></div>`).join('');
+  const bar = document.createElement('div'); bar.className = 'xbar abar';
+  const snip = a.contents && a.subtype !== 'Stamp' ? `：${esc(a.contents.slice(0, 24))}${a.contents.length > 24 ? '…' : ''}` : '';
+  bar.innerHTML = `<span class="dim">${esc(a.label)}${snip}</span>${movable ? `<span class="dim hintk">拖曳移動${resizable ? '・把手調整大小' : ''}</span>` : ''}<button data-x="del">🗑 刪除 (Del)</button>`;
+  ovl.appendChild(el); ovl.appendChild(bar); S.els[i].style.zIndex = 4;
+  AS = {i, a, box:{x:a.x, y:a.y, w:a.w, h:a.h}, el, bar, movable, resizable, keep:a.subtype === 'Stamp'};
+  const hp = {nw:[0, 0], n:[50, 0], ne:[100, 0], e:[100, 50], se:[100, 100], s:[50, 100], sw:[0, 100], w:[0, 50]};
+  el.querySelectorAll('.h').forEach(h => { const [x, y] = hp[h.dataset.d]; h.style.left = x + '%'; h.style.top = y + '%'; });
+  el.addEventListener('pointerdown', e => { if (e.button !== 0 || S.spaceDown) return; e.preventDefault(); e.stopPropagation(); if (AS && AS.movable) dragAnnot(e, e.target.dataset.d || 'move'); });
+  bar.addEventListener('pointerdown', e => e.stopPropagation());
+  bar.addEventListener('click', e => { if (e.target.closest('[data-x="del"]')) deleteSelected(); });
+  drawASel();
+}
+function drawASel(){
+  if (!AS) return;
+  const {i, box} = AS, pg = S.pages[i];
+  const pos = {left:box.x / pg.w * 100 + '%', top:box.y / pg.h * 100 + '%', width:box.w / pg.w * 100 + '%', height:box.h / pg.h * 100 + '%'};
+  Object.assign(AS.el.style, pos);
+  const below = (box.y + box.h) / pg.h < .9;
+  AS.bar.style.left = box.x / pg.w * 100 + '%';
+  AS.bar.style.top = (below ? box.y + box.h : box.y) / pg.h * 100 + '%';
+  AS.bar.style.transform = below ? 'translateY(8px)' : 'translateY(calc(-100% - 8px))';
+}
+async function deleteSelected(){
+  if (!AS) return;
+  const {i, a} = AS; deselectAnnot();
+  await deleteAnnot(i, a.id);
+}
+// drag the selection: move (snapping its edges) or resize from a handle; Shift keeps / frees the aspect ratio
+function dragAnnot(e, d, onDone){
+  const {i} = AS, pg = S.pages[i], s0 = {...AS.box}, MIN = 4;
+  let ptr = {x:e.clientX, y:e.clientY}, moved = false, shift = e.shiftKey;
+  const p0 = pagePointXY(i, ptr.x, ptr.y);
+  const upd = () => {
+    if (!AS) return;
+    const p = pagePointXY(i, ptr.x, ptr.y), b = {...s0};
+    let hx = null, hy = null;
+    if (d === 'move') {
+      let nx = clamp(s0.x + p.x - p0.x, -s0.w * .5, pg.w - s0.w * .5), ny = clamp(s0.y + p.y - p0.y, -s0.h * .5, pg.h - s0.h * .5);
+      const L = snapAxis(i, 'x', nx), R = snapAxis(i, 'x', nx + s0.w), T = snapAxis(i, 'y', ny), B = snapAxis(i, 'y', ny + s0.h);
+      if (L.hit != null) { nx = L.v; hx = L.hit; } else if (R.hit != null) { nx = R.v - s0.w; hx = R.hit; }
+      if (T.hit != null) { ny = T.v; hy = T.hit; } else if (B.hit != null) { ny = B.v - s0.h; hy = B.hit; }
+      b.x = nx; b.y = ny;
+    } else {
+      const sx = snapAxis(i, 'x', p.x), sy = snapAxis(i, 'y', p.y);
+      if (d.includes('w')) { const x = Math.min(sx.v, s0.x + s0.w - MIN); b.x = x; b.w = s0.x + s0.w - x; hx = sx.hit; }
+      if (d.includes('e')) { b.w = Math.max(MIN, sx.v - s0.x); hx = sx.hit; }
+      if (d.includes('n')) { const y = Math.min(sy.v, s0.y + s0.h - MIN); b.y = y; b.h = s0.y + s0.h - y; hy = sy.hit; }
+      if (d.includes('s')) { b.h = Math.max(MIN, sy.v - s0.y); hy = sy.hit; }
+      const keep = AS.keep !== shift;   // stamps keep proportions unless Shift; others the other way round
+      if (keep && d.length === 2) {
+        const ar = s0.w / s0.h;
+        if (b.w / b.h > ar) b.w = b.h * ar; else b.h = b.w / ar;
+        if (d.includes('w')) b.x = s0.x + s0.w - b.w;
+        if (d.includes('n')) b.y = s0.y + s0.h - b.h;
+      }
+    }
+    AS.box = b; markSnap(i, [hx], [hy]); drawASel();
+  };
+  const begin = () => {
+    moved = true;
+    AS.ghost = snapshot(i, s0);
+    if (AS.ghost) { AS.ghost.className = 'aghost'; AS.el.appendChild(AS.ghost); }
+    const v = document.createElement('div'); v.className = 'aveil';
+    Object.assign(v.style, {left:s0.x / pg.w * 100 + '%', top:s0.y / pg.h * 100 + '%', width:s0.w / pg.w * 100 + '%', height:s0.h / pg.h * 100 + '%'});
+    S.els[i].querySelector('.ovl').insertBefore(v, AS.el); AS.veil = v;
+  };
+  let stop = () => {};
+  const move = ev => {
+    ptr = {x:ev.clientX, y:ev.clientY}; shift = ev.shiftKey;
+    if (!moved) { if (Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return; begin(); stop = dragAssist(() => ptr, upd, {}); }
+    upd();
+  };
+  const up = async () => {
+    stop(); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); clearSnapMarks();
+    if (!moved || !AS) { onDone && onDone(false); return; }
+    const {a, box} = AS;
+    if (Math.abs(box.x - s0.x) < .05 && Math.abs(box.y - s0.y) < .05 && Math.abs(box.w - s0.w) < .05 && Math.abs(box.h - s0.h) < .05) { selectAnnot(i, a); return; }
+    await commitAnnotBox(i, a, s0, box);
+    onDone && onDone(true);
+  };
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+}
+const mapPt = (p, ob, nb) => ({x:nb.x + (p.x - ob.x) * (nb.w / ob.w), y:nb.y + (p.y - ob.y) * (nb.h / ob.h)});
+function readAnnStyle(dict){
+  const nums = k => { const a = dict.lookupMaybe(PDFName.of(k), PDFArray); return a ? a.asArray().map(x => x.asNumber ? x.asNumber() : 0) : null; };
+  const hex = c => c && c.length >= 3 ? '#' + c.slice(0, 3).map(v => pad2(Math.round(clamp(v, 0, 1) * 255).toString(16))).join('') : null;
+  const bs = dict.lookupMaybe(PDFName.of('BS'), PDFDict);
+  const W = bs && bs.get(PDFName.of('W')), Sn = bs && bs.get(PDFName.of('S')), ca = dict.get(PDFName.of('CA'));
+  return {color:hex(nums('C')) || '#000000', fill:hex(nums('IC')) || '', width:W && W.asNumber ? W.asNumber() : 1,
+    dash:!!(Sn && String(Sn) === '/D'), opacity:ca && ca.asNumber ? ca.asNumber() : 1};
+}
+const flatPts = (i, arr) => { const out = [], vp = S.pages[i].vp1; for (let k = 0; k + 1 < arr.length; k += 2) { const v = vp.convertToViewportPoint(arr[k], arr[k + 1]); out.push({x:v[0], y:v[1]}); } return out; };
+const numArr = a => a.asArray().map(x => x.asNumber ? x.asNumber() : 0);
+async function commitAnnotBox(i, a, ob, nb){
+  const id = a.id, isMove = Math.abs(nb.w - ob.w) < .05 && Math.abs(nb.h - ob.h) < .05;
+  deselectAnnot();
+  const ok = await mutate(isMove ? '已移動' : '已調整大小', doc => {
+    const ref = findAnnotRef(doc, i, id); if (!ref) { toast('找不到此註解', 'err'); return false; }
+    const ctx = doc.context, dict = ctx.lookup(ref, PDFDict), N = k => PDFName.of(k);
+    const sub = String(dict.get(N('Subtype'))).slice(1);
+    const oR = visToPdf(i, ob).rect, nR = visToPdf(i, nb).rect;
+    // our own shapes and pen strokes are redrawn from their geometry, so lines stay crisp at the new size
+    if (REGEN.has(sub) && dict.get(N('PDFE'))) {
+      const st = readAnnStyle(dict), rot = S.pages[i].rot;
+      let geom = null;
+      if (sub === 'Line') {
+        const L = dict.lookupMaybe(N('L'), PDFArray), le = dict.lookupMaybe(N('LE'), PDFArray);
+        const names = le ? le.asArray().map(String) : ['/None', '/None'];
+        const arrow = names[1] !== '/None';
+        st.head = names[0] !== '/None' ? 'both' : names[1] === '/ClosedArrow' ? 'closed' : 'open';
+        const [p0, p1] = flatPts(i, numArr(L)).map(p => mapPt(p, ob, nb));
+        geom = geomLine(p0, p1, st, arrow);
+        dict.set(N('L'), ctx.obj(toPdfPts(i, [p0, p1])));
+      } else if (sub === 'Square' || sub === 'Circle') {
+        const cloud = !!dict.lookupMaybe(N('BE'), PDFDict);
+        const pad = st.width + (cloud ? Math.max(9, st.width * 6) * .62 : 0);
+        const r = {x:nb.x + pad, y:nb.y + pad, w:Math.max(2, nb.w - 2 * pad), h:Math.max(2, nb.h - 2 * pad)};
+        geom = geomBox(r, st, sub === 'Circle' ? 'ellipse' : cloud ? 'cloud' : 'rect');
+      } else if (sub === 'Polygon' || sub === 'PolyLine') {
+        const pts = flatPts(i, numArr(dict.lookup(N('Vertices'), PDFArray))).map(p => mapPt(p, ob, nb));
+        geom = geomPoly(pts, st, sub === 'Polygon');
+        dict.set(N('Vertices'), ctx.obj(toPdfPts(i, pts)));
+      } else if (sub === 'Ink') {
+        const strokes = dict.lookup(N('InkList'), PDFArray).asArray().map(s => flatPts(i, numArr(s)).map(p => mapPt(p, ob, nb)));
+        geom = geomInk(strokes, st);
+        dict.set(N('InkList'), ctx.obj(strokes.map(s => toPdfPts(i, s))));
+      }
+      const g = visToPdf(i, geom.b);
+      dict.set(N('Rect'), ctx.obj(g.rect));
+      dict.set(N('AP'), ctx.obj({N:formAP(doc, geom.ops, geom.b.w, geom.b.h, rot, gsRes(st))}));
+    } else {
+      // everything else (stamps, text boxes, signatures, other apps' annotations): the appearance follows the new Rect
+      dict.set(N('Rect'), ctx.obj(nR));
+      const sx = (nR[2] - nR[0]) / (oR[2] - oR[0] || 1), sy = (nR[3] - nR[1]) / (oR[3] - oR[1] || 1);
+      const fx = x => nR[0] + (x - oR[0]) * sx, fy = y => nR[1] + (y - oR[1]) * sy;
+      const remap = k => { const arr = dict.lookupMaybe(N(k), PDFArray); if (arr) dict.set(N(k), ctx.obj(numArr(arr).map((v, j) => j % 2 ? fy(v) : fx(v)))); };
+      ['L', 'Vertices', 'CL', 'QuadPoints'].forEach(remap);
+      const ink = dict.lookupMaybe(N('InkList'), PDFArray);
+      if (ink) dict.set(N('InkList'), ctx.obj(ink.asArray().map(s => numArr(s).map((v, j) => j % 2 ? fy(v) : fx(v)))));
+    }
+    dict.set(N('M'), nowStr());
+    // a note's popup window moves along with its icon
+    const pref = dict.get(N('Popup'));
+    if (pref instanceof PDFRef) {
+      const pd = ctx.lookup(pref, PDFDict), pr = pd.lookupMaybe(N('Rect'), PDFArray);
+      if (pr) { const v = numArr(pr), dx = nR[0] - oR[0], dy = nR[1] - oR[1]; pd.set(N('Rect'), ctx.obj([v[0] + dx, v[1] + dy, v[2] + dx, v[3] + dy])); }
+    }
+  });
+  if (ok && S.tool === 'select') {   // keep it selected at its new place
+    const a2 = (await getAnns(i)).find(x => x.id === id);
+    if (a2 && S.els[i]) selectAnnot(i, a2);
+  }
+}
+// sticky-note icons: click opens the note, dragging moves it
+function noteIconDown(ev, i, a){
+  const x0 = ev.clientX, y0 = ev.clientY;
+  let started = false;
+  const mv = e => {
+    if (started || Math.hypot(e.clientX - x0, e.clientY - y0) < 4) return;
+    started = true; window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up0);
+    if (NP) closeNote(true);
+    selectAnnot(i, a); AS.el.classList.add('noteMove');
+    dragAnnot(ev, 'move', () => { if (S.tool !== 'select') deselectAnnot(); });
+    window.dispatchEvent(new PointerEvent('pointermove', {clientX:e.clientX, clientY:e.clientY, shiftKey:e.shiftKey}));
+  };
+  const up0 = () => {
+    window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up0);
+    if (!started) { if (NP && NP.note.id === a.id) return; closeNote(true); deselectAnnot(); openNoteById(i, a.id); }
+  };
+  window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up0);
+}
+// arrow keys nudge the selection (Shift = 10 pt); committed once you stop pressing
+let nudgeTimer = 0, nudgeFrom = null;
+function nudgeSelected(dx, dy){
+  if (!AS || !AS.movable) return;
+  if (!nudgeFrom) nudgeFrom = {...AS.box};
+  AS.box.x += dx; AS.box.y += dy; drawASel();
+  clearTimeout(nudgeTimer);
+  nudgeTimer = setTimeout(() => { if (!AS) { nudgeFrom = null; return; } const ob = nudgeFrom; nudgeFrom = null; commitAnnotBox(AS.i, AS.a, ob, {...AS.box}); }, 500);
+}
 
 /* ---------------- handwritten signature ---------------- */
 function openSigPad(){
@@ -4318,7 +4592,7 @@ async function makeSample(){
    Wiring
    ==================================================================== */
 document.addEventListener('click', e => {
-  const mb = e.target.closest('[data-menu]'); if (mb && !mb.disabled) { showToolMenu(mb, mb.dataset.menu); return; }
+  const mb = e.target.closest('[data-menu]'); if (mb && !mb.disabled) { if (e.target.closest('.sp-arr')) showToolMenu(mb, mb.dataset.menu); else setTool(lastToolOf(mb.dataset.menu)); return; }
   const b = e.target.closest('[data-act],[data-tool],[data-zoom],[data-view]'); if (!b || b.disabled) return;
   if (b.dataset.act && actions[b.dataset.act]) actions[b.dataset.act]();
   else if (b.dataset.tool) setTool(b.dataset.tool);
@@ -4582,7 +4856,8 @@ if (DESK) {
   DESK.onOpenPath(p => openPath(p));
   DESK.ready().then(async list => { for (const p of (list || [])) await openPath(p); });
 }
-window.__pdfapp = {S, actions, scrollToPage, makeSample, pageChars:i => pageChars(i)};
+paintSplitButtons();
+window.__pdfapp = {S, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box}};
 </script>
 </body>
 </html>
