@@ -132,11 +132,28 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .annitem:hover{background:#fffaf0}
 .annitem .k{color:var(--ink3);font-size:11px;margin-bottom:2px}
 
-.viewer{flex:1;overflow:auto;position:relative;background:var(--desk);outline:none}
+.viewer{flex:1;overflow:auto;position:relative;background:var(--desk);outline:none;scrollbar-gutter:stable}
 .viewer.pan-ready,.viewer.pan-ready *{cursor:grab!important}
 .viewer.panning,.viewer.panning *{cursor:grabbing!important;user-select:none}
 .pages{position:relative;margin:0}
 .page{position:absolute;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.12),0 4px 14px rgba(0,0,0,.12)}
+.page.newpage{outline:3px solid var(--seal);outline-offset:4px;animation:np 2.6s ease-out forwards}
+.page.newpage::after{content:attr(data-badge);position:absolute;left:10px;top:10px;background:var(--seal);color:#fff;font-size:12px;padding:4px 11px;border-radius:5px;white-space:nowrap;z-index:3;box-shadow:0 2px 8px rgba(0,0,0,.2);animation:npb 2.6s ease-out forwards}
+@keyframes npb{0%,75%{opacity:1}100%{opacity:0}}
+@keyframes np{0%,70%{outline-color:var(--seal)}100%{outline-color:transparent}}
+.thumb.newpage .tc{outline:3px solid var(--seal);outline-offset:2px}
+.ap-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px}
+.ap-row .field{margin:0}
+.ap-row select,.ap-row input{font:inherit;border:1px solid var(--line2);border-radius:7px;padding:6px 9px;background:#fff;font-size:13px}
+.ap-strip{display:flex;gap:12px;align-items:flex-end;overflow-x:auto;padding:16px 14px 12px;background:#ebe8e1;border-radius:9px;min-height:190px}
+.ap-pg{flex:none;display:flex;flex-direction:column;align-items:center;gap:6px;font-size:11.5px;color:var(--ink2);font-variant-numeric:tabular-nums}
+.ap-pg .b{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.18);display:grid;place-items:center;overflow:hidden;color:#c9c5bc}
+.ap-pg .b canvas,.ap-pg .b img{display:block;width:100%;height:100%}
+.ap-pg.new .b{background:#fff;box-shadow:none;outline:2px dashed var(--seal);outline-offset:-2px;color:var(--seal);font-weight:700;font-size:13px}
+.ap-pg.new{color:var(--seal-ink);font-weight:500}
+.ap-pg.more{align-self:center;color:var(--ink3);font-size:18px;padding:0 4px}
+.ap-sum{margin-top:10px;font-size:13px}
+.ap-sum b{color:var(--seal-ink)}
 .page canvas.pc{position:absolute;inset:0;width:100%;height:100%;display:block}
 .page .ovl{position:absolute;inset:0}
 .page .ld{position:absolute;inset:0;display:grid;place-items:center;color:#c9c5bc;font-size:12px}
@@ -263,7 +280,7 @@ input[type=file]{display:none}
     <button class="rb" data-act="redo" id="bRedo" title="重做 (Ctrl+Y)"><i data-i="redo"></i>重做</button>
   </div><div class="cap">編輯</div></div>
   <div class="grp"><div class="btns">
-    <button class="rb" data-act="addPage" data-need title="在目前頁面之後插入空白頁"><i data-i="pageAdd"></i>加頁</button>
+    <button class="rb" data-act="addPage" data-need title="選擇位置與數量後加入空白頁"><i data-i="pageAdd"></i>加頁</button>
     <button class="rb" data-act="delPage" data-need title="預覽並勾選要刪除的頁面"><i data-i="pageDel"></i>減頁</button>
     <button class="rb" data-act="insertPdf" data-need title="從其他 PDF 匯入頁面插入"><i data-i="pageIns"></i>插入PDF</button>
     <button class="rb" data-act="rotL" data-need title="目前頁面向左轉 90°"><i data-i="rotL"></i>左轉</button>
@@ -627,7 +644,10 @@ function fitScale(mode){
   if (mode === 'actual') return PX;
   if (!S.pages.length) return S.scale;
   const rows = rowsFor(); const row = rows[Math.max(0, rows.findIndex(r => r.includes(S.current)))] || [0];
-  const pw = isTwo() ? (row.length === 2 ? S.pages[row[0]].w + S.pages[row[1]].w : 2 * S.pages[row[0]].w) : S.pages[row[0]].w;
+  // fit-width fits the widest page that is laid out (all pages in continuous views), so mixed
+  // portrait/landscape documents never need a horizontal scrollbar; fit-page also fits the current spread's height
+  const shownPages = isCont() ? S.pages.map((_, i) => i) : row;
+  const pw = (isTwo() ? 2 : 1) * Math.max(...shownPages.map(p => S.pages[p].w));
   const ph = Math.max(...row.map(p => S.pages[p].h));
   const aw = viewer.clientWidth - 2 * MARGIN - (isTwo() ? GAP : 0) - (mode === 'fit-width' ? 2 : 0);
   const ah = viewer.clientHeight - 2 * MARGIN;
@@ -1096,11 +1116,149 @@ async function mutate(label, fn, opts = {}){
     S.undo.push({bytes:S.bytes, signed:S.signed, cur:S.current}); if (S.undo.length > 30) S.undo.shift();
     S.redo = []; S.signed = false; S.dirty = true;
     await loadDoc(out, {keepView:true, scrollToCurrent:!!opts.scrollToCurrent});
+    if (opts.highlight) highlightPages(opts.highlight.from, opts.highlight.count, opts.highlight.label);
     if (S.handle && S.autoWrite) { const ok = await writeBack(out, {quiet:true}); if (label) toast(label + (ok ? '，已存回原檔' : '')); }
     else if (label) toast(label);
     return true;
   } catch (e) { console.error(e); toast('操作失敗：' + (e.message || e), 'err'); return false; }
   finally { busy(false); }
+}
+
+/* show newly inserted pages in context: keep the previous page in view and outline the new ones */
+function highlightPages(from, count, label){
+  if (!(count > 0) || !S.pages.length) return;
+  from = clamp(from, 0, S.pages.length - 1);
+  const to = Math.min(S.pages.length - 1, from + count - 1);
+  S.current = from;
+  if (isCont()) {
+    const p = S.pos[from];
+    if (p) {
+      const prevVisible = from > 0 ? Math.min(viewer.clientHeight * 0.28, S.pages[from - 1].h * S.scale * 0.5) : MARGIN / 2;
+      viewer.scrollTop = Math.max(0, p.y - prevVisible);
+    }
+  } else scrollToPage(from);
+  updatePager(); scheduleRender(0);
+  for (let i = from; i <= to; i++) {
+    const el = S.els[i]; if (!el) continue;
+    el.dataset.badge = `${label || '新增頁面'}（第 ${i + 1} 頁）`;
+    el.classList.add('newpage');
+    const th = document.querySelector(`.thumb[data-i="${i}"]`); if (th) th.classList.add('newpage');
+  }
+  const th0 = document.querySelector(`.thumb[data-i="${from}"]`); if (th0) th0.scrollIntoView({block:'center'});
+  const ver = S.version;
+  setTimeout(() => { if (ver !== S.version) return; for (let i = from; i <= to; i++) { S.els[i] && S.els[i].classList.remove('newpage'); const th = document.querySelector(`.thumb[data-i="${i}"]`); th && th.classList.remove('newpage'); } }, 2800);
+}
+
+/* cached small page images for dialogs */
+const thumbCache = new Map();
+function pageThumb(i, h){
+  const key = S.version + ':' + i + ':' + h;
+  if (!thumbCache.has(key)) thumbCache.set(key, (async () => {
+    const pg = S.pages[i], dpr = window.devicePixelRatio || 1;
+    const vp = pg.page.getViewport({scale:h * dpr / pg.h});
+    const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+    await pg.page.render({canvasContext:c.getContext('2d'), viewport:vp, annotationMode:pdfjsLib.AnnotationMode.ENABLE}).promise;
+    return c.toDataURL('image/png');
+  })().catch(() => ''));
+  return thumbCache.get(key);
+}
+const PAPER = {a4:[595.28, 841.89], a3:[841.89, 1190.55], a5:[419.53, 595.28], letter:[612, 792], legal:[612, 1008]};
+
+async function openAddPage(){
+  const n = S.pages.length, cur = S.current, cp = S.pages[cur];
+  const mm = v => Math.round(v / 72 * 25.4);
+  const body = document.createElement('div');
+  body.innerHTML = `
+    <div class="ap-row">
+      <div class="field"><label>插入位置</label>
+        <select id="apPos">
+          <option value="after" selected>目前頁（第 ${cur + 1} 頁）之後</option>
+          <option value="before">目前頁（第 ${cur + 1} 頁）之前</option>
+          <option value="start">文件最前面</option>
+          <option value="end">文件最後面（第 ${n} 頁之後）</option>
+          <option value="at">指定頁碼之後…</option>
+        </select></div>
+      <div class="field" id="apAtF" style="display:none"><label>在第幾頁之後（0 = 最前面）</label><input type="number" id="apAt" min="0" max="${n}" value="${cur + 1}" style="width:90px"></div>
+      <div class="field"><label>頁數</label><input type="number" id="apCount" min="1" max="200" value="1" style="width:80px"></div>
+      <div class="field"><label>頁面大小</label>
+        <select id="apSize">
+          <option value="same" selected>與第 ${cur + 1} 頁相同（${mm(cp.w)} × ${mm(cp.h)} mm）</option>
+          <option value="a4">A4（210 × 297 mm）</option>
+          <option value="a3">A3（297 × 420 mm）</option>
+          <option value="a5">A5（148 × 210 mm）</option>
+          <option value="letter">Letter（216 × 279 mm）</option>
+          <option value="legal">Legal（216 × 356 mm）</option>
+        </select></div>
+      <div class="field" id="apOriF" style="display:none"><label>方向</label>
+        <select id="apOri"><option value="p">直向</option><option value="l">橫向</option></select></div>
+    </div>
+    <div class="flab" style="margin-bottom:6px">插入後的頁面順序預覽（紅色虛線為新加入的空白頁）</div>
+    <div class="ap-strip" id="apStrip"></div>
+    <div class="ap-sum" id="apSum"></div>`;
+  const $b = q => body.querySelector(q);
+  const read = () => {
+    const pos = $b('#apPos').value;
+    let at = pos === 'after' ? cur + 1 : pos === 'before' ? cur : pos === 'start' ? 0 : pos === 'end' ? n : parseInt($b('#apAt').value, 10);
+    const count = parseInt($b('#apCount').value, 10);
+    const size = $b('#apSize').value, ori = $b('#apOri').value;
+    let w, h;
+    if (size === 'same') { w = cp.w; h = cp.h; }
+    else { [w, h] = PAPER[size]; if (ori === 'l') [w, h] = [h, w]; }
+    const err = !(at >= 0 && at <= n) ? `插入位置需介於 0 到 ${n}` : !(count >= 1 && count <= 200) ? '頁數需介於 1 到 200' : '';
+    return {pos, at, count, size, ori, w, h, err};
+  };
+  const H = 120;
+  let drawSeq = 0;
+  const draw = async () => {
+    const o = read(), seq = ++drawSeq;
+    $b('#apAtF').style.display = o.pos === 'at' ? '' : 'none';
+    $b('#apOriF').style.display = o.size === 'same' ? 'none' : '';
+    const ok = document.querySelector('#apOk');
+    if (o.err) { $b('#apSum').innerHTML = `<span style="color:var(--seal)">${esc(o.err)}</span>`; $b('#apStrip').innerHTML = ''; if (ok) ok.disabled = true; return; }
+    if (ok) { ok.disabled = false; ok.textContent = `確定加入 ${o.count} 頁`; }
+    // window of the resulting order around the insertion point
+    const items = [];
+    const before = Math.max(0, o.at - 3);
+    if (before > 0) items.push({more:true});
+    for (let i = before; i < o.at; i++) items.push({old:i, num:i + 1});
+    const shownNew = Math.min(o.count, 6);
+    for (let k = 0; k < shownNew; k++) items.push({nu:true, num:o.at + k + 1});
+    if (o.count > shownNew) items.push({more:true, txt:`…另 ${o.count - shownNew} 頁新頁`});
+    const after = Math.min(n, o.at + 3);
+    for (let i = o.at; i < after; i++) items.push({old:i, num:i + 1 + o.count});
+    if (after < n) items.push({more:true});
+    const strip = $b('#apStrip'); strip.innerHTML = '';
+    for (const it of items) {
+      const d = document.createElement('div');
+      if (it.more) { d.className = 'ap-pg more'; d.textContent = it.txt || '…'; strip.appendChild(d); continue; }
+      const pw = it.nu ? o.w : S.pages[it.old].w, ph = it.nu ? o.h : S.pages[it.old].h;
+      const bw = Math.round(H * pw / ph);
+      d.className = 'ap-pg' + (it.nu ? ' new' : '');
+      d.innerHTML = `<div class="b" style="width:${bw}px;height:${H}px">${it.nu ? '新頁' : ''}</div><span>第 ${it.num} 頁${it.nu ? '（新）' : it.num !== it.old + 1 ? `（原 ${it.old + 1}）` : ''}</span>`;
+      strip.appendChild(d);
+      if (!it.nu) pageThumb(it.old, H).then(u => { if (u && seq === drawSeq) { const img = new Image(); img.src = u; d.querySelector('.b').appendChild(img); } });
+    }
+    const where = o.at === 0 ? '文件最前面' : `第 ${o.at} 頁之後`;
+    $b('#apSum').innerHTML = `將在<b>${where}</b>加入 <b>${o.count}</b> 頁空白頁（${mm(o.w)} × ${mm(o.h)} mm），完成後新頁為第 <b>${o.at + 1}${o.count > 1 ? '–' + (o.at + o.count) : ''}</b> 頁，文件共 <b>${n + o.count}</b> 頁。`;
+    const firstNew = strip.querySelector('.ap-pg.new'); if (firstNew) firstNew.scrollIntoView({inline:'center', block:'nearest'});
+  };
+  body.addEventListener('input', draw); body.addEventListener('change', draw);
+  const res = await openModal({title:'新增空白頁', body, width:Math.min(860, innerWidth - 40), buttons:[
+    {label:'取消', value:null},
+    {label:'確定加入 1 頁', primary:true, id:'apOk', handler:() => { const o = read(); if (o.err) { toast(o.err, 'err'); return; } return o; }}],
+    onOpen:() => draw()});
+  if (!res) return;
+  const {at, count, w, h, size} = res;
+  await mutate(`已在${at === 0 ? '文件最前面' : `第 ${at} 頁之後`}加入 ${count} 頁空白頁`, doc => {
+    const ref = doc.getPage(cur), rot = ref.getRotation().angle;
+    // "same size" copies the reference page's media box and rotation; standard sizes are upright
+    const base = size === 'same' ? ref.getSize() : {width:w, height:h};
+    for (let k = 0; k < count; k++) {
+      const np = doc.insertPage(at + k, [base.width, base.height]);
+      if (size === 'same' && rot) np.setRotation(degrees(rot));
+    }
+    S.current = at;
+  }, {scrollToCurrent:true, highlight:{from:at, count, label:'新增的空白頁'}});
 }
 
 function visToPdf(i, b){
@@ -1352,7 +1510,7 @@ async function insertFromPdf(file){
     const copied = await doc.copyPages(srcDoc, res.sel);
     copied.forEach((pg, k) => doc.insertPage(at + k, pg));
     S.current = clamp(at, 0, doc.getPageCount() - 1);
-  }, {scrollToCurrent:true});
+  }, {scrollToCurrent:true, highlight:{from:at, count:res.sel.length, label:'插入的頁面'}});
 }
 
 const actions = {
@@ -1392,15 +1550,7 @@ const actions = {
     primeWrite();
     await loadDoc(r.bytes, {keepView:true}); toast('已重做'); await afterEdit();
   },
-  addPage(){
-    const i = S.current;
-    return mutate(`已在第 ${i + 1} 頁之後新增空白頁`, doc => {
-      const src = doc.getPage(i), {width, height} = src.getSize();
-      const np = doc.insertPage(i + 1, [width, height]);
-      const r = src.getRotation().angle; if (r) np.setRotation(degrees(r));
-      S.current = i + 1;
-    }, {scrollToCurrent:true});
-  },
+  addPage(){ return openAddPage(); },
   async delPage(){
     const n = S.pages.length;
     if (n <= 1) { toast('文件至少要保留一頁', 'err'); return; }
