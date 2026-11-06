@@ -33,16 +33,16 @@ Windows 桌面版 PDF 閱讀與編輯工具，會自動檢查並安裝新版本�
 
 ## 發佈新版本（給維護者）
 
-1. 修改 `package.json` 的 `version`，例如 `1.0.1`
-2. 提交並推送一個同版本的標籤：
+1. 修改 `package.json` 的 `version`，例如改成 `1.0.1`
+2. 提交並推送到 `main`：
 
    ```bash
    git commit -am "v1.0.1"
-   git tag v1.0.1
-   git push origin main --tags
+   git push origin main
    ```
 
-3. GitHub Actions 會在 Windows 上建置安裝檔並發佈到 Releases，已安裝的程式就會自動更新。
+3. GitHub Actions 偵測到版本號變更，會在 Windows 上建置安裝檔並發佈到 Releases（同時建立 `v1.0.1` 標籤），
+   已安裝的程式就會自動更新。也可以在 Actions 頁面手動執行「Build & Release」。
 
 ## 開發
 
