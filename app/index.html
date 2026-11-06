@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; worker-src 'self' blob:; connect-src 'self' blob: data:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>PDF 工作台</title>
-<script>try{var t=localStorage.getItem('pdfeditor.theme')||'system';document.documentElement.dataset.theme=(t==='dark'||(t==='system'&&matchMedia('(prefers-color-scheme: dark)').matches))?'dark':'light';}catch(e){}</script>
+<script>try{var t=localStorage.getItem('pdfeditor.theme')||'system',d=(t==='dark'||(t==='system'&&matchMedia('(prefers-color-scheme: dark)').matches)),pc=localStorage.getItem('pdfeditor.pagecolor')||'original';document.documentElement.dataset.theme=d?'dark':'light';document.documentElement.dataset.page=pc==='auto'?(d?'night':'original'):pc;}catch(e){}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
@@ -531,7 +531,19 @@ html[data-theme="dark"] .rs:hover,html[data-theme="dark"] .rb:hover{background:v
 html[data-theme="dark"] ::-webkit-scrollbar{width:11px;height:11px}
 html[data-theme="dark"] ::-webkit-scrollbar-thumb{background:#4a4b50;border-radius:6px;border:2px solid transparent;background-clip:padding-box}
 html[data-theme="dark"] ::-webkit-scrollbar-track{background:transparent}
+html[data-page="night"] .page canvas.pc,html[data-page="night"] .thumb .tc{filter:invert(.9) hue-rotate(180deg)}
+html[data-page="night"] .page{background:#1a1a1a}
+html[data-page="night"] .page .ld{color:#555}
+html[data-page="sepia"] .page canvas.pc,html[data-page="sepia"] .thumb .tc{filter:sepia(.55) saturate(1.2) brightness(.95) contrast(.97)}
+html[data-page="sepia"] .page{background:#efe1c0}
+.thememenu .hd{font-size:11px;color:var(--ink3);padding:6px 10px 2px}
+.thememenu hr{border:0;border-top:1px solid var(--line);margin:4px 2px}
 .thememenu button .ck{width:14px;color:var(--seal);font-weight:700;display:inline-block}
+.pcs{width:16px;height:16px;border-radius:4px;border:1px solid var(--line2);display:inline-block;flex:none}
+.pcs-original{background:#fff}
+.pcs-auto{background:linear-gradient(135deg,#fff 50%,#1a1a1a 50%)}
+.pcs-night{background:#1a1a1a}
+.pcs-sepia{background:#efe1c0}
 .thememenu small{margin-left:auto;color:var(--ink3);font-size:11px;padding-left:12px}
 </style>
 </head>
@@ -4912,9 +4924,14 @@ const THEME_KEY = 'pdfeditor.theme';
 let THEME = (() => { try { return localStorage.getItem(THEME_KEY) || 'system'; } catch (_) { return 'system'; } })();
 const darkMQ = matchMedia('(prefers-color-scheme: dark)');
 const THEME_NAMES = {system:'跟隨作業系統', dark:'暗色模式', light:'亮色模式'};
+const PAGE_KEY = 'pdfeditor.pagecolor';
+let PAGECOLOR = (() => { try { return localStorage.getItem(PAGE_KEY) || 'original'; } catch (_) { return 'original'; } })();
+const PAGE_NAMES = {original:'原色', auto:'自動（暗色模式時使用夜間色彩）', night:'夜間（反轉顏色）', sepia:'護眼（米黃）'};
+function setPageColor(v){ PAGECOLOR = v; try { localStorage.setItem(PAGE_KEY, v); } catch (_) {} applyTheme(); }
 function applyTheme(){
   const dark = THEME === 'dark' || (THEME === 'system' && darkMQ.matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  document.documentElement.dataset.page = PAGECOLOR === 'auto' ? (dark ? 'night' : 'original') : PAGECOLOR;
   const b = $('#bTheme');
   if (b) { const ic = THEME === 'system' ? 'themeAuto' : THEME === 'dark' ? 'moon' : 'sun'; b.querySelector('svg').outerHTML = icon(ic); b.title = '顯示模式：' + THEME_NAMES[THEME]; }
   if (typeof drawRulers === 'function') drawRulers();
@@ -4928,16 +4945,21 @@ function showThemeMenu(){
   const m = $('#themeMenu'), btn = $('#bTheme');
   if (m.style.display === 'block') { m.style.display = 'none'; return; }
   const now = darkMQ.matches ? '暗色' : '亮色';
-  m.innerHTML = [['system', 'themeAuto', `<small>目前：${now}</small>`], ['dark', 'moon', ''], ['light', 'sun', '']]
-    .map(([k, ic, x]) => `<button data-th="${k}" class="${THEME === k ? 'on' : ''}"><span class="ck">${THEME === k ? '✓' : ''}</span>${icon(ic)}${THEME_NAMES[k]}${x}</button>`).join('');
+  m.innerHTML = '<div class="hd">視窗顯示</div>' + [['system', 'themeAuto', `<small>目前：${now}</small>`], ['dark', 'moon', ''], ['light', 'sun', '']]
+    .map(([k, ic, x]) => `<button data-th="${k}" class="${THEME === k ? 'on' : ''}"><span class="ck">${THEME === k ? '✓' : ''}</span>${icon(ic)}${THEME_NAMES[k]}${x}</button>`).join('') +
+    '<hr><div class="hd">頁面色彩（只影響畫面顯示，不改變檔案）</div>' +
+    Object.entries(PAGE_NAMES).map(([k, n]) => `<button data-pc="${k}" class="${PAGECOLOR === k ? 'on' : ''}"><span class="ck">${PAGECOLOR === k ? '✓' : ''}</span><span class="pcs pcs-${k}"></span>${n}</button>`).join('');
   const r = btn.getBoundingClientRect(); m.style.display = 'block';
   m.style.left = Math.min(r.left, innerWidth - m.offsetWidth - 8) + 'px'; m.style.top = (r.bottom + 4) + 'px';
-  m.onclick = e => { const b = e.target.closest('[data-th]'); if (!b) return; m.style.display = 'none'; setTheme(b.dataset.th); toast('顯示模式：' + THEME_NAMES[b.dataset.th]); };
+  m.onclick = e => {
+    const p = e.target.closest('[data-pc]'); if (p) { m.style.display = 'none'; setPageColor(p.dataset.pc); toast('頁面色彩：' + PAGE_NAMES[p.dataset.pc]); return; }
+    const b = e.target.closest('[data-th]'); if (!b) return; m.style.display = 'none'; setTheme(b.dataset.th); toast('顯示模式：' + THEME_NAMES[b.dataset.th]);
+  };
 }
 document.addEventListener('pointerdown', e => { const m = $('#themeMenu'); if (m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('#bTheme')) m.style.display = 'none'; }, true);
 if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyTheme();
 paintSplitButtons();
-window.__pdfapp = {S, setTheme, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box}};
+window.__pdfapp = {S, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box}};
 </script>
 </body>
 </html>
