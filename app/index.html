@@ -538,6 +538,16 @@ html[data-page="sepia"] .page canvas.pc,html[data-page="sepia"] .thumb .tc{filte
 html[data-page="sepia"] .page{background:#efe1c0}
 .thememenu .hd{font-size:11px;color:var(--ink3);padding:6px 10px 2px}
 .thememenu hr{border:0;border-top:1px solid var(--line);margin:4px 2px}
+/* toolbar options: always full colour (same as 開啟); turn yellow under the mouse so they are easy to find */
+.rb:disabled,.rs:disabled,.vb:disabled{opacity:1;cursor:default}
+html[data-theme="dark"] .rb,html[data-theme="dark"] .rs,html[data-theme="dark"] .vb{color:#f4f2ee}
+html[data-theme="dark"] .rb:hover,html[data-theme="dark"] .rs:hover,html[data-theme="dark"] .vb:hover,
+html[data-theme="dark"] .rb.split .sp-main:hover,html[data-theme="dark"] .rb.split .sp-arr:hover{color:#ffd43b;background:rgba(255,212,59,.13)}
+html[data-theme="dark"] .rb:hover svg,html[data-theme="dark"] .rs:hover svg,html[data-theme="dark"] .vb:hover svg,html[data-theme="dark"] .rb.split .sp-main:hover svg{stroke:#ffd43b}
+html[data-theme="light"] .rb:hover,html[data-theme="light"] .rs:hover,html[data-theme="light"] .vb:hover,
+html[data-theme="light"] .rb.split .sp-main:hover,html[data-theme="light"] .rb.split .sp-arr:hover{background:#ffe066;color:#3d2a00}
+html[data-theme="light"] .rb:hover svg,html[data-theme="light"] .rs:hover svg,html[data-theme="light"] .vb:hover svg,html[data-theme="light"] .rb.split .sp-main:hover svg{stroke:#3d2a00}
+.rb.split:hover{background:transparent!important}
 .thememenu button .ck{width:14px;color:var(--seal);font-weight:700;display:inline-block}
 .pcs{width:16px;height:16px;border-radius:4px;border:1px solid var(--line2);display:inline-block;flex:none}
 .pcs-original{background:#fff}
