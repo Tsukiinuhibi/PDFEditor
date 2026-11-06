@@ -1,0 +1,89 @@
+{
+  "name": "pdfeditor",
+  "productName": "PDF 工作台",
+  "version": "1.0.0",
+  "description": "PDF 閱讀與編輯工具：頁面增減與插入、圖片擷取裁切、旋轉、附件、註解、手寫簽名與數位簽章",
+  "main": "main.js",
+  "author": "Tsukiinuhibi",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Tsukiinuhibi/PDFEditor.git"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "release": "electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.11",
+    "node-forge": "1.4.3",
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "4.10.38"
+  },
+  "devDependencies": {
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "io.github.tsukiinuhibi.pdfeditor",
+    "productName": "PDF 工作台",
+    "executableName": "PDFEditor",
+    "copyright": "Copyright © 2026 Tsukiinuhibi",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "app/**/*",
+      "!**/*.map",
+      "!node_modules/pdfjs-dist/legacy/**",
+      "!node_modules/pdfjs-dist/web/**",
+      "!node_modules/pdfjs-dist/types/**",
+      "!node_modules/pdfjs-dist/image_decoders/**",
+      "!node_modules/pdf-lib/es/**",
+      "!node_modules/pdf-lib/cjs/**",
+      "!node_modules/pdf-lib/src/**",
+      "!node_modules/node-forge/lib/**"
+    ],
+    "fileAssociations": [
+      {
+        "ext": "pdf",
+        "name": "PDF 文件",
+        "description": "PDF 文件",
+        "role": "Editor"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "PDF 工作台",
+      "artifactName": "PDFEditor-Setup-${version}.${ext}",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Tsukiinuhibi",
+        "repo": "PDFEditor",
+        "releaseType": "release"
+      }
+    ]
+  }
+}

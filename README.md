@@ -1,1 +1,58 @@
-# PDFEditor
+# PDF 工作台 (PDFEditor)
+
+Windows 桌面版 PDF 閱讀與編輯工具，會自動檢查並安裝新版本。
+
+## 功能
+
+**編輯**
+- 加頁（插入空白頁）、減頁（預覽縮圖勾選，批量刪除）
+- 插入 PDF：從其他 PDF 勾選頁面，插入到指定位置
+- 頁面左轉 / 右轉
+- 自動偵測頁面中的圖片，上下左右裁切後輸出 PNG / JPG，或全部打包成 ZIP
+- 附加檔案到 PDF 內
+- 註解：便利貼、文字方塊、螢光筆
+- 手寫簽名、數位簽章（.p12 / .pfx 憑證，或測試用自簽憑證）
+- 修改直接存回原檔（可在狀態列關閉「修改後自動存回」）
+
+**閱讀**
+- 縮放：實際大小、符合頁面、符合寬度
+- 檢視：單頁、連續、對開、連續雙頁
+- 滑鼠滾輪捲動、按住空白鍵拖曳頁面、Ctrl + 滾輪以滑鼠為中心縮放
+
+## 安裝
+
+到 [Releases](https://github.com/Tsukiinuhibi/PDFEditor/releases/latest) 下載 `PDFEditor-Setup-x.y.z.exe` 並執行。
+
+安裝檔目前沒有程式碼簽章，Windows 可能會顯示「Windows 已保護您的電腦」：
+點「其他資訊」→「仍要執行」即可。
+
+## 自動更新
+
+程式啟動後會自動到 GitHub Releases 檢查新版本（之後每 4 小時一次），在背景下載完成後會提示「立即重新啟動並更新」；
+也可以按工具列右側的「檢查更新」或狀態列的版本號手動檢查。
+
+## 發佈新版本（給維護者）
+
+1. 修改 `package.json` 的 `version`，例如 `1.0.1`
+2. 提交並推送一個同版本的標籤：
+
+   ```bash
+   git commit -am "v1.0.1"
+   git tag v1.0.1
+   git push origin main --tags
+   ```
+
+3. GitHub Actions 會在 Windows 上建置安裝檔並發佈到 Releases，已安裝的程式就會自動更新。
+
+## 開發
+
+```bash
+npm install
+npm start          # 執行
+npm run dist       # 產生安裝檔到 dist/
+```
+
+## 授權
+
+MIT。使用 [PDF.js](https://github.com/mozilla/pdf.js)（Apache-2.0）、[pdf-lib](https://github.com/Hopding/pdf-lib)（MIT）、
+[node-forge](https://github.com/digitalbazaar/forge)（BSD-3 / GPL-2）、[Electron](https://www.electronjs.org/)（MIT）。

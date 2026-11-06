@@ -1,0 +1,21 @@
+'use strict';
+// Narrow bridge between the page and the main process. The page never gets Node access.
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
+
+contextBridge.exposeInMainWorld('desktop', {
+  ready: () => ipcRenderer.invoke('renderer-ready'),
+  info: () => ipcRenderer.invoke('app:info'),
+  openDialog: () => ipcRenderer.invoke('file:open-dialog'),
+  readFile: p => ipcRenderer.invoke('file:read', p),
+  writeFile: (p, data) => ipcRenderer.invoke('file:write', p, data),
+  saveAs: (name, data) => ipcRenderer.invoke('file:save-as', name, data),
+  pathForFile: f => { try { return webUtils.getPathForFile(f) || ''; } catch (_) { return ''; } },
+  openExternal: url => ipcRenderer.invoke('app:open-external', url),
+  onOpenPath: cb => ipcRenderer.on('open-path', (_e, p) => cb(p)),
+  update: {
+    state: () => ipcRenderer.invoke('update:state'),
+    check: () => ipcRenderer.invoke('update:check'),
+    install: () => ipcRenderer.invoke('update:install'),
+    on: cb => ipcRenderer.on('update', (_e, s) => cb(s)),
+  },
+});
