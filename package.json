@@ -1,7 +1,7 @@
 {
   "name": "pdfeditor",
   "productName": "PDF 工作台",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "PDF 閱讀與編輯工具：頁面增減與插入、圖片擷取裁切、旋轉、附件、註解、手寫簽名與數位簽章",
   "main": "main.js",
   "author": "Tsukiinuhibi",

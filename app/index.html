@@ -584,6 +584,45 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
 .tm-cols button{width:22px;height:22px;padding:0;border-radius:50%;border:1px solid rgba(0,0,0,.2);justify-content:center;font-size:11px}
 .tb-thumb{display:inline-flex;height:26px;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:#fff}
 .tb-thumb img{height:100%;width:auto;max-width:60px;object-fit:contain}
+
+/* colour picker */
+#cpMenu{z-index:10050;width:268px;padding:10px 10px 8px}
+.cp-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;font-size:12px;color:var(--ink2)}
+.cp-head b{font-weight:600;color:var(--ink)}
+.cp-nonebtn{width:auto!important;padding:2px 8px!important;font-size:12px;border:1px solid var(--line)!important;border-radius:5px}
+.cpmenu .cp-grid{grid-template-columns:repeat(8,24px);gap:7px 6px;min-height:24px}
+.cpmenu .cp-sw{width:24px!important;height:24px}
+.cp-sw:hover{transform:scale(1.12);box-shadow:0 0 0 2px #ffd43b}
+.cp-wheelrow{display:flex;gap:10px;margin:10px 0 6px;align-items:flex-start}
+.cp-wheelbox{position:relative;width:168px;height:168px;flex:none}
+.cp-wheel{width:168px;height:168px;border-radius:50%;cursor:crosshair;display:block;touch-action:none}
+.cp-mark{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.55),0 1px 3px rgba(0,0,0,.4);pointer-events:none}
+.cp-side{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0}
+.cp-prev{display:flex;flex-direction:column;height:46px;border-radius:6px;overflow:hidden;border:1px solid var(--line)}
+.cp-prev i{flex:1}
+.cp-hex{width:100%;box-sizing:border-box;font:12px ui-monospace,Consolas,monospace;padding:4px 5px;border:1px solid var(--line);border-radius:5px;background:var(--surface);color:var(--ink)}
+.cp-rgb{font-size:10.5px;color:var(--ink3);white-space:nowrap}
+.cp-eye{display:flex!important;align-items:center;justify-content:center;gap:4px;width:100%!important;padding:5px 4px!important;border:1px solid var(--line)!important;border-radius:6px;font-size:12px}
+.cp-eye:hover,.cp-addfav:hover,.cp-clrfreq:hover,.cp-foot button:hover,.cp-nonebtn:hover{background:#fff3bf!important;color:#1f2328!important}
+.cp-eye svg{width:15px;height:15px}
+.cp-vrow{display:flex!important;align-items:center;gap:8px;font-size:12px;color:var(--ink2);padding:0!important;margin-bottom:4px}
+.cp-val{flex:1;-webkit-appearance:none;appearance:none;height:10px;border-radius:5px;border:1px solid var(--line)}
+.cp-val::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#fff;border:1.5px solid #555;box-shadow:0 1px 2px rgba(0,0,0,.4)}
+.cp-sec{display:flex;align-items:center;justify-content:space-between;margin:8px 0 5px;font-size:12px;color:var(--ink2);font-weight:600}
+.cp-sec button{width:auto!important;padding:1px 7px!important;font-size:11.5px;font-weight:400;border:1px solid var(--line)!important;border-radius:5px}
+.cp-empty{grid-column:1/-1;font-size:11.5px;color:var(--ink3);line-height:1.4}
+.cp-foot{display:flex;justify-content:flex-end;gap:6px;margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+.cp-foot button{width:auto!important;padding:4px 14px!important;border:1px solid var(--line)!important;border-radius:6px;justify-content:center}
+.cp-foot .pri{background:var(--seal)!important;color:#fff!important;border-color:var(--seal)!important}
+.cp-foot .pri:hover{filter:brightness(1.08);background:var(--seal)!important;color:#fff!important}
+#eyedrop{position:fixed;inset:0;z-index:10100;background-size:100% 100%;cursor:crosshair}
+#eyedrop .ed-loupe{position:fixed;width:154px;height:154px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.5),0 6px 18px rgba(0,0,0,.35);pointer-events:none;left:-999px}
+#eyedrop .ed-lab{position:fixed;left:-999px;display:flex;align-items:center;gap:6px;padding:3px 8px;border-radius:6px;background:rgba(20,22,26,.88);color:#fff;font:12px ui-monospace,Consolas,monospace;pointer-events:none}
+#eyedrop .ed-lab i{width:14px;height:14px;border-radius:3px;border:1px solid #fff}
+#eyedrop .ed-tip{position:fixed;top:12px;left:50%;transform:translateX(-50%);padding:6px 14px;border-radius:8px;background:rgba(20,22,26,.85);color:#fff;font-size:13px;pointer-events:none}
+.sc-cols{display:flex;align-items:center;gap:5px;height:30px}
+.sc-cols .swatch{width:20px;height:20px}
+.pens .cpick{margin-left:4px}
 </style>
 </head>
 <body>
@@ -625,6 +664,7 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
     <button class="rb split" data-menu="drawMenu" data-need title="繪圖：點按使用目前工具，點 ▾ 選擇其他（箭頭、線條、矩形、橢圓形、多邊形、雲狀）"><span class="sp-main"><i data-i="arrow"></i><span class="sp-lab">箭頭</span></span><span class="sp-arr" title="選擇其他繪圖工具">▾</span></button>
     <button class="rb" data-tool="pen" data-need title="畫筆：自由手繪"><i data-i="pen2"></i>畫筆</button>
     <button class="rb" data-tool="eraser" data-need title="橡皮擦：擦除畫筆筆跡"><i data-i="eraser"></i>橡皮擦</button>
+    <button class="rb" data-tool="fill" data-need title="填色：點一下區塊自動填滿顏色，或拖曳矩形／套索範圍"><i data-i="bucket"></i>填色</button>
     <button class="rb" data-tool="stamp" data-need title="戳記：核准、草稿、機密、日期章…"><i data-i="stamp"></i>戳記</button>
   </div><div class="cap">註解</div></div>
   <div class="grp"><div class="btns">
@@ -794,6 +834,8 @@ const ICONS = {
   cloudI:'M7 18a4 4 0 0 1-.6-7.95A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z',
   pen2:'M3 21c3 0 4-2 6-2s3 2 5 2M14.5 4.5l5 5L10 19H5v-5z',
   eraser:'M7 21h13M16.5 3.5l4 4-11 11H5l-2-2a2 2 0 0 1 0-2.8zM11 9l4 4',
+  bucket:'M4.5 11.5 11 5l7.5 7.5-6.5 6.5a2 2 0 0 1-2.8 0l-4.7-4.7a2 2 0 0 1 0-2.8zM4.5 11.5h14M8 3l3 2M20 15.5s1.8 2.4 1.8 3.4a1.8 1.8 0 0 1-3.6 0c0-1 1.8-3.4 1.8-3.4z',
+  dropper:'M14.5 4.5l5 5M17 2.5a2.1 2.1 0 0 1 3 3l-2 2-3-3zM15.5 6.5 6 16l-1 4 4-1 9.5-9.5M8.5 13.5h6',
   stamp:'M9 3h6v6l3 3v4H6v-4l3-3zM4 20h16',
   themeAuto:'M3 4h18v12H3zM8 20h8M12 16v4M12 7a3 3 0 0 0 0 6z',
   sun:'M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z',
@@ -1441,6 +1483,7 @@ const HINTS = {
   arrow:'拖曳畫出箭頭（按住 Shift 以 15° 為單位）。', line:'拖曳畫出線條（按住 Shift 以 15° 為單位）。',
   rect:'拖曳畫出矩形（按住 Shift 為正方形）。', ellipse:'拖曳畫出橢圓形（按住 Shift 為正圓）。', cloud:'拖曳畫出雲狀框。',
   polyline:'逐一點選各點，雙擊或按 Enter 完成；Backspace 刪除上一點，Esc 取消。', polygon:'逐一點選各點，點回第一點、雙擊或按 Enter 完成；Esc 取消。',
+  fill:'點一下要填色的區塊（例如表格欄位、圖形內部）即自動填滿；也可以拖曳矩形，或改用套索圈出範圍。點在已畫好的圖形內則會改變它的填色。',
   pen:'按住拖曳即可手繪，停筆約 1 秒後自動儲存。', eraser:'在畫筆筆跡上拖曳即可擦除經過的部分。', stamp:'在頁面上點一下放置戳記，或拖曳決定大小。',
   textbox:'在頁面上點一下（左鍵或右鍵）即可在十字處輸入文字；反白文字可修改字級、顏色、底色；點現有文字方塊可再編輯。',
   image:'在頁面上點一下放置圖片，或拖曳決定寬度；放好後可直接拖曳移動、拉把手調整大小。',
@@ -1453,7 +1496,7 @@ function setTool(t){
   if (!S.pdf) return;
   if (t !== 'extract') cancelXSel();
   if (t !== 'select') deselectAnnot();
-  if (t !== S.tool) { cancelPoly(); if (S.tool === 'pen') flushPen(); if (S.tool === 'textbox') commitTextEditor(); }
+  if (t !== S.tool) { cancelPoly(); cancelFillPoly(); if (S.tool === 'pen') flushPen(); if (S.tool === 'textbox') commitTextEditor(); }
   if (t === 'image' && !PENDING_IMG) { chooseImage(); return; }
   S.tool = t; updateUI();
   $$('[data-act="insertImage"]').forEach(b => b.classList.toggle('on', t === 'image'));
@@ -1484,7 +1527,8 @@ function setTool(t){
     return;
   }
   let extra = '';
-  if (t === 'highlight') extra = ['#ffd43b', '#8ce99a', '#74c0fc', '#ffa8a8'].map(c => `<button class="swatch${c === S.hlColor ? ' on' : ''}" data-c="${c}" style="background:${c}"></button>`).join('');
+  if (t === 'highlight') extra = ['#ffd43b', '#8ce99a', '#74c0fc', '#ffa8a8'].map(c => `<button class="swatch${c === S.hlColor ? ' on' : ''}" data-c="${c}" style="background:${c}"></button>`).join('') +
+    `<button class="cpick" data-hlpick="1" title="更多顏色（色環、滴管、我的最愛）" style="--c:${S.hlColor}"><i></i>▾</button>`;
   if (t === 'signature') extra = `<button data-h="resign">重新簽名</button>`;
   const swh = t === 'highlight' ? toolSwitcher(t) : '';
   h.classList.toggle('styl', !!swh);
@@ -1496,6 +1540,7 @@ function setTool(t){
 $('#hint').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
   if (b.dataset.c) { S.hlColor = b.dataset.c; setTool('highlight'); }
+  if (b.dataset.hlpick) openColorPicker({anchor:b, value:S.hlColor, title:'螢光筆顏色', onPick:v => { S.hlColor = v; setTool('highlight'); }});
   if (b.dataset.h === 'done') setTool('select');
   if (b.dataset.h === 'resign') openSigPad();
   if (b.dataset.h === 'pickimg') chooseImage();
@@ -3390,20 +3435,15 @@ $('#hint').addEventListener('change', e => {
   applyTextFormat(el.dataset.tb, el.type === 'checkbox' ? el.checked : +el.value);
 });
 function showTextColorMenu(btn, key, at){
-  const m = $('#cpMenu');
-  m.innerHTML = `<div class="cp-grid">${btn && btn.dataset.none || key !== 'color' ? `<button class="cp-sw none" data-v="" title="無">∅</button>` : ''}${SWATCHES.concat(['#c92a2a', '#e8590c', '#5c940d', '#0b7285', '#364fc7', '#862e9c', '#868e96', '#fff3bf', '#d3f9d8', '#d0ebff']).map(c => `<button class="cp-sw" data-v="${c}" style="background:${c}"></button>`).join('')}</div>
-    <label class="cp-custom">自訂 <input type="color" value="#ff0000"></label>`;
-  const r = at || btn.getBoundingClientRect(); m.style.display = 'block';
-  m.style.left = Math.min(r.left, innerWidth - m.offsetWidth - 8) + 'px'; m.style.top = Math.min((r.bottom || r.top) + 4, innerHeight - m.offsetHeight - 8) + 'px';
-  m.onpointerdown = e => { if (e.target.closest('[data-v]')) e.preventDefault(); };
-  m.onclick = e => { const b = e.target.closest('[data-v]'); if (!b) return; m.style.display = 'none'; applyTextFormat(key, b.dataset.v); };
-  m.querySelector('input').onchange = e => { m.style.display = 'none'; applyTextFormat(key, e.target.value); };
+  const st = currentTBStyle();
+  openColorPicker({anchor:btn, at, value:st[key], none:key !== 'color', title:{color:'文字顏色', bg:'文字底色', boxBg:'方塊背景'}[key], onPick:v => applyTextFormat(key, v)});
 }
 function showTextMenu(e){
   ctx.innerHTML = `<div class="hd">文字格式（套用到反白的文字）</div>
     <div class="tm-sizes">${[10, 12, 14, 18, 24, 32, 48].map(v => `<button data-sz="${v}">${v}</button>`).join('')}</div>
     <div class="tm-cols">${['#1f2328', '#e03131', '#1c64d9', '#2b8a3e', '#f76707', '#7048e8'].map(c => `<button data-col="${c}" style="background:${c}" title="文字顏色"></button>`).join('')}</div>
     <div class="tm-cols">${['#ffd43b', '#b2f2bb', '#a5d8ff', '#fcc2d7', ''].map(c => `<button data-hl="${c}" style="background:${c || '#fff'}" title="${c ? '文字底色' : '清除底色'}">${c ? '' : '∅'}</button>`).join('')}</div>
+    <button data-more="color">🎨　更多文字顏色…</button><button data-more="bg">🎨　更多文字底色…</button>
     <hr><button data-f="bold"><b>B</b>　粗體</button><button data-f="italic"><i>I</i>　斜體</button><button data-f="underline"><u>U</u>　底線</button>
     <hr><button data-f="done">完成編輯</button>`;
   ctx.style.display = 'block'; ctxShownAt = performance.now();
@@ -3411,6 +3451,7 @@ function showTextMenu(e){
   ctx.onpointerdown = ev => ev.preventDefault();
   ctx.onclick = ev => {
     const b = ev.target.closest('button'); if (!b) return;
+    if (b.dataset.more) { hideCtx(); showTextColorMenu(null, b.dataset.more, {left:ev.clientX, top:ev.clientY, bottom:ev.clientY}); return; }
     if (b.dataset.sz) applyTextFormat('size', +b.dataset.sz);
     else if (b.dataset.col) applyTextFormat('color', b.dataset.col);
     else if (b.dataset.hl != null) applyTextFormat('bg', b.dataset.hl);
@@ -3461,7 +3502,7 @@ async function editTextBox(i, a){
   openTextEditor(i, a.x, a.y, {id:a.id, lines, box:rt ? rt.box : {boxBg:'', border:false}, veilBox:a});
 }
 let tbCommittedAt = 0;
-document.addEventListener('pointerdown', e => { if (TBE && !TBE.el.contains(e.target) && !e.target.closest('#hint,#cpMenu,#ctx')) { if (e.button === 0) tbCommittedAt = performance.now(); commitTextEditor(); } }, true);
+document.addEventListener('pointerdown', e => { if (TBE && !TBE.el.contains(e.target) && !e.target.closest('#hint,#cpMenu,#ctx,#eyedrop')) { if (e.button === 0) tbCommittedAt = performance.now(); commitTextEditor(); } }, true);
 async function textboxAt(i, e){
   const p = snapPoint(i, pagePoint(i, e), {mark:false});
   await tbSaving;
@@ -3688,18 +3729,378 @@ const DRAW_TOOLS = {
   pen:{label:'畫筆', kind:'pen', ic:'pen2'},
   eraser:{label:'橡皮擦', kind:'eraser', ic:'eraser'},
   stamp:{label:'戳記', kind:'stamp', ic:'stamp'},
+  fill:{label:'填色', kind:'fill', ic:'bucket'},
 };
 function showColorMenu(btn){
-  const m = $('#cpMenu'), key = btn.dataset.cp, t = S.tool, st = STYLES[t];
-  m.innerHTML = `<div class="cp-grid">${btn.dataset.none ? `<button class="cp-sw none${!st[key] ? ' on' : ''}" data-v="" title="無填色">∅</button>` : ''}${SWATCHES.concat(['#c92a2a', '#e8590c', '#5c940d', '#0b7285', '#364fc7', '#862e9c', '#868e96']).map(c => `<button class="cp-sw${st[key] === c ? ' on' : ''}" data-v="${c}" style="background:${c}" title="${c}"></button>`).join('')}</div>
-    <label class="cp-custom">自訂 <input type="color" value="${st[key] || '#ffffff'}"></label>`;
-  const r = btn.getBoundingClientRect(); m.style.display = 'block';
-  m.style.left = Math.min(r.left, innerWidth - m.offsetWidth - 8) + 'px'; m.style.top = (r.bottom + 4) + 'px';
-  const set = v => { STYLES[t][key] = v; saveStyles(); m.style.display = 'none'; setTool(t); };
-  m.onclick = e => { const b = e.target.closest('[data-v]'); if (b) set(b.dataset.v); };
-  m.querySelector('input').onchange = e => set(e.target.value);
+  const key = btn.dataset.cp, t = S.tool, st = STYLES[t];
+  openColorPicker({anchor:btn, value:st[key], none:!!btn.dataset.none, title:key === 'fill' && t !== 'fill' ? '填色顏色' : '顏色',
+    onPick:v => { STYLES[t][key] = v; saveStyles(); setTool(t); }});
 }
-document.addEventListener('pointerdown', e => { const m = $('#cpMenu'); if (m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('.cpick')) m.style.display = 'none'; }, true);
+document.addEventListener('pointerdown', e => { const m = $('#cpMenu'); if (m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('.cpick,#eyedrop')) closeColorPicker(); }, true);
+/* ====================================================================
+   Colour picker (色環 + 滴管 + 我的最愛 + 常用顏色) — shared by every colour choice in the app
+   ==================================================================== */
+const CPS = (() => { try { return {fav:[], use:{}, ...(JSON.parse(localStorage.getItem('pdfeditor.colors.v1')) || {})}; } catch (_) { return {fav:[], use:{}}; } })();
+const saveCPS = () => { try { localStorage.setItem('pdfeditor.colors.v1', JSON.stringify(CPS)); } catch (_) {} };
+const isHex = c => /^#[0-9a-f]{6}$/i.test(c || '');
+const normHex = c => { c = (c || '').trim().toLowerCase(); if (/^[0-9a-f]{6}$/.test(c) || /^[0-9a-f]{3}$/.test(c)) c = '#' + c; if (/^#[0-9a-f]{3}$/.test(c)) c = '#' + [...c.slice(1)].map(x => x + x).join(''); return isHex(c) ? c : null; };
+function noteColorUse(c){
+  c = normHex(c); if (!c) return;
+  const u = CPS.use[c] || {n:0}; u.n++; u.t = Date.now(); CPS.use[c] = u;
+  const keys = Object.keys(CPS.use);
+  if (keys.length > 60) keys.sort((a, b) => CPS.use[a].t - CPS.use[b].t).slice(0, keys.length - 60).forEach(k => delete CPS.use[k]);
+  saveCPS();
+}
+const frequentColors = (n = 16) => Object.entries(CPS.use).sort((a, b) => b[1].n - a[1].n || b[1].t - a[1].t).slice(0, n).map(e => e[0]);
+function hex2hsv(hex){
+  const n = parseInt(hex.slice(1), 16), r = (n >> 16 & 255) / 255, g = (n >> 8 & 255) / 255, b = (n & 255) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  let h = 0;
+  if (d) h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return {h:(h * 60 + 360) % 360, s:mx ? d / mx : 0, v:mx};
+}
+function hsv2rgb(h, s, v){
+  const f = k => { const x = (k + h / 60) % 6; return v - v * s * Math.max(0, Math.min(x, 4 - x, 1)); };
+  return [f(5), f(3), f(1)].map(x => Math.round(x * 255));
+}
+const hsv2hex = (h, s, v) => '#' + hsv2rgb(h, s, v).map(x => pad2(x.toString(16))).join('');
+const CP_BASE = ['#000000', '#495057', '#868e96', '#ced4da', '#ffffff', '#e03131', '#f76707', '#f59f00', '#ffd43b', '#2b8a3e', '#8ce99a', '#0b7285',
+  '#1c64d9', '#74c0fc', '#7048e8', '#ae3ec9', '#d6336c', '#fcc2d7', '#fff3bf', '#d3f9d8', '#d0ebff', '#862e9c', '#c92a2a', '#5c940d'];
+let CPK = null;   // open picker: {opts, h, s, v}
+const WHEEL = 168;
+function openColorPicker(opts){
+  const m = $('#cpMenu');
+  const start = normHex(opts.value) || '#e03131';
+  CPK = {opts, ...hex2hsv(start), start};
+  const chip = (c, cls = '') => `<button class="cp-sw${cls}${normHex(opts.value) === c ? ' on' : ''}" data-v="${c}" style="background:${c}" title="${c}"></button>`;
+  m.innerHTML = `<div class="cp-head"><b>${esc(opts.title || '選擇顏色')}</b>${opts.none ? `<button class="cp-nonebtn" data-v="" title="不使用顏色">∅ 無</button>` : ''}</div>
+    <div class="cp-grid">${CP_BASE.map(c => chip(c)).join('')}</div>
+    <div class="cp-wheelrow"><div class="cp-wheelbox"><canvas class="cp-wheel"></canvas><i class="cp-mark"></i></div>
+      <div class="cp-side"><div class="cp-prev" title="上：原本的顏色／下：新的顏色"><i class="old" style="background:${start}"></i><i class="new"></i></div>
+        <input class="cp-hex" maxlength="7" spellcheck="false" title="輸入色碼，例如 #1c64d9">
+        <span class="cp-rgb"></span>
+        <button class="cp-eye" title="滴管：點畫面上任何地方吸取顏色">${icon('dropper')}滴管</button></div></div>
+    <label class="cp-vrow" title="亮度"><span>亮度</span><input type="range" class="cp-val" min="0" max="100"></label>
+    <div class="cp-sec"><span>★ 我的最愛</span><button class="cp-addfav" title="把目前的顏色加入我的最愛">＋ 加入目前顏色</button></div>
+    <div class="cp-grid cp-fav"></div>
+    <div class="cp-sec"><span>常用顏色</span><button class="cp-clrfreq" title="清除常用顏色紀錄">清除</button></div>
+    <div class="cp-grid cp-freq"></div>
+    <div class="cp-foot"><button data-cpx="cancel">取消</button><button class="pri" data-cpx="ok">套用</button></div>`;
+  const wc = m.querySelector('.cp-wheel'), dpr = window.devicePixelRatio || 1;
+  wc.width = wc.height = Math.round(WHEEL * dpr);
+  const lists = () => {
+    m.querySelector('.cp-fav').innerHTML = CPS.fav.length ? CPS.fav.map(c => chip(c, ' fav')).join('') : '<span class="cp-empty">按「＋ 加入目前顏色」收藏喜歡的顏色（右鍵可移除）</span>';
+    const fr = frequentColors();
+    m.querySelector('.cp-freq').innerHTML = fr.length ? fr.map(c => chip(c)).join('') : '<span class="cp-empty">使用過的顏色會自動出現在這裡</span>';
+  };
+  lists(); paintWheel(); syncPicker();
+  // position next to the anchor, kept inside the window
+  m.style.display = 'block';
+  const r = opts.at || (opts.anchor ? opts.anchor.getBoundingClientRect() : {left:innerWidth / 2 - 130, bottom:120, top:120});
+  m.style.left = Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8)) + 'px';
+  let top = (r.bottom ?? r.top) + 4;
+  if (top + m.offsetHeight > innerHeight - 8) top = Math.max(8, (r.top ?? top) - m.offsetHeight - 4);
+  m.style.top = Math.max(8, Math.min(top, innerHeight - m.offsetHeight - 8)) + 'px';
+  // keep the focus (and any text selection) where it was while clicking buttons and the wheel
+  m.onpointerdown = e => { if (e.target.closest('button,canvas')) e.preventDefault(); };
+  m.oncontextmenu = e => {
+    e.preventDefault();
+    const b = e.target.closest('.cp-sw.fav'); if (!b) return;
+    CPS.fav = CPS.fav.filter(c => c !== b.dataset.v); saveCPS(); lists(); toast('已從我的最愛移除');
+  };
+  m.onclick = async e => {
+    const x = e.target.closest('[data-cpx]');
+    if (x) { if (x.dataset.cpx === 'ok') pickColor(hsv2hex(CPK.h, CPK.s, CPK.v)); else closeColorPicker(); return; }
+    if (e.target.closest('.cp-eye')) { const o = CPK.opts; const c = await eyedropper(); if (c) { CPK = {opts:o}; pickColor(c); } else openColorPicker(o); return; }
+    if (e.target.closest('.cp-addfav')) {
+      const c = hsv2hex(CPK.h, CPK.s, CPK.v);
+      if (!CPS.fav.includes(c)) { CPS.fav.push(c); if (CPS.fav.length > 32) CPS.fav.shift(); saveCPS(); lists(); toast('已加入我的最愛'); } else toast('這個顏色已經在我的最愛裡');
+      return;
+    }
+    if (e.target.closest('.cp-clrfreq')) { CPS.use = {}; saveCPS(); lists(); return; }
+    const b = e.target.closest('[data-v]'); if (b) pickColor(b.dataset.v);
+  };
+  m.ondblclick = null;
+  const hex = m.querySelector('.cp-hex');
+  hex.oninput = () => { const c = normHex(hex.value); if (c) { Object.assign(CPK, hex2hsv(c)); paintWheel(); syncPicker(true); } };
+  hex.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') e.preventDefault(); if (e.key === 'Enter') { const c = normHex(hex.value); if (c) pickColor(c); } if (e.key === 'Escape') closeColorPicker(); };
+  m.querySelector('.cp-val').oninput = e => { CPK.v = +e.target.value / 100; paintWheel(); syncPicker(); };
+  const fromWheel = ev => {
+    const b = wc.getBoundingClientRect(), R = b.width / 2, dx = ev.clientX - b.left - R, dy = ev.clientY - b.top - R;
+    CPK.h = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360; CPK.s = Math.min(1, Math.hypot(dx, dy) / R);
+    if (CPK.v < .05) CPK.v = 1;   // picking a hue on a black wheel would show nothing
+    syncPicker();
+  };
+  wc.onpointerdown = ev => { ev.preventDefault(); wc.setPointerCapture(ev.pointerId); fromWheel(ev); wc.onpointermove = fromWheel; };
+  wc.onpointerup = () => { wc.onpointermove = null; paintWheel(); };
+  wc.ondblclick = () => pickColor(hsv2hex(CPK.h, CPK.s, CPK.v));
+}
+function paintWheel(){
+  const wc = $('#cpMenu .cp-wheel'); if (!wc || !CPK) return;
+  const n = wc.width, g = wc.getContext('2d'), img = g.createImageData(n, n), R = n / 2, d = img.data;
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const dx = x - R + .5, dy = y - R + .5, r = Math.hypot(dx, dy), o = (y * n + x) * 4;
+    if (r > R) continue;
+    const [cr, cg, cb] = hsv2rgb((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360, Math.min(1, r / R), CPK.v);
+    d[o] = cr; d[o + 1] = cg; d[o + 2] = cb; d[o + 3] = r > R - 1 ? Math.round((R - r) * 255) : 255;
+  }
+  g.putImageData(img, 0, 0);
+}
+function syncPicker(fromHex){
+  const m = $('#cpMenu'); if (!CPK || !m.querySelector('.cp-wheel')) return;
+  const c = hsv2hex(CPK.h, CPK.s, CPK.v), [r, g, b] = hsv2rgb(CPK.h, CPK.s, CPK.v);
+  const mk = m.querySelector('.cp-mark'), a = CPK.h * Math.PI / 180, R = WHEEL / 2;
+  mk.style.left = R + Math.cos(a) * CPK.s * R + 'px'; mk.style.top = R + Math.sin(a) * CPK.s * R + 'px'; mk.style.background = c;
+  m.querySelector('.cp-prev .new').style.background = c;
+  if (!fromHex) m.querySelector('.cp-hex').value = c;
+  m.querySelector('.cp-rgb').textContent = `R ${r}　G ${g}　B ${b}`;
+  const val = m.querySelector('.cp-val'); val.value = Math.round(CPK.v * 100);
+  val.style.background = `linear-gradient(90deg,#000,${hsv2hex(CPK.h, CPK.s, 1)})`;
+}
+function closeColorPicker(){ const m = $('#cpMenu'); m.style.display = 'none'; m.innerHTML = ''; CPK = null; }
+function pickColor(c){
+  const o = CPK && CPK.opts; closeColorPicker();
+  if (!o) return;
+  if (c) { c = normHex(c) || c; noteColorUse(c); }
+  o.onPick(c || '');
+}
+
+/* ---------------- 滴管：freeze the window, pick any pixel ---------------- */
+let EYEDROP = false;
+async function eyedropper(){
+  if (EYEDROP) return null;
+  EYEDROP = true;
+  try {
+    $('#cpMenu').style.display = 'none';
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    let url = null;
+    try { url = DESK && DESK.capture ? await DESK.capture() : null; } catch (_) {}
+    if (!url) {
+      if (window.EyeDropper) { try { return normHex((await new window.EyeDropper().open()).sRGBHex); } catch (_) { return null; } }
+      toast('這個環境無法使用滴管', 'err'); return null;
+    }
+    const img = new Image(); img.src = url; await img.decode();
+    const src = document.createElement('canvas'); src.width = img.naturalWidth; src.height = img.naturalHeight;
+    const sg = src.getContext('2d', {willReadFrequently:true}); sg.drawImage(img, 0, 0);
+    const kx = src.width / innerWidth, ky = src.height / innerHeight;
+    return await new Promise(res => {
+      const ov = document.createElement('div'); ov.id = 'eyedrop';
+      ov.style.backgroundImage = `url(${url})`;
+      ov.innerHTML = `<canvas class="ed-loupe" width="154" height="154"></canvas><div class="ed-lab"><i></i><span></span></div><div class="ed-tip">點一下吸取顏色・Esc 或右鍵取消</div>`;
+      document.body.appendChild(ov);
+      const lp = ov.querySelector('.ed-loupe'), lg = lp.getContext('2d'), lab = ov.querySelector('.ed-lab');
+      lg.imageSmoothingEnabled = false;
+      const at = e => { const x = clamp(Math.floor(e.clientX * kx), 0, src.width - 1), y = clamp(Math.floor(e.clientY * ky), 0, src.height - 1);
+        const d = sg.getImageData(x, y, 1, 1).data; return {x, y, c:'#' + [d[0], d[1], d[2]].map(v => pad2(v.toString(16))).join('')}; };
+      const move = e => {
+        const p = at(e), N = 11, cell = lp.width / N;
+        lg.fillStyle = '#fff'; lg.fillRect(0, 0, lp.width, lp.height);
+        lg.drawImage(src, p.x - 5, p.y - 5, N, N, 0, 0, lp.width, lp.height);
+        lg.strokeStyle = 'rgba(0,0,0,.12)'; lg.lineWidth = 1;
+        for (let k = 1; k < N; k++) { lg.beginPath(); lg.moveTo(k * cell, 0); lg.lineTo(k * cell, lp.height); lg.moveTo(0, k * cell); lg.lineTo(lp.width, k * cell); lg.stroke(); }
+        lg.strokeStyle = '#000'; lg.lineWidth = 2; lg.strokeRect(5 * cell, 5 * cell, cell, cell); lg.strokeStyle = '#fff'; lg.lineWidth = 1; lg.strokeRect(5 * cell - 2, 5 * cell - 2, cell + 4, cell + 4);
+        const lx = e.clientX + 22 + 154 > innerWidth ? e.clientX - 22 - 154 : e.clientX + 22, ly = e.clientY + 22 + 190 > innerHeight ? e.clientY - 22 - 190 : e.clientY + 22;
+        lp.style.left = lx + 'px'; lp.style.top = ly + 'px'; lab.style.left = lx + 'px'; lab.style.top = ly + 160 + 'px';
+        lab.querySelector('i').style.background = p.c; lab.querySelector('span').textContent = p.c.toUpperCase();
+      };
+      const done = c => { ov.remove(); window.removeEventListener('keydown', key, true); res(c); };
+      const key = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); } };
+      ov.addEventListener('pointermove', move);
+      ov.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); done(e.button === 0 ? at(e).c : null); });
+      ov.addEventListener('contextmenu', e => e.preventDefault());
+      window.addEventListener('keydown', key, true);
+    });
+  } finally { EYEDROP = false; }
+}
+// a colour button usable inside dialogs: <button class="cpick" data-color="#hex">
+function bindColorButton(btn, get, set, {none = false, title} = {}){
+  const paint = () => { const v = get(); btn.style.setProperty('--c', v || 'transparent'); btn.classList.toggle('none', !v); };
+  btn.addEventListener('click', e => { e.preventDefault(); openColorPicker({anchor:btn, value:get(), none, title, onPick:c => { set(c); paint(); }}); });
+  paint();
+}
+
+/* ====================================================================
+   填色 (fill): click a region to flood-fill it, or drag a rectangle / lasso
+   ==================================================================== */
+const fillCanvasCache = new Map();
+function fillSource(i){
+  const pg = S.pages[i], key = S.version + ':' + i;
+  if (!fillCanvasCache.has(key)) {
+    fillCanvasCache.clear();
+    fillCanvasCache.set(key, (async () => {
+      let k = 3; if (pg.w * pg.h * k * k > 12e6) k = Math.sqrt(12e6 / (pg.w * pg.h));
+      const vp = pg.page.getViewport({scale:k});
+      const c = document.createElement('canvas'); c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
+      const g = c.getContext('2d', {willReadFrequently:true}); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+      await pg.page.render({canvasContext:g, viewport:vp, annotationMode:pdfjsLib.AnnotationMode.ENABLE}).promise;
+      return {c, k:c.width / pg.w, data:g.getImageData(0, 0, c.width, c.height).data};
+    })());
+  }
+  return fillCanvasCache.get(key);
+}
+function floodMask(src, sx, sy, tol){
+  const {c, data} = src, W = c.width, H = c.height, mask = new Uint8Array(W * H);
+  const o0 = (sy * W + sx) * 4, r0 = data[o0], g0 = data[o0 + 1], b0 = data[o0 + 2];
+  const same = p => { const o = p * 4; return Math.abs(data[o] - r0) <= tol && Math.abs(data[o + 1] - g0) <= tol && Math.abs(data[o + 2] - b0) <= tol; };
+  const stack = [sx, sy]; let minX = sx, maxX = sx, minY = sy, maxY = sy, count = 0;
+  while (stack.length) {
+    const y = stack.pop(), x0 = stack.pop();
+    let x = x0; const row = y * W;
+    if (mask[row + x] || !same(row + x)) continue;
+    while (x > 0 && !mask[row + x - 1] && same(row + x - 1)) x--;
+    let upOpen = false, dnOpen = false;
+    for (; x < W && !mask[row + x] && same(row + x); x++) {
+      mask[row + x] = 1; count++;
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+      if (y > 0) { const up = !mask[row - W + x] && same(row - W + x); if (up && !upOpen) stack.push(x, y - 1); upOpen = up; }
+      if (y < H - 1) { const dn = !mask[row + W + x] && same(row + W + x); if (dn && !dnOpen) stack.push(x, y + 1); dnOpen = dn; }
+    }
+  }
+  return {mask, W, H, minX, maxX, minY, maxY, count};
+}
+const FILL_MARK = '填色區塊';
+async function fillAt(i, p){
+  const st = STYLES.fill, color = st.color || '#ffd43b';
+  const anns = await getAnns(i);
+  const inside = a => p.x >= a.x && p.x <= a.x + a.w && p.y >= a.y && p.y <= a.y + a.h;
+  // clicking inside one of the shapes changes its fill colour
+  const shape = anns.filter(a => ['Square', 'Circle', 'Polygon'].includes(a.subtype) && inside(a)).sort((a, b) => a.w * a.h - b.w * b.h)[0];
+  if (shape) return recolorShape(i, shape, color);
+  const old = anns.filter(a => a.subtype === 'Stamp' && a.contents === FILL_MARK && inside(a)).sort((a, b) => a.w * a.h - b.w * b.h)[0];
+  busy(true, '正在偵測區塊…');
+  let src, fm;
+  try {
+    src = await fillSource(i);
+    const sx = clamp(Math.floor(p.x * src.k), 0, src.c.width - 1), sy = clamp(Math.floor(p.y * src.k), 0, src.c.height - 1);
+    fm = floodMask(src, sx, sy, +st.tol || 32);
+  } finally { busy(false); }
+  if (fm.count < 4) { toast('這裡沒有可以填色的區塊', 'err'); return; }
+  if (fm.count > src.c.width * src.c.height * .9 && !(await confirmDlg('整頁填色', '偵測到的區塊幾乎是整頁，確定要整頁填色嗎？', '整頁填色'))) return;
+  const w = fm.maxX - fm.minX + 1, h = fm.maxY - fm.minY + 1;
+  const out = document.createElement('canvas'); out.width = w; out.height = h;
+  const og = out.getContext('2d'), od = og.createImageData(w, h), n = parseInt(color.slice(1), 16), A = Math.round(255 * (st.opacity ?? 1));
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (!fm.mask[(y + fm.minY) * fm.W + x + fm.minX]) continue;
+    const o = (y * w + x) * 4; od.data[o] = n >> 16 & 255; od.data[o + 1] = n >> 8 & 255; od.data[o + 2] = n & 255; od.data[o + 3] = A;
+  }
+  og.putImageData(od, 0, 0);
+  const png = new Uint8Array(await (await blobOf(out, 'image/png')).arrayBuffer());
+  const b = {x:fm.minX / src.k, y:fm.minY / src.k, w:w / src.k, h:h / src.k};
+  await mutate('已填色', async doc => {
+    if (old) { const ref = findAnnotRef(doc, i, old.id); if (ref) removeAnnotRefs(doc, i, ref); }
+    const g = visToPdf(i, b), ap = await imageAP(doc, png, b.w, b.h, g.rot);
+    addAnnot(doc, i, {Type:'Annot', Subtype:'Stamp', Name:'Fill', Rect:g.rect, Contents:PDFHexString.fromText(FILL_MARK), C:hexColor(color),
+      T:PDFHexString.fromText(AUTHOR), M:nowStr(), CreationDate:nowStr(), Subj:PDFHexString.fromText('填色'), F:4, PDFE:true, AP:{N:ap}});
+  });
+}
+async function recolorShape(i, a, color){
+  await mutate('已變更填色', doc => {
+    const ref = findAnnotRef(doc, i, a.id); if (!ref) return false;
+    const ctx = doc.context, dict = ctx.lookup(ref, PDFDict), N = k => PDFName.of(k), sub = String(dict.get(N('Subtype'))).slice(1);
+    dict.set(N('IC'), ctx.obj(hexColor(color))); dict.set(N('M'), nowStr());
+    if (!dict.get(N('PDFE'))) { dict.delete(N('AP')); return; }   // other apps' shapes: let the viewer redraw from /IC
+    const st = readAnnStyle(dict), box = {x:a.x, y:a.y, w:a.w, h:a.h};
+    let geom;
+    if (sub === 'Polygon') geom = geomPoly(flatPts(i, numArr(dict.lookup(N('Vertices'), PDFArray))), st, true);
+    else {
+      const cloud = !!dict.lookupMaybe(N('BE'), PDFDict), pad = st.width + (cloud ? Math.max(9, st.width * 6) * .62 : 0);
+      geom = geomBox({x:box.x + pad, y:box.y + pad, w:Math.max(2, box.w - 2 * pad), h:Math.max(2, box.h - 2 * pad)}, st, sub === 'Circle' ? 'ellipse' : cloud ? 'cloud' : 'rect');
+    }
+    const g = visToPdf(i, geom.b);
+    dict.set(N('Rect'), ctx.obj(g.rect));
+    dict.set(N('AP'), ctx.obj({N:formAP(doc, geom.ops, geom.b.w, geom.b.h, S.pages[i].rot, gsRes(st))}));
+  });
+}
+function fillStyle(){ const st = STYLES.fill; return {color:st.color, fill:st.color, width:.5, opacity:st.opacity ?? 1, dash:false}; }
+async function createFillRect(i, r){
+  const st = fillStyle(), geom = geomBox(r, st, 'rect');
+  await addGeomAnnot(i, '填色', geom, baseDict('Square', '填色', st, {BS:bsDict(st), IC:hexColor(st.fill)}), gsRes(st));
+}
+async function createFillPoly(i, pts){
+  const st = fillStyle(), slim = pts.filter((p, k) => !k || Math.hypot(p.x - pts[k - 1].x, p.y - pts[k - 1].y) > 1.2);
+  if (slim.length < 3) return;
+  const geom = geomPoly(slim, st, true);
+  await addGeomAnnot(i, '填色', geom, baseDict('Polygon', '填色', st, {Vertices:toPdfPts(i, slim), BS:bsDict(st), IC:hexColor(st.fill)}), gsRes(st));
+}
+/* 節點 mode: click out the vertices of any shape; nodes stay draggable until the shape is finished */
+let FPOLY = null;   // {i, pts, g, hover}
+function drawFillPoly(){
+  if (!FPOLY) return;
+  const {pts, g, hover} = FPOLY, st = STYLES.fill, col = st.color || '#ffd43b', u = 1 / S.scale;
+  const all = hover && !FPOLY.drag ? [...pts, hover] : pts;
+  const closing = hover && pts.length >= 3 && Math.hypot(hover.x - pts[0].x, hover.y - pts[0].y) * S.scale < 9;
+  g.innerHTML = (all.length >= 3 ? `<polygon points="${ptsAttr(all)}" fill="${col}" fill-opacity="${(st.opacity ?? 1) * .75}" stroke="none"/>` : '') +
+    `<polyline points="${ptsAttr(all)}" fill="none" stroke="#1c64d9" stroke-width="${1.2 * u}" stroke-dasharray="${4 * u} ${3 * u}"/>` +
+    pts.map((p, k) => `<circle cx="${p.x}" cy="${p.y}" r="${(k === 0 && closing ? 6 : 4) * u}" fill="${k === 0 ? (closing ? '#ffd43b' : '#fff') : '#fff'}" stroke="#1c64d9" stroke-width="${1.5 * u}"/>`).join('');
+}
+function cancelFillPoly(){ if (FPOLY) { FPOLY.g.remove(); FPOLY = null; } }
+function finishFillPoly(){
+  if (!FPOLY) return;
+  const {i, pts} = FPOLY; cancelFillPoly();
+  if (pts.length >= 3) createFillPoly(i, pts); else toast('至少需要 3 個節點才能填色', 'err');
+}
+function fillNodeDown(i, e){
+  if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();   // so Enter / Backspace reach the node editor
+  if (FPOLY && FPOLY.i !== i) cancelFillPoly();
+  const p = snapPoint(i, pagePoint(i, e));
+  if (!FPOLY) { const g = document.createElementNS('http://www.w3.org/2000/svg', 'g'); svgLayer(i).appendChild(g); FPOLY = {i, pts:[], g, hover:null}; }
+  const pts = FPOLY.pts, near = k => Math.hypot(pts[k].x - p.x, pts[k].y - p.y) * S.scale < 8;
+  if (pts.length >= 3 && near(0)) { finishFillPoly(); return true; }
+  const hit = pts.findIndex((q, k) => near(k));
+  if (hit >= 0) {   // drag an existing node; a click without moving on the last node finishes
+    let moved = false; FPOLY.drag = true;
+    const mv = ev => { const q = snapPoint(i, pagePoint(i, ev)); if (Math.hypot(q.x - p.x, q.y - p.y) * S.scale > 2) moved = true; if (moved && FPOLY) { pts[hit] = q; drawFillPoly(); } };
+    const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); clearSnapMarks();
+      if (!FPOLY) return; FPOLY.drag = false; if (!moved && hit === pts.length - 1 && pts.length >= 3) finishFillPoly(); else drawFillPoly(); };
+    window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
+    return true;
+  }
+  const last = pts[pts.length - 1];
+  pts.push(e.shiftKey && last ? constrain45(last, p) : p);
+  drawFillPoly();
+  return true;
+}
+window.addEventListener('pointermove', e => {
+  if (!FPOLY || FPOLY.drag || !S.pages[FPOLY.i]) return;
+  const p = pagePoint(FPOLY.i, e), last = FPOLY.pts[FPOLY.pts.length - 1];
+  FPOLY.hover = e.shiftKey && last ? constrain45(last, p) : p; drawFillPoly();
+});
+window.addEventListener('keydown', e => {
+  if (!FPOLY || isTyping(e)) return;
+  if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); finishFillPoly(); }
+  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelFillPoly(); }
+  else if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); e.stopPropagation(); FPOLY.pts.pop(); if (!FPOLY.pts.length) cancelFillPoly(); else drawFillPoly(); }
+}, true);
+function fillToolDown(i, e){
+  const st = STYLES.fill, svg = svgLayer(i), p0 = pagePoint(i, e), col = st.color || '#ffd43b', op = st.opacity ?? 1;
+  if (st.mode === 'nodes') return fillNodeDown(i, e);
+  if (st.mode === 'lasso') {
+    const pts = [p0], pl = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    pl.setAttribute('fill', col); pl.setAttribute('fill-opacity', op * .8); pl.setAttribute('stroke', '#1c64d9'); pl.setAttribute('stroke-width', 1 / S.scale); pl.setAttribute('stroke-dasharray', `${4 / S.scale} ${3 / S.scale}`);
+    svg.appendChild(pl);
+    const mv = ev => { const p = pagePoint(i, ev), l = pts[pts.length - 1]; if (Math.hypot(p.x - l.x, p.y - l.y) * S.scale > 2) { pts.push(p); pl.setAttribute('points', ptsAttr(pts)); } };
+    const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); pl.remove();
+      if (pts.length < 3) { fillAt(i, p0); return; }
+      createFillPoly(i, pts); };
+    window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
+    return true;
+  }
+  const a0 = snapPoint(i, p0); let box = null;
+  const rc = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  rc.setAttribute('fill', col); rc.setAttribute('fill-opacity', op); rc.setAttribute('stroke', '#1c64d9'); rc.setAttribute('stroke-width', 1 / S.scale); rc.setAttribute('stroke-dasharray', `${4 / S.scale} ${3 / S.scale}`);
+  svg.appendChild(rc);
+  const mv = ev => { const p = snapPoint(i, pagePoint(i, ev)); box = {x:Math.min(a0.x, p.x), y:Math.min(a0.y, p.y), w:Math.abs(p.x - a0.x), h:Math.abs(p.y - a0.y)};
+    ['x', 'y'].forEach(k => rc.setAttribute(k, box[k])); rc.setAttribute('width', box.w); rc.setAttribute('height', box.h); };
+  const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); rc.remove(); clearSnapMarks();
+    if (box && box.w * S.scale > 4 && box.h * S.scale > 4) createFillRect(i, box);
+    else if (st.mode !== 'rect') fillAt(i, p0);
+    else getAnns(i).then(list => { const s = list.find(a => ['Square', 'Circle', 'Polygon'].includes(a.subtype) && p0.x >= a.x && p0.x <= a.x + a.w && p0.y >= a.y && p0.y <= a.y + a.h);
+      if (s) recolorShape(i, s, col); else toast('拖曳出要填色的範圍'); }); };
+  window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
+  return true;
+}
+
 const PRESETS = {
   text:[{n:'黃色', color:'#ffd43b'}, {n:'綠色', color:'#8ce99a'}, {n:'藍色', color:'#74c0fc'}, {n:'粉紅', color:'#fcc2d7'}, {n:'紅色', color:'#e03131'}, {n:'黑色', color:'#212529'}],
   line:[{n:'紅色重點', color:'#e03131', width:2}, {n:'黑色細線', color:'#212529', width:1}, {n:'藍色粗線', color:'#1c64d9', width:3},
@@ -3710,6 +4111,7 @@ const PRESETS = {
     {n:'螢光筆', color:'#ffd43b', width:10, opacity:.45}, {n:'鉛筆', color:'#6c757d', width:.8, opacity:.85}, {n:'粗麥克筆', color:'#212529', width:4}],
 };
 PRESETS.poly = PRESETS.box;
+PRESETS.fill = [{n:'黃色', color:'#ffd43b'}, {n:'淺綠', color:'#b2f2bb'}, {n:'淺藍', color:'#a5d8ff'}, {n:'粉紅', color:'#fcc2d7'}, {n:'白色遮蓋', color:'#ffffff'}, {n:'灰色', color:'#ced4da'}];
 const SWATCHES = ['#e03131', '#f76707', '#f59f00', '#ffd43b', '#2b8a3e', '#1c64d9', '#7048e8', '#212529', '#ffffff'];
 const STYLE_KEY = 'pdfeditor.styles.v1';
 const STYLES = (() => {
@@ -3717,7 +4119,7 @@ const STYLES = (() => {
     arrow:{color:'#e03131', width:2, opacity:1, dash:false, head:'open'}, line:{color:'#212529', width:1, opacity:1, dash:false},
     rect:{color:'#e03131', width:2, fill:'', opacity:1, dash:false}, ellipse:{color:'#1c64d9', width:1.5, fill:'', opacity:1, dash:false},
     polyline:{color:'#e03131', width:2, opacity:1, dash:false}, polygon:{color:'#1c64d9', width:1.5, fill:'', opacity:1, dash:false},
-    cloud:{color:'#e03131', width:1.5, fill:'', opacity:1, dash:false}, pen:{color:'#1f2328', width:1.2, opacity:1}, eraser:{size:14}};
+    cloud:{color:'#e03131', width:1.5, fill:'', opacity:1, dash:false}, pen:{color:'#1f2328', width:1.2, opacity:1}, eraser:{size:14}, fill:{color:'#ffd43b', opacity:1, mode:'auto', tol:'32'}};
   try { const s = JSON.parse(localStorage.getItem(STYLE_KEY)) || {}; Object.keys(base).forEach(k => Object.assign(base[k], s[k] || {})); } catch (_) {}
   return base;
 })();
@@ -3726,7 +4128,7 @@ const saveStyles = () => { try { localStorage.setItem(STYLE_KEY, JSON.stringify(
 function styleBar(t){
   const def = DRAW_TOOLS[t], st = STYLES[t] || {}, k = def.kind;
   const sw = (key, allowNone) => `<button class="cpick${st[key] ? '' : ' none'}" data-cp="${key}" data-none="${allowNone ? 1 : ''}" title="選擇顏色" style="--c:${st[key] || 'transparent'}"><i></i>▾</button>`;
-  const presets = (PRESETS[k] || []).map((p, n) => `<button class="pchip" data-p="${n}" title="${p.n}"><i style="${k === 'text' ? `background:${p.color}` : `border:${Math.min(3, p.width || 1) + 1}px ${p.dash ? 'dashed' : 'solid'} ${p.color};background:${p.fill || 'transparent'};opacity:${p.opacity || 1};box-shadow:0 0 0 1px rgba(0,0,0,.15)`}"></i>${p.n}</button>`).join('');
+  const presets = (PRESETS[k] || []).map((p, n) => `<button class="pchip" data-p="${n}" title="${p.n}"><i style="${k === 'text' || k === 'fill' ? `background:${p.color};box-shadow:0 0 0 1px rgba(0,0,0,.18)` : `border:${Math.min(3, p.width || 1) + 1}px ${p.dash ? 'dashed' : 'solid'} ${p.color};background:${p.fill || 'transparent'};opacity:${p.opacity || 1};box-shadow:0 0 0 1px rgba(0,0,0,.15)`}"></i>${p.n}</button>`).join('');
   const widthSel = `<label class="sb-l">粗細<select data-s="width">${[0.5, 0.8, 1, 1.2, 1.5, 2, 3, 4, 6, 8, 10, 14].map(v => `<option value="${v}"${+st.width === v ? ' selected' : ''}>${v} pt</option>`).join('')}</select></label>`;
   const opSel = `<label class="sb-l">透明度<select data-s="opacity">${[1, .85, .7, .5, .35].map(v => `<option value="${v}"${+st.opacity === v ? ' selected' : ''}>${Math.round(v * 100)}%</option>`).join('')}</select></label>`;
   const dash = `<label class="sb-l"><input type="checkbox" data-s="dash"${st.dash ? ' checked' : ''}>虛線</label>`;
@@ -3736,6 +4138,10 @@ function styleBar(t){
   if (k === 'box' || k === 'poly') h = `<span class="sb-g">${presets}</span><span class="sb-h">框線</span>${sw('color')}${(k === 'box' || def.closed) ? `<span class="sb-h">填色</span>${sw('fill', true)}` : ''}${widthSel}${dash}${opSel}`;
   if (k === 'pen') h = `<span class="sb-g">${presets}</span>${sw('color')}${widthSel}${opSel}`;
   if (k === 'eraser') h = `<span class="sb-h">大小</span>${[[6, '小'], [14, '中'], [28, '大'], [48, '特大']].map(([v, n]) => `<button class="pchip${st.size === v ? ' on' : ''}" data-s="size" data-v="${v}"><i style="border-radius:50%;width:${6 + v / 4}px;height:${6 + v / 4}px;background:#adb5bd"></i>${n}</button>`).join('')}`;
+  if (k === 'fill') h = `<span class="sb-g">${presets}</span><span class="sb-h">顏色</span>${sw('color')}<button class="pchip" data-h="eyedrop" title="滴管：吸取畫面上的顏色">${icon('dropper')}滴管</button>${opSel}
+    <span class="sb-h">方式</span>${[['auto', '點選區塊'], ['rect', '矩形'], ['lasso', '套索'], ['nodes', '節點']].map(([v, n]) => `<button class="pchip${st.mode === v ? ' on' : ''}" data-s="mode" data-v="${v}">${n}</button>`).join('')}
+    ${st.mode === 'nodes' ? `<span class="sb-tip">點出節點，點回起點／雙擊／Enter 完成・可拖曳節點・Backspace 退一點</span>` : ''}
+    ${st.mode === 'auto' ? `<label class="sb-l" title="數值越大，顏色相近的範圍也會一起填入">容許度<select data-s="tol">${[['8', '精確'], ['24', '低'], ['32', '中'], ['56', '高'], ['96', '很高']].map(([v, n]) => `<option value="${v}"${String(st.tol) === v ? ' selected' : ''}>${n}</option>`).join('')}</select></label>` : ''}`;
   if (k === 'stamp') h = `<span class="sb-h">目前戳記</span><span class="stamp-cur" id="stampCur"></span><button class="pchip" data-h="stamps">更換戳記…</button>`;
   return h;
 }
@@ -3746,6 +4152,7 @@ $('#hint').addEventListener('click', e => {
   const p = e.target.closest('[data-p]'); if (p) { applyPreset(t, +p.dataset.p); setTool(t); return; }
   const b = e.target.closest('button[data-s]'); if (b) { const v = b.dataset.v; STYLES[t][b.dataset.s] = b.dataset.s === 'size' ? +v : v; saveStyles(); setTool(t); return; }
   if (e.target.closest('[data-h="stamps"]')) openStampPicker();
+  if (e.target.closest('[data-h="eyedrop"]')) eyedropper().then(c => { if (c) { noteColorUse(c); STYLES[t].color = c; saveStyles(); setTool(t); } });
 });
 $('#hint').addEventListener('change', e => {
   const t = S.tool, el = e.target; if (!DRAW_TOOLS[t] || !el.dataset.s) return;
@@ -4089,14 +4496,15 @@ async function openStampPicker(){
   body.innerHTML = `<div class="st-tabs">${tabs.map(([k, n]) => `<button data-tab="${k}">${n}</button>`).join('')}</div><div class="st-grid" id="stGrid"></div>
     <div id="stCustom" style="display:none">
       <div class="ap-row"><div class="field"><label>戳記文字</label><input type="text" id="scT" class="ex-in" value="已確認" maxlength="10" style="width:180px"></div>
-        <div class="field"><label>顏色</label><select id="scC" class="ex-in">${Object.entries({crimson:'紅色', red:'桃紅', green:'綠色', blue:'藍色', purple:'紫色', black:'黑色'}).map(([k, n]) => `<option value="${k}">${n}</option>`).join('')}</select></div>
+        <div class="field"><label>顏色</label><span class="sc-cols">${Object.entries({crimson:'紅色', red:'桃紅', green:'綠色', blue:'藍色', purple:'紫色', black:'黑色'}).map(([k, n]) => `<button class="swatch" data-sc="${STAMP_COLORS[k]}" title="${n}" style="background:${STAMP_COLORS[k]}"></button>`).join('')}<button class="cpick" id="scC" title="其他顏色（色環、滴管、我的最愛）"><i></i>▾</button></span></div>
         <div class="field"><label>樣式</label><select id="scK" class="ex-in"><option value="box">方框</option><option value="dyn">方框＋姓名日期</option><option value="round">圓形日期章</option></select></div>
         <div class="field"><label>姓名</label><input type="text" id="scW" class="ex-in" style="width:120px"></div></div>
       <div class="st-prev" id="scPrev"></div></div>`;
   let tab = STAMPS.dynamic.some(s => s.t === STAMP_SEL.t && s.kind === STAMP_SEL.kind) ? 'dynamic' : STAMP_SEL.custom ? 'custom' : 'standard', sel = STAMP_SEL;
   const $b = q => body.querySelector(q);
   $b('#scW').value = AUTHOR;
-  const custom = () => ({t:$b('#scT').value.trim() || '戳記', c:$b('#scC').value, kind:$b('#scK').value, who:$b('#scW').value.trim() || AUTHOR, custom:true});
+  let scColor = STAMP_SEL.custom && STAMP_SEL.c ? (STAMP_COLORS[STAMP_SEL.c] || STAMP_SEL.c) : STAMP_COLORS.crimson;
+  const custom = () => ({t:$b('#scT').value.trim() || '戳記', c:scColor, kind:$b('#scK').value, who:$b('#scW').value.trim() || AUTHOR, custom:true});
   const draw = () => {
     body.querySelectorAll('.st-tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
     $b('#stGrid').style.display = tab === 'custom' ? 'none' : ''; $b('#stCustom').style.display = tab === 'custom' ? '' : 'none';
@@ -4111,7 +4519,10 @@ async function openStampPicker(){
     });
   };
   body.querySelector('.st-tabs').onclick = e => { const b = e.target.closest('[data-tab]'); if (b) { tab = b.dataset.tab; if (tab === 'custom') sel = custom(); draw(); } };
-  ['#scT', '#scC', '#scK', '#scW'].forEach(q => $b(q).addEventListener('input', draw));
+  ['#scT', '#scK', '#scW'].forEach(q => $b(q).addEventListener('input', draw));
+  const paintSc = () => body.querySelectorAll('[data-sc]').forEach(b => b.classList.toggle('on', b.dataset.sc === scColor));
+  body.querySelectorAll('[data-sc]').forEach(b => b.onclick = () => { scColor = b.dataset.sc; paintSc(); $b('#scC').style.setProperty('--c', scColor); draw(); });
+  bindColorButton($b('#scC'), () => scColor, v => { if (v) { scColor = v; paintSc(); draw(); } }, {title:'戳記顏色'}); paintSc();
   draw();
   const ok = await openModal({title:'選擇戳記', body, width:Math.min(760, innerWidth - 40), buttons:[{label:'取消', value:false}, {label:'使用此戳記', primary:true, handler:() => true}]});
   if (!ok) return false;
@@ -4166,6 +4577,7 @@ function drawToolDown(i, e){
     svg.innerHTML = previewMarkup(t, {pts:POLY.pts});
     return true;
   }
+  if (def.kind === 'fill') return fillToolDown(i, e);
   if (def.kind === 'stamp') {
     const p0 = P(e); let box = null;
     const d = document.createElement('div'); d.className = 'draft'; S.els[i].querySelector('.ovl').appendChild(d);
@@ -4510,6 +4922,7 @@ function openSigPad(){
     <button class="pen on" data-c="#111111" style="background:#111"></button>
     <button class="pen" data-c="#1c3fa8" style="background:#1c3fa8"></button>
     <button class="pen" data-c="#c8371d" style="background:#c8371d"></button>
+    <button class="cpick sigpick" title="其他顏色（色環、滴管、我的最愛）"><i></i>▾</button>
     <span class="flab" style="margin-left:10px">粗細</span><input type="range" id="penW" min="1.5" max="7" step="0.5" value="3">
   </div>
   <div class="note" style="margin-top:10px">在框內用滑鼠或觸控筆簽名，完成後點「使用此簽名」，再到頁面上點一下即可放置。</div>`;
@@ -4540,6 +4953,7 @@ function openSigPad(){
       };
       c.onpointerup = c.onpointercancel = () => { last = null; };
       f.querySelectorAll('.pen').forEach(b => b.onclick = () => { f.querySelectorAll('.pen').forEach(x => x.classList.remove('on')); b.classList.add('on'); color = b.dataset.c; });
+      bindColorButton(f.querySelector('.sigpick'), () => color, v => { if (!v) return; color = v; f.querySelectorAll('.pen').forEach(x => x.classList.toggle('on', x.dataset.c === v)); }, {title:'筆色'});
     }}).then(v => { if (!v && !S.sigImg && S.tool === 'signature') setTool('select'); else if (v) toast('簽名已準備好，請在頁面上點選放置位置'); });
 }
 function trimCanvas(c){

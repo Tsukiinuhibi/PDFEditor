@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('desktop', {
   pathForFile: f => { try { return webUtils.getPathForFile(f) || ''; } catch (_) { return ''; } },
   openExternal: url => ipcRenderer.invoke('app:open-external', url),
   setTheme: t => ipcRenderer.invoke('app:set-theme', t),
+  capture: () => ipcRenderer.invoke('app:capture'),
   exportImages: {
     defaultDir: (pdfPath, last) => ipcRenderer.invoke('export:default-dir', pdfPath, last),
     chooseDir: current => ipcRenderer.invoke('export:choose-dir', current),

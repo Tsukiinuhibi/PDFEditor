@@ -200,6 +200,11 @@ ipcMain.handle('app:info', () => {
   return { version: app.getVersion(), dev: isDev, platform: process.platform, user };
 });
 // 顯示模式: 'system' follows Windows; the title bar, dialogs and prefers-color-scheme all follow themeSource
+// 滴管: a snapshot of this window, sampled by the renderer
+ipcMain.handle('app:capture', async e => {
+  const img = await e.sender.capturePage();
+  return img.isEmpty() ? null : img.toDataURL();
+});
 ipcMain.handle('app:set-theme', (_e, t) => {
   nativeTheme.themeSource = ['system', 'light', 'dark'].includes(t) ? t : 'system';
   if (win && !win.isDestroyed()) win.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#141416' : '#cfcbc2');
