@@ -45,6 +45,20 @@ jobs:
       - run: npm ci
         if: steps.ver.outputs.skip == 'false'
 
+      - name: Create release tag
+        if: steps.ver.outputs.skip == 'false'
+        shell: bash
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$TAG"
+          fi
+
       - name: Build installer and publish to GitHub Releases
         if: steps.ver.outputs.skip == 'false'
         run: npx electron-builder --win --publish always
