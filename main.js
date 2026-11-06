@@ -90,10 +90,10 @@ ipcMain.handle('renderer-ready', () => {
 });
 ipcMain.handle('file:open-dialog', async () => {
   const r = await dialog.showOpenDialog(win, {
-    title: '開啟 PDF', properties: ['openFile'],
+    title: '開啟 PDF（可一次選擇多個檔案）', properties: ['openFile', 'multiSelections'],
     filters: [{ name: 'PDF 文件', extensions: ['pdf'] }, { name: '所有檔案', extensions: ['*'] }],
   });
-  return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
+  return r.canceled ? [] : r.filePaths;
 });
 /* folders the renderer may export into: ones the user picked, or where an opened PDF lives */
 const allowedDirs = new Set();

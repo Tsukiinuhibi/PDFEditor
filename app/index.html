@@ -24,7 +24,7 @@ button{font:inherit;color:inherit}
 svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
 
 /* ---------- ribbon ---------- */
-.ribbon{background:var(--paper);border-bottom:1px solid var(--line);display:flex;align-items:stretch;gap:0;padding:4px 8px;overflow-x:auto;flex:none;scrollbar-width:thin}
+.ribbon{background:var(--paper);border-bottom:1px solid var(--line);display:flex;align-items:stretch;gap:0;padding:4px 8px;overflow-x:auto;overflow-y:hidden;flex:none;scrollbar-width:thin}
 .brand{display:flex;align-items:center;gap:9px;padding:0 14px 0 4px;margin-right:4px;border-right:1px solid var(--line);white-space:nowrap}
 .seal{width:30px;height:30px;border-radius:6px;background:var(--seal);color:#fff;display:grid;place-items:center;font-weight:700;font-size:16px;letter-spacing:0;box-shadow:inset 0 0 0 2px rgba(255,255,255,.25)}
 .brand b{font-size:15px;letter-spacing:.04em}
@@ -43,6 +43,29 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 @media (max-width:1180px){ .rb{min-width:40px;font-size:11px} }
 
 /* ---------- view bar ---------- */
+.tabbar{display:flex;align-items:flex-end;gap:2px;background:#e4e0d8;border-bottom:1px solid var(--line2);padding:5px 8px 0;overflow-x:auto;overflow-y:hidden;flex:none;scrollbar-width:thin}
+.tabbar.hide{display:none}
+.dtab{display:flex;align-items:center;gap:7px;max-width:230px;min-width:120px;padding:6px 6px 7px 12px;border-radius:8px 8px 0 0;background:#d9d5cc;cursor:pointer;font-size:12.5px;color:var(--ink2);border:1px solid transparent;border-bottom:0;position:relative;top:1px;user-select:none}
+.dtab:hover{background:#d2cdc3}
+.dtab.on{background:#f3f1ec;color:var(--ink);border-color:var(--line2);font-weight:500}
+.dtab .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dtab .dd{width:7px;height:7px;border-radius:50%;background:#e08a00;flex:none}
+.dtab .x{width:20px;height:20px;border:0;border-radius:5px;background:transparent;cursor:pointer;color:var(--ink3);font-size:15px;line-height:1;flex:none;display:grid;place-items:center}
+.dtab .x:hover{background:rgba(0,0,0,.08);color:var(--seal-ink)}
+.dtab-add{border:0;background:transparent;font-size:18px;color:var(--ink2);cursor:pointer;width:30px;height:28px;border-radius:6px;margin-bottom:2px;flex:none}
+.dtab-add:hover{background:rgba(0,0,0,.07)}
+.rstack{display:flex;flex-direction:column;justify-content:center;gap:1px;padding-left:2px}
+.rs{display:flex;align-items:center;gap:5px;border:0;background:transparent;border-radius:5px;padding:0 8px 0 5px;height:16px;font-size:11.5px;cursor:pointer;white-space:nowrap;color:var(--ink)}
+.rs svg.i{width:14px;height:14px}
+.rs:hover{background:#efece5}
+.rs:disabled{opacity:.35;cursor:default;background:transparent}
+.ctx{position:fixed;z-index:70;min-width:220px;background:#fff;border-radius:9px;box-shadow:0 10px 34px rgba(0,0,0,.22);padding:5px;display:none;font-size:13px}
+.ctx button{display:flex;width:100%;align-items:center;gap:8px;border:0;background:transparent;padding:6px 10px;border-radius:6px;cursor:pointer;text-align:left}
+.ctx button:hover:not(:disabled){background:var(--seal-soft);color:var(--seal-ink)}
+.ctx button:disabled{color:var(--ink3);cursor:default}
+.ctx button kbd{margin-left:auto}
+.ctx hr{border:0;border-top:1px solid var(--line);margin:4px 2px}
+.ctx .hd{font-size:11px;color:var(--ink3);padding:4px 10px 2px}
 .viewbar{background:#f3f1ec;border-bottom:1px solid var(--line2);display:flex;align-items:center;gap:6px;padding:5px 10px;flex:none;overflow-x:auto;white-space:nowrap}
 .vb{height:28px;min-width:28px;padding:0 8px;display:inline-flex;align-items:center;justify-content:center;gap:5px;border:1px solid transparent;background:transparent;border-radius:6px;cursor:pointer;font-size:12.5px}
 .vb svg.i{width:17px;height:17px}
@@ -91,10 +114,11 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .panel.on{display:block}
 .thumb{display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 4px;border-radius:7px;cursor:pointer;margin-bottom:2px}
 .thumb:hover{background:#e0dcd3}
-.thumb.on{background:#fff;box-shadow:0 0 0 2px var(--seal) inset}
+.thumb.on .tn{text-decoration:underline;text-underline-offset:3px}
+.thumb.sel{background:#fff;box-shadow:0 0 0 2px var(--seal) inset}
 .thumb .tc{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.18);display:block}
 .thumb .tn{font-size:11.5px;color:var(--ink2);font-variant-numeric:tabular-nums}
-.thumb.on .tn{color:var(--seal-ink);font-weight:500}
+.thumb.sel .tn{color:var(--seal-ink);font-weight:500}
 .empty-note{color:var(--ink3);font-size:12px;line-height:1.7;padding:8px 2px}
 .sbtn{width:100%;border:1px dashed var(--ink3);background:transparent;border-radius:7px;padding:8px;cursor:pointer;color:var(--ink2);margin-bottom:10px}
 .sbtn:hover{border-color:var(--seal);color:var(--seal-ink);background:#fff}
@@ -190,6 +214,27 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .ap-pg.new{color:var(--seal-ink);font-weight:500}
 .ap-pg.more{align-self:center;color:var(--ink3);font-size:18px;padding:0 4px}
 .ap-sum{margin-top:10px;font-size:13px}
+.stepper{display:flex;align-items:stretch;border:1px solid var(--line2);border-radius:7px;overflow:hidden;background:#fff}
+.stepper button{border:0;background:#f3f1ec;width:30px;font-size:16px;cursor:pointer}
+.stepper button:hover{background:var(--seal-soft);color:var(--seal-ink)}
+.ap-row .stepper input{border:0;border-radius:0;width:56px;text-align:center;padding:6px 2px}
+.chips{display:flex;gap:4px}
+.chips button{border:1px solid var(--line2);background:#fff;border-radius:6px;padding:5px 10px;cursor:pointer;font:inherit;font-size:12.5px}
+.chips button.on{border-color:var(--seal);color:var(--seal-ink);background:#fffaf8}
+.ap-strip{position:relative}
+.ap-strip .ap-pg{cursor:pointer;position:relative}
+.ap-strip .ap-pg:not(.new):hover .b{outline:2px solid var(--ink3);outline-offset:2px}
+.ap-strip .ap-pg:not(.new):hover::after{content:"點選：插在此頁後";position:absolute;top:-14px;left:50%;transform:translateX(-50%);font-size:10.5px;color:var(--ink2);white-space:nowrap}
+.ap-new{flex:none;display:flex;flex-direction:column;align-items:center;gap:6px;cursor:grab;touch-action:none;user-select:none}
+.ap-new.dragging{opacity:.3}
+.ap-new .stack{position:relative}
+.ap-ghost i,.ap-new .stack i{position:absolute;inset:0;background:#fff;border:2px dashed var(--seal);border-radius:2px}
+.ap-ghost b,.ap-new .stack b{position:absolute;inset:0;display:grid;place-items:center;color:var(--seal);font-size:13px;text-align:center;line-height:1.35;background:#fff;border:2px dashed var(--seal);border-radius:2px}
+.ap-new .lb{font-size:11.5px;color:var(--seal-ink);font-weight:500;white-space:nowrap}
+.ap-new .grip{font-size:10.5px;color:var(--ink3)}
+.ap-ghost{position:fixed !important;z-index:95;pointer-events:none;opacity:.9;transform:translate(18px,-55%) rotate(-3deg);filter:drop-shadow(0 8px 16px rgba(0,0,0,.25))}
+.ap-mark{position:absolute;top:8px;bottom:30px;width:4px;margin-left:-2px;background:var(--seal);border-radius:2px;display:none;pointer-events:none}
+.ap-mark::before{content:"放在這裡";position:absolute;top:-2px;left:8px;background:var(--seal);color:#fff;font-size:11px;padding:1px 6px;border-radius:4px;white-space:nowrap}
 .ap-sum b{color:var(--seal-ink)}
 .page canvas.pc{position:absolute;inset:0;width:100%;height:100%;display:block}
 .page .ovl{position:absolute;inset:0}
@@ -321,8 +366,13 @@ input[type=file]{display:none}
     <button class="rb" data-act="addPage" data-need title="選擇位置與數量後加入空白頁"><i data-i="pageAdd"></i>加頁</button>
     <button class="rb" data-act="delPage" data-need title="預覽並勾選要刪除的頁面"><i data-i="pageDel"></i>減頁</button>
     <button class="rb" data-act="insertPdf" data-need title="從其他 PDF 匯入頁面插入"><i data-i="pageIns"></i>插入PDF</button>
-    <button class="rb" data-act="rotL" data-need title="目前頁面向左轉 90°"><i data-i="rotL"></i>左轉</button>
-    <button class="rb" data-act="rotR" data-need title="目前頁面向右轉 90°"><i data-i="rotR"></i>右轉</button>
+    <button class="rb" data-act="rotL" data-need title="選取的頁面向左轉 90°（可在縮圖按 Ctrl／Shift 多選）"><i data-i="rotL"></i>左轉</button>
+    <button class="rb" data-act="rotR" data-need title="選取的頁面向右轉 90°（可在縮圖按 Ctrl／Shift 多選）"><i data-i="rotR"></i>右轉</button>
+    <div class="rstack">
+      <button class="rs" data-act="copyPages" data-need title="複製選取的頁面 (Ctrl+C)，可在任何分頁貼上"><i data-i="copy"></i>複製頁</button>
+      <button class="rs" data-act="cutPages" data-need title="剪下選取的頁面 (Ctrl+X)"><i data-i="cut"></i>剪下頁</button>
+      <button class="rs" data-act="pastePages" data-need id="bPaste" title="貼上頁面到目前頁之後 (Ctrl+V)"><i data-i="paste"></i>貼上頁</button>
+    </div>
   </div><div class="cap">頁面</div></div>
   <div class="grp"><div class="btns">
     <button class="rb" data-tool="select" data-need title="選取 / 查看註解"><i data-i="select"></i>選取</button>
@@ -345,6 +395,7 @@ input[type=file]{display:none}
 </div>
 
 <!-- view bar -->
+<div class="tabbar hide" id="tabbar"></div>
 <div class="viewbar" id="viewbar">
   <button class="vb" data-act="sidebar" title="側邊欄"><i data-i="sidebar"></i></button>
   <span class="sep"></span>
@@ -410,6 +461,7 @@ input[type=file]{display:none}
   <span id="stFile">尚未開啟檔案</span>
   <span id="stSize"></span>
   <span id="stSig"></span>
+  <span id="stClip"></span>
   <span id="stWrite"></span>
   <span class="sp"></span>
   <span id="stZoom"></span>
@@ -417,6 +469,7 @@ input[type=file]{display:none}
 </div>
 
 <div class="tip" id="tip"></div>
+<div class="ctx" id="ctx"></div>
 <div class="pop" id="pop"></div>
 <div class="mask" id="mask"><div class="modal" id="modal"></div></div>
 <div class="toasts" id="toasts"></div>
@@ -465,6 +518,9 @@ const ICONS = {
   pageAdd:'M6 3h8l4 4v14H6zM14 3v4h4M12 11v6M9 14h6',
   pageDel:'M6 3h8l4 4v14H6zM14 3v4h4M9 14h6',
   toImage:'M4 4h10l4 4v5M14 4v4h4M4 4v16h7M14 15h7v6h-7zM15.5 19l2-2 1.5 1.5 1-1 1 1.5M12 18h-1',
+  copy:'M8 8h12v12H8zM16 8V4H4v12h4',
+  cut:'M6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12',
+  paste:'M9 3h6v3H9zM8 4.5H6v16h12v-16h-2',
   pageIns:'M9 3h7l4 4v10H9zM16 3v4h4M5 7v14h10M14.5 9.5v5M12 12h5',
   rotL:'M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5',
   rotR:'M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8M21 3v5h-5',
@@ -575,51 +631,141 @@ async function saveFile(filename, data){
 /* ====================================================================
    Loading
    ==================================================================== */
+/* ---------------- documents & tabs ----------------
+   Each open PDF is a document with its own pages, view, undo history and file handle.
+   The active document's fields live on S; switching tabs stashes them and restores another set. */
+const DOC_KEYS = ['bytes', 'name', 'pdf', 'pages', 'scale', 'zoomMode', 'view', 'cover', 'current', 'undo', 'redo',
+  'dirty', 'signed', 'version', 'imgCache', 'annCache', 'handle', 'thumbSel'];
+const docs = [];
+let active = -1, docSeq = 0, VSEQ = 0;
+S.thumbSel = new Set();
+const activeDoc = () => docs[active] || null;
+function blankDoc(){
+  return {id:++docSeq, bytes:null, name:'', pdf:null, pages:[], scale:PX, zoomMode:'fit-width', view:S.view || 'continuous',
+    cover:S.cover, current:0, undo:[], redo:[], dirty:false, signed:false, version:0, imgCache:new Map(), annCache:new Map(),
+    handle:null, thumbSel:new Set(), scrollTop:0, scrollLeft:0};
+}
+function stashActive(){
+  const d = activeDoc(); if (!d) return;
+  DOC_KEYS.forEach(k => d[k] = S[k]);
+  d.scrollTop = viewer.scrollTop; d.scrollLeft = viewer.scrollLeft;
+  S.st.forEach(st => st && st.task && st.task.cancel());
+}
+const applyDoc = d => DOC_KEYS.forEach(k => S[k] = d[k]);
+const anyDirty = () => S.dirty || docs.some((d, i) => i !== active && d.dirty);
+function docField(d, k){ return d === activeDoc() ? S[k] : d[k]; }
+
+function switchTab(i){
+  if (i === active || !docs[i]) return;
+  stashActive(); hideCtx(); hideTip(); pop.style.display = 'none';
+  active = i; applyDoc(docs[i]);
+  mountDoc({scroll:'restore', scrollTop:docs[i].scrollTop, scrollLeft:docs[i].scrollLeft});
+}
+async function openInNewTab(bytes, name, handle){
+  const prev = active;
+  stashActive();
+  const d = blankDoc(); d.name = name; d.handle = handle;
+  docs.push(d); active = docs.length - 1; applyDoc(d);
+  try { await loadDoc(bytes, {name}); }
+  catch (e) {
+    docs.splice(active, 1);
+    if (docs.length) { active = clamp(prev, 0, docs.length - 1); applyDoc(docs[active]); mountDoc({scroll:'restore', scrollTop:docs[active].scrollTop, scrollLeft:docs[active].scrollLeft}); }
+    else { active = -1; showWelcome(); }
+    throw e;
+  }
+}
+async function closeTab(i){
+  const d = docs[i]; if (!d) return;
+  if (docField(d, 'dirty') && !(await confirmDlg('關閉分頁', `「${docField(d, 'name')}」有尚未儲存的修改，關閉後這些修改會遺失。`, '不儲存並關閉'))) return;
+  const pdf = docField(d, 'pdf');
+  if (i === active) {
+    S.st.forEach(st => st && st.task && st.task.cancel());
+    docs.splice(i, 1);
+    if (docs.length) { active = Math.min(i, docs.length - 1); applyDoc(docs[active]); mountDoc({scroll:'restore', scrollTop:docs[active].scrollTop, scrollLeft:docs[active].scrollLeft}); }
+    else { active = -1; showWelcome(); }
+  } else {
+    docs.splice(i, 1); if (i < active) active--;
+    renderTabs();
+  }
+  if (pdf) setTimeout(() => pdf.destroy(), 300);
+}
+function showWelcome(){
+  applyDoc(blankDoc());
+  pagesEl.innerHTML = ''; S.els = []; S.st = []; S.pos = []; S.rows = [];
+  $('#welcome').style.display = '';
+  $$('[data-need]').forEach(b => b.disabled = true);
+  $('#p-thumbs').innerHTML = ''; ['images', 'anns', 'atts'].forEach(t => { const pn = $('#p-' + t); pn.innerHTML = ''; delete pn.dataset.ver; });
+  setTool('select'); $('#hint').classList.remove('show');
+  updateUI();
+}
+function renderTabs(){
+  const bar = $('#tabbar');
+  bar.classList.toggle('hide', !docs.length);
+  bar.innerHTML = '';
+  docs.forEach((d, i) => {
+    const t = document.createElement('div'); t.className = 'dtab' + (i === active ? ' on' : '');
+    const nm = docField(d, 'name'), dirty = docField(d, 'dirty'), h = docField(d, 'handle');
+    t.title = (h && h.path) || nm;
+    t.innerHTML = `<span class="nm">${esc(nm)}</span>${dirty ? '<span class="dd" title="有未儲存的修改"></span>' : ''}<button class="x" title="關閉 (Ctrl+W)">×</button>`;
+    t.addEventListener('pointerdown', e => { if (e.button === 1) e.preventDefault(); });
+    t.addEventListener('auxclick', e => { if (e.button === 1) closeTab(i); });
+    t.addEventListener('click', e => { if (e.target.closest('.x')) closeTab(i); else switchTab(i); });
+    bar.appendChild(t);
+  });
+  const add = document.createElement('button'); add.className = 'dtab-add'; add.textContent = '+'; add.title = '開啟其他 PDF (Ctrl+O)';
+  add.onclick = () => actions.open(); bar.appendChild(add);
+  const on = bar.querySelector('.dtab.on'); if (on) on.scrollIntoView({block:'nearest', inline:'nearest'});
+}
+
 async function loadDoc(bytes, {name, keepView = false, scrollToCurrent = false} = {}){
   let anchorOffset = 0;
   if (keepView && S.pos[S.current]) anchorOffset = viewer.scrollTop - S.pos[S.current].y;
   S.st.forEach(st => st && st.task && st.task.cancel());
   const old = S.pdf;
-  const pdf = await pdfjsLib.getDocument({
-    ...PDF_OPTS, data: bytes.slice(),
-  }).promise;
+  const pdf = await pdfjsLib.getDocument({...PDF_OPTS, data:bytes.slice()}).promise;
   const pages = [];
   for (let i = 1; i <= pdf.numPages; i++) {
     const p = await pdf.getPage(i); const vp = p.getViewport({scale:1});
     pages.push({page:p, vp1:vp, w:vp.width, h:vp.height, rot:((p.rotate % 360) + 360) % 360});
   }
-  S.pdf = pdf; S.pages = pages; S.bytes = bytes; S.version++;
+  S.pdf = pdf; S.pages = pages; S.bytes = bytes; S.version = ++VSEQ;
   if (name) S.name = name;
   S.imgCache.clear(); S.annCache.clear();
-  // page elements
+  if (!keepView) { S.current = 0; S.zoomMode = 'fit-width'; }
+  S.current = clamp(S.current, 0, pages.length - 1);
+  const keepSel = keepView ? [...(S.thumbSel || [])].filter(i => i < pages.length) : [];
+  S.thumbSel = new Set(keepSel.length ? keepSel : [S.current]);
+  mountDoc(keepView && !scrollToCurrent ? {scroll:'anchor', anchorOffset} : {scroll:'current'});
+  if (old && old !== pdf) setTimeout(() => old.destroy(), 500);
+}
+function mountDoc({scroll = 'current', anchorOffset = 0, scrollTop = 0, scrollLeft = 0} = {}){
   pagesEl.innerHTML = '';
-  S.els = pages.map((p, i) => {
+  S.els = S.pages.map((p, i) => {
     const d = document.createElement('div'); d.className = 'page'; d.dataset.i = i;
     d.innerHTML = `<div class="ld">${i + 1}</div><div class="ovl"></div>`;
     return d;
   });
-  S.st = pages.map(() => ({rendered:0, ver:-1, task:null, ovlVer:-1}));
-  if (!keepView) { S.current = 0; S.zoomMode = 'fit-width'; }
-  S.current = clamp(S.current, 0, pages.length - 1);
+  S.st = S.pages.map(() => ({rendered:0, ver:-1, task:null, ovlVer:-1}));
   $('#welcome').style.display = 'none';
   $$('[data-need]').forEach(b => b.disabled = false);
   if (S.zoomMode !== 'custom') S.scale = fitScale(S.zoomMode);
   layout();
-  if (keepView && !scrollToCurrent) viewer.scrollTop = S.pos[S.current] ? S.pos[S.current].y + anchorOffset : 0;
+  if (scroll === 'anchor') viewer.scrollTop = S.pos[S.current] ? S.pos[S.current].y + anchorOffset : 0;
+  else if (scroll === 'restore') { viewer.scrollTop = scrollTop; viewer.scrollLeft = scrollLeft; updateCurrentFromScroll(); }
   else scrollToPage(S.current);
   updateUI(); scheduleRender(0);
-  if (old) setTimeout(() => old.destroy(), 500);
   buildThumbs(); refreshPanels();
 }
 
 async function openFile(file, handle = null){
   if (!file) return;
-  if (S.dirty && !(await confirmDlg('開啟新檔案', '目前文件有尚未儲存的修改，確定要開啟其他檔案？', '開啟'))) return;
+  // the same file is already open: just switch to its tab
+  const same = handle && handle.path && docs.findIndex(d => { const h = docField(d, 'handle'); return h && h.path === handle.path; });
+  if (same >= 0) { switchTab(same); toast('「' + file.name + '」已經開啟'); return; }
   busy(true, '開啟中…');
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
-    S.undo = []; S.redo = []; S.dirty = false; S.signed = false; S.handle = handle;
-    await loadDoc(bytes, {name:file.name});
+    await openInNewTab(bytes, file.name, handle);
     toast('已開啟 ' + file.name + (handle ? '（修改會直接存回原檔）' : ''));
   } catch (e) {
     console.error(e);
@@ -949,7 +1095,8 @@ function updatePager(){
   if (isTwo()) { const r = S.rows[rowOf(S.current)]; if (r && r.length === 2) label = (r[0] + 1) + '-' + (r[1] + 1); }
   if (document.activeElement !== $('#pgIn')) $('#pgIn').value = label;
   $('#pgTot').textContent = '/ ' + n;
-  $$('.thumb').forEach(t => t.classList.toggle('on', +t.dataset.i === S.current));
+  if (!S.thumbSel || S.thumbSel.size <= 1) S.thumbSel = new Set([S.current]);
+  $$('.thumb').forEach(t => { t.classList.toggle('on', +t.dataset.i === S.current); t.classList.toggle('sel', S.thumbSel.has(+t.dataset.i)); });
   const th = $(`.thumb[data-i="${S.current}"]`), panel = $('#p-thumbs');
   if (th && panel.classList.contains('on')) {
     const tr = th.getBoundingClientRect(), pr = panel.getBoundingClientRect();
@@ -978,6 +1125,7 @@ function updateUI(){
   else sw.innerHTML = `<span class="wmode ro"><b>● 編輯副本</b><span>按「儲存」以原檔名下載${canPick() ? '' : '（此瀏覽器環境不允許直接覆寫原檔）'}</span></span>`;
   const aw = $('#autoW'); if (aw) aw.onchange = () => { S.autoWrite = aw.checked; if (aw.checked && S.dirty) { primeWrite(); writeBack(S.bytes); } };
   document.title = (S.dirty ? '● ' : '') + (S.pdf ? S.name + ' — ' : '') + 'PDF 工作台';
+  renderTabs(); updateClipUI();
   viewer.className = 'viewer tool-' + S.tool + (S.spaceDown ? ' pan-ready' : '') + (S.panning ? ' panning' : '');
 }
 
@@ -1067,12 +1215,19 @@ window.addEventListener('keydown', e => {
     if (!S.spaceDown) { S.spaceDown = true; viewer.classList.add('pan-ready'); }
     return;
   }
+  if (mod && e.key.toLowerCase() === 'w') { e.preventDefault(); if (active >= 0) closeTab(active); return; }
+  if (mod && e.key === 'Tab' && docs.length > 1) { e.preventDefault(); switchTab((active + (e.shiftKey ? -1 : 1) + docs.length) % docs.length); return; }
+  if (mod && !e.shiftKey && e.key.toLowerCase() === 'c' && !String(window.getSelection())) { e.preventDefault(); copySelected(false); return; }
+  if (mod && !e.shiftKey && e.key.toLowerCase() === 'x') { e.preventDefault(); copySelected(true); return; }
+  if (mod && !e.shiftKey && e.key.toLowerCase() === 'v') { e.preventDefault(); pasteClip(); return; }
+  if (mod && e.key.toLowerCase() === 'a' && document.activeElement && document.activeElement.closest && document.activeElement.closest('#side')) { e.preventDefault(); S.thumbSel = new Set(S.pages.map((_, i) => i)); paintThumbSel(); return; }
+  if (e.key === 'Delete' && document.activeElement && document.activeElement.closest && document.activeElement.closest('#side')) { e.preventDefault(); actions.delPage(); return; }
   if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); actions.undo(); return; }
   if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); actions.redo(); return; }
   if (mod && (e.key === '=' || e.key === '+')) { e.preventDefault(); actions.zoomIn(); return; }
   if (mod && e.key === '-') { e.preventDefault(); actions.zoomOut(); return; }
   if (mod && e.key === '0') { e.preventDefault(); setZoomMode('actual'); return; }
-  if (e.key === 'Escape') { setTool('select'); return; }
+  if (e.key === 'Escape') { hideCtx(); setTool('select'); return; }
   if (e.key === 'ArrowRight' || (e.key === 'PageDown' && !isCont())) { e.preventDefault(); goPage(1); return; }
   if (e.key === 'ArrowLeft' || (e.key === 'PageUp' && !isCont())) { e.preventDefault(); goPage(-1); return; }
   if (e.key === 'Home') { e.preventDefault(); scrollToPage(0); return; }
@@ -1105,6 +1260,12 @@ function pagePoint(i, e){
   const r = S.els[i].getBoundingClientRect();
   return {x:clamp((e.clientX - r.left) / S.scale, 0, S.pages[i].w), y:clamp((e.clientY - r.top) / S.scale, 0, S.pages[i].h)};
 }
+pagesEl.addEventListener('contextmenu', e => {
+  const pel = e.target.closest('.page'); if (!pel) return;
+  e.preventDefault(); const i = +pel.dataset.i;
+  if (!S.thumbSel.has(i)) { S.thumbSel = new Set([i]); S.current = i; updatePager(); }
+  showPageMenu(e, i);
+});
 pagesEl.addEventListener('pointerdown', e => {
   if (S.panning || S.spaceDown || e.button !== 0) return;
   const pel = e.target.closest('.page'); if (!pel) return;
@@ -1185,6 +1346,7 @@ function highlightPages(from, count, label){
     el.classList.add('newpage');
     const th = document.querySelector(`.thumb[data-i="${i}"]`); if (th) th.classList.add('newpage');
   }
+  S.thumbSel = new Set(); for (let i = from; i <= to; i++) S.thumbSel.add(i); S.thumbAnchor = from; paintThumbSel();
   const th0 = document.querySelector(`.thumb[data-i="${from}"]`); if (th0) th0.scrollIntoView({block:'center'});
   const ver = S.version;
   setTimeout(() => { if (ver !== S.version) return; for (let i = from; i <= to; i++) { S.els[i] && S.els[i].classList.remove('newpage'); const th = document.querySelector(`.thumb[data-i="${i}"]`); th && th.classList.remove('newpage'); } }, 2800);
@@ -1340,7 +1502,7 @@ async function openExportImages(){
   if (!S.pdf) return;
   const n = S.pages.length, pr = loadExpPrefs();
   const st = {
-    sel:new Set([S.current]), custom:new Map(),
+    sel:new Set(selectedPages()), custom:new Map(),
     fmt:IMG_FORMATS[pr.fmt] ? pr.fmt : 'png', dpi:pr.dpi || 150, quality:pr.quality || 92,
     transparent:!!pr.transparent, annots:pr.annots !== false,
     tpl:pr.tpl || '{檔案名稱}_第{頁碼}頁', pad:pr.pad ?? 'auto', policy:pr.policy || 'rename',
@@ -1623,89 +1785,152 @@ async function runImageExport(st, ps, names){
 
 const PAPER = {a4:[595.28, 841.89], a3:[841.89, 1190.55], a5:[419.53, 595.28], letter:[612, 792], legal:[612, 1008]};
 
-async function openAddPage(){
+async function openAddPage(presetAt){
   const n = S.pages.length, cur = S.current, cp = S.pages[cur];
   const mm = v => Math.round(v / 72 * 25.4);
+  const st = {at:clamp(presetAt ?? cur + 1, 0, n), count:1, size:'same', ori:'p'};
   const body = document.createElement('div');
   body.innerHTML = `
     <div class="ap-row">
+      <div class="field"><label>要加入幾頁</label>
+        <div class="stepper"><button data-st="-1" title="減少">−</button><input type="number" id="apCount" min="1" max="200" value="1"><button data-st="1" title="增加">＋</button></div></div>
+      <div class="field"><label>快速選擇</label><div class="chips" id="apChips">${[1, 2, 3, 5, 10, 20].map(k => `<button data-k="${k}">${k} 頁</button>`).join('')}</div></div>
+      <div class="field"><label>頁面大小</label>
+        <select id="apSize">
+          <option value="same" selected>與第 ${cur + 1} 頁相同（${mm(cp.w)} × ${mm(cp.h)} mm）</option>
+          <option value="a4">A4（210 × 297 mm）</option><option value="a3">A3（297 × 420 mm）</option>
+          <option value="a5">A5（148 × 210 mm）</option><option value="letter">Letter（216 × 279 mm）</option>
+          <option value="legal">Legal（216 × 356 mm）</option>
+        </select></div>
+      <div class="field" id="apOriF" style="display:none"><label>方向</label><select id="apOri"><option value="p">直向</option><option value="l">橫向</option></select></div>
+    </div>
+    <div class="ap-row">
       <div class="field"><label>插入位置</label>
         <select id="apPos">
-          <option value="after" selected>目前頁（第 ${cur + 1} 頁）之後</option>
+          <option value="after">目前頁（第 ${cur + 1} 頁）之後</option>
           <option value="before">目前頁（第 ${cur + 1} 頁）之前</option>
           <option value="start">文件最前面</option>
           <option value="end">文件最後面（第 ${n} 頁之後）</option>
           <option value="at">指定頁碼之後…</option>
         </select></div>
-      <div class="field" id="apAtF" style="display:none"><label>在第幾頁之後（0 = 最前面）</label><input type="number" id="apAt" min="0" max="${n}" value="${cur + 1}" style="width:90px"></div>
-      <div class="field"><label>頁數</label><input type="number" id="apCount" min="1" max="200" value="1" style="width:80px"></div>
-      <div class="field"><label>頁面大小</label>
-        <select id="apSize">
-          <option value="same" selected>與第 ${cur + 1} 頁相同（${mm(cp.w)} × ${mm(cp.h)} mm）</option>
-          <option value="a4">A4（210 × 297 mm）</option>
-          <option value="a3">A3（297 × 420 mm）</option>
-          <option value="a5">A5（148 × 210 mm）</option>
-          <option value="letter">Letter（216 × 279 mm）</option>
-          <option value="legal">Legal（216 × 356 mm）</option>
-        </select></div>
-      <div class="field" id="apOriF" style="display:none"><label>方向</label>
-        <select id="apOri"><option value="p">直向</option><option value="l">橫向</option></select></div>
+      <div class="field" id="apAtF" style="display:none"><label>在第幾頁之後（0 = 最前面）</label><input type="number" id="apAt" min="0" max="${n}" style="width:90px"></div>
     </div>
-    <div class="flab" style="margin-bottom:6px">插入後的頁面順序預覽（紅色虛線為新加入的空白頁）</div>
-    <div class="ap-strip" id="apStrip"></div>
+    <div class="flab" style="margin-bottom:6px">🖱 用滑鼠<b>拖曳紅色虛線的「新頁」</b>到想放的位置，或<b>點一下某一頁</b>插在它後面</div>
+    <div class="ap-strip" id="apStrip"><div class="ap-mark" id="apMark"></div></div>
     <div class="ap-sum" id="apSum"></div>`;
   const $b = q => body.querySelector(q);
-  const read = () => {
-    const pos = $b('#apPos').value;
-    let at = pos === 'after' ? cur + 1 : pos === 'before' ? cur : pos === 'start' ? 0 : pos === 'end' ? n : parseInt($b('#apAt').value, 10);
-    const count = parseInt($b('#apCount').value, 10);
-    const size = $b('#apSize').value, ori = $b('#apOri').value;
-    let w, h;
-    if (size === 'same') { w = cp.w; h = cp.h; }
-    else { [w, h] = PAPER[size]; if (ori === 'l') [w, h] = [h, w]; }
-    const err = !(at >= 0 && at <= n) ? `插入位置需介於 0 到 ${n}` : !(count >= 1 && count <= 200) ? '頁數需介於 1 到 200' : '';
-    return {pos, at, count, size, ori, w, h, err};
+  const strip = $b('#apStrip'), mark = $b('#apMark'), H = 120;
+  const newSize = () => {
+    if (st.size === 'same') return {w:cp.w, h:cp.h};
+    let [w, h] = PAPER[st.size]; if (st.ori === 'l') [w, h] = [h, w]; return {w, h};
   };
-  const H = 120;
-  let drawSeq = 0;
-  const draw = async () => {
-    const o = read(), seq = ++drawSeq;
-    $b('#apAtF').style.display = o.pos === 'at' ? '' : 'none';
-    $b('#apOriF').style.display = o.size === 'same' ? 'none' : '';
-    const ok = document.querySelector('#apOk');
-    if (o.err) { $b('#apSum').innerHTML = `<span style="color:var(--seal)">${esc(o.err)}</span>`; $b('#apStrip').innerHTML = ''; if (ok) ok.disabled = true; return; }
-    if (ok) { ok.disabled = false; ok.textContent = `確定加入 ${o.count} 頁`; }
-    // window of the resulting order around the insertion point
-    const items = [];
-    const before = Math.max(0, o.at - 3);
-    if (before > 0) items.push({more:true});
-    for (let i = before; i < o.at; i++) items.push({old:i, num:i + 1});
-    const shownNew = Math.min(o.count, 6);
-    for (let k = 0; k < shownNew; k++) items.push({nu:true, num:o.at + k + 1});
-    if (o.count > shownNew) items.push({more:true, txt:`…另 ${o.count - shownNew} 頁新頁`});
-    const after = Math.min(n, o.at + 3);
-    for (let i = o.at; i < after; i++) items.push({old:i, num:i + 1 + o.count});
-    if (after < n) items.push({more:true});
-    const strip = $b('#apStrip'); strip.innerHTML = '';
-    for (const it of items) {
-      const d = document.createElement('div');
-      if (it.more) { d.className = 'ap-pg more'; d.textContent = it.txt || '…'; strip.appendChild(d); continue; }
-      const pw = it.nu ? o.w : S.pages[it.old].w, ph = it.nu ? o.h : S.pages[it.old].h;
-      const bw = Math.round(H * pw / ph);
-      d.className = 'ap-pg' + (it.nu ? ' new' : '');
-      d.innerHTML = `<div class="b" style="width:${bw}px;height:${H}px">${it.nu ? '新頁' : ''}</div><span>第 ${it.num} 頁${it.nu ? '（新）' : it.num !== it.old + 1 ? `（原 ${it.old + 1}）` : ''}</span>`;
-      strip.appendChild(d);
-      if (!it.nu) pageThumb(it.old, H).then(u => { if (u && seq === drawSeq) { const img = new Image(); img.src = u; d.querySelector('.b').appendChild(img); } });
+  // existing pages: built once, thumbnails load lazily
+  const cards = S.pages.map((pg, i) => {
+    const d = document.createElement('div'); d.className = 'ap-pg'; d.dataset.i = i;
+    d.innerHTML = `<div class="b" style="width:${Math.round(H * pg.w / pg.h)}px;height:${H}px"></div><span></span>`;
+    strip.appendChild(d); return d;
+  });
+  const obs = new IntersectionObserver(ents => ents.forEach(en => {
+    if (!en.isIntersecting) return; obs.unobserve(en.target);
+    pageThumb(+en.target.dataset.i, H).then(u => { if (u) { const im = new Image(); im.src = u; en.target.querySelector('.b').appendChild(im); } });
+  }), {root:strip, rootMargin:'0px 400px'});
+  cards.forEach(c => obs.observe(c));
+  // the draggable block of new pages
+  const grp = document.createElement('div'); grp.className = 'ap-new'; grp.title = '拖曳到想插入的位置';
+  const drawGroup = () => {
+    const {w, h} = newSize(), bw = Math.round(H * w / h), layers = Math.min(st.count, 3);
+    let stack = '';
+    for (let k = layers - 1; k >= 1; k--) stack += `<i style="transform:translate(${k * 6}px,${-k * 6}px)"></i>`;
+    stack += `<b>新頁${st.count > 1 ? `<br>× ${st.count}` : ''}</b>`;
+    grp.innerHTML = `<div class="stack" style="width:${bw}px;height:${H}px;margin-right:${(layers - 1) * 6}px">${stack}</div>
+      <span class="lb">第 ${st.at + 1}${st.count > 1 ? '–' + (st.at + st.count) : ''} 頁（新）</span><span class="grip">⠿ 拖曳移動</span>`;
+  };
+  const place = () => { strip.insertBefore(grp, cards[st.at] || null); };
+  const labels = () => cards.forEach((c, i) => {
+    const num = i < st.at ? i + 1 : i + 1 + st.count;
+    c.querySelector('span').textContent = `第 ${num} 頁${num !== i + 1 ? `（原 ${i + 1}）` : ''}`;
+  });
+  const syncPos = () => {
+    const sel = $b('#apPos');
+    const v = st.at === cur + 1 ? 'after' : st.at === cur ? 'before' : st.at === 0 ? 'start' : st.at === n ? 'end' : 'at';
+    if (sel.value !== 'at' || v !== 'at') sel.value = v;
+    $b('#apAtF').style.display = sel.value === 'at' ? '' : 'none';
+    if (document.activeElement !== $b('#apAt')) $b('#apAt').value = st.at;
+  };
+  let okBtn = null;
+  const update = ({scroll = true} = {}) => {
+    $b('#apOriF').style.display = st.size === 'same' ? 'none' : '';
+    $b('#apChips').querySelectorAll('button').forEach(b => b.classList.toggle('on', +b.dataset.k === st.count));
+    if (document.activeElement !== $b('#apCount')) $b('#apCount').value = st.count;
+    drawGroup(); place(); labels(); syncPos();
+    const {w, h} = newSize(), where = st.at === 0 ? '文件最前面' : `第 ${st.at} 頁之後`;
+    $b('#apSum').innerHTML = `將在<b>${where}</b>加入 <b>${st.count}</b> 頁空白頁（${mm(w)} × ${mm(h)} mm），完成後新頁為第 <b>${st.at + 1}${st.count > 1 ? '–' + (st.at + st.count) : ''}</b> 頁，文件共 <b>${n + st.count}</b> 頁。`;
+    if (okBtn) okBtn.textContent = `確定加入 ${st.count} 頁`;
+    if (scroll) grp.scrollIntoView({inline:'center', block:'nearest'});
+  };
+  const setCount = v => { v = parseInt(v, 10); if (v >= 1 && v <= 200) { st.count = v; update({scroll:false}); } };
+  body.querySelectorAll('[data-st]').forEach(b => b.onclick = () => setCount(clamp(st.count + +b.dataset.st, 1, 200)));
+  $b('#apCount').oninput = () => setCount($b('#apCount').value);
+  $b('#apCount').onblur = () => { $b('#apCount').value = st.count; };
+  $b('#apChips').onclick = e => { const b = e.target.closest('[data-k]'); if (b) setCount(b.dataset.k); };
+  $b('#apSize').onchange = () => { st.size = $b('#apSize').value; update({scroll:false}); };
+  $b('#apOri').onchange = () => { st.ori = $b('#apOri').value; update({scroll:false}); };
+  $b('#apPos').onchange = () => {
+    const v = $b('#apPos').value;
+    if (v === 'after') st.at = cur + 1; else if (v === 'before') st.at = cur; else if (v === 'start') st.at = 0; else if (v === 'end') st.at = n;
+    update();
+  };
+  $b('#apAt').oninput = () => { const k = parseInt($b('#apAt').value, 10); if (k >= 0 && k <= n) { st.at = k; update(); } };
+  // click a page: insert after it
+  strip.addEventListener('click', e => { const c = e.target.closest('.ap-pg'); if (c && !dragMoved) { st.at = +c.dataset.i + 1; update(); } });
+  // drag the new-page block
+  let drag = null, dragMoved = false;
+  const gapAt = x => { for (let k = 0; k < n; k++) { const r = cards[k].getBoundingClientRect(); if (x < r.left + r.width / 2) return k; } return n; };
+  const showMark = gap => {
+    const sr = strip.getBoundingClientRect();
+    let x;
+    if (gap < n) x = cards[gap].getBoundingClientRect().left - 6; else x = cards[n - 1].getBoundingClientRect().right + 6;
+    mark.style.left = (x - sr.left + strip.scrollLeft) + 'px'; mark.style.display = 'block';
+  };
+  grp.addEventListener('pointerdown', e => {
+    e.preventDefault(); grp.setPointerCapture(e.pointerId);
+    dragMoved = false;
+    drag = {x0:e.clientX, y0:e.clientY, x:e.clientX, gap:st.at, ghost:null, raf:0};
+  });
+  grp.addEventListener('pointermove', e => {
+    if (!drag) return;
+    drag.x = e.clientX;
+    if (!dragMoved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 5) return;
+    if (!dragMoved) {
+      dragMoved = true;
+      drag.ghost = grp.querySelector('.stack').cloneNode(true); drag.ghost.classList.add('ap-ghost'); document.body.appendChild(drag.ghost);
+      grp.classList.add('dragging');
+      const tick = () => {   // auto-scroll near the edges of the strip
+        if (!drag) return;
+        const r = strip.getBoundingClientRect();
+        if (drag.x < r.left + 60) strip.scrollLeft -= 14; else if (drag.x > r.right - 60) strip.scrollLeft += 14;
+        drag.gap = gapAt(drag.x); showMark(drag.gap);
+        drag.raf = requestAnimationFrame(tick);
+      };
+      drag.raf = requestAnimationFrame(tick);
     }
-    const where = o.at === 0 ? '文件最前面' : `第 ${o.at} 頁之後`;
-    $b('#apSum').innerHTML = `將在<b>${where}</b>加入 <b>${o.count}</b> 頁空白頁（${mm(o.w)} × ${mm(o.h)} mm），完成後新頁為第 <b>${o.at + 1}${o.count > 1 ? '–' + (o.at + o.count) : ''}</b> 頁，文件共 <b>${n + o.count}</b> 頁。`;
-    const firstNew = strip.querySelector('.ap-pg.new'); if (firstNew) firstNew.scrollIntoView({inline:'center', block:'nearest'});
+    drag.ghost.style.left = e.clientX + 'px'; drag.ghost.style.top = e.clientY + 'px';
+    drag.gap = gapAt(e.clientX); showMark(drag.gap);
+  });
+  const endDrag = () => {
+    if (!drag) return;
+    cancelAnimationFrame(drag.raf);
+    if (drag.ghost) drag.ghost.remove();
+    grp.classList.remove('dragging'); mark.style.display = 'none';
+    const moved = dragMoved, gap = drag.gap; drag = null;
+    if (moved) { st.at = gap; update(); setTimeout(() => { dragMoved = false; }, 0); }
   };
-  body.addEventListener('input', draw); body.addEventListener('change', draw);
-  const res = await openModal({title:'新增空白頁', body, width:Math.min(860, innerWidth - 40), buttons:[
+  grp.addEventListener('pointerup', endDrag); grp.addEventListener('pointercancel', endDrag);
+  const res = await openModal({title:'新增空白頁', body, width:Math.min(920, innerWidth - 40), buttons:[
     {label:'取消', value:null},
-    {label:'確定加入 1 頁', primary:true, id:'apOk', handler:() => { const o = read(); if (o.err) { toast(o.err, 'err'); return; } return o; }}],
-    onOpen:() => draw()});
+    {label:'確定加入 1 頁', primary:true, id:'apOk', handler:() => ({...st, ...newSize()})}],
+    onOpen:(mb, mf) => { okBtn = mf.querySelector('#apOk'); update(); }});
+  obs.disconnect();
   if (!res) return;
   const {at, count, w, h, size} = res;
   await mutate(`已在${at === 0 ? '文件最前面' : `第 ${at} 頁之後`}加入 ${count} 頁空白頁`, doc => {
@@ -1782,7 +2007,7 @@ function primeWrite(){
 }
 async function writeBack(bytes, {quiet = false} = {}){
   if (!S.handle) return false;
-  const h = S.handle;
+  const h = S.handle, doc = activeDoc();
   const run = async () => {
     let st = permAsk ? await permAsk : await h.queryPermission({mode:'readwrite'}).catch(() => 'denied');
     permAsk = null;
@@ -1798,7 +2023,8 @@ async function writeBack(bytes, {quiet = false} = {}){
   S.writing = job;
   try {
     await job;
-    if (S.handle === h && S.bytes === bytes) S.dirty = false;
+    if (doc === activeDoc()) { if (S.bytes === bytes) S.dirty = false; }
+    else if (doc && doc.bytes === bytes) doc.dirty = false;
     updateUI();
     if (!quiet) toast('已存回原檔 ' + S.name);
     return true;
@@ -1972,9 +2198,112 @@ async function insertFromPdf(file){
   }, {scrollToCurrent:true, highlight:{from:at, count:res.sel.length, label:'插入的頁面'}});
 }
 
+/* ---------------- page selection, clipboard, context menu ---------------- */
+function selectedPages(){
+  const n = S.pages.length;
+  const sel = [...(S.thumbSel || [])].filter(i => i >= 0 && i < n).sort((a, b) => a - b);
+  return sel.length ? sel : (n ? [S.current] : []);
+}
+function paintThumbSel(){
+  $$('.thumb').forEach(t => t.classList.toggle('sel', S.thumbSel.has(+t.dataset.i)));
+  const k = S.thumbSel.size;
+  $('#stSize').title = k > 1 ? `已選取 ${k} 頁` : '';
+}
+function thumbClick(e, i){
+  $('#side').focus && $('#side').setAttribute('tabindex', '-1');
+  if (e.ctrlKey || e.metaKey) {
+    if (S.thumbSel.has(i) && S.thumbSel.size > 1) S.thumbSel.delete(i); else S.thumbSel.add(i);
+    S.thumbAnchor = i;
+  } else if (e.shiftKey && S.thumbAnchor != null) {
+    S.thumbSel = new Set(); for (let k = Math.min(S.thumbAnchor, i); k <= Math.max(S.thumbAnchor, i); k++) S.thumbSel.add(k);
+  } else { S.thumbSel = new Set([i]); S.thumbAnchor = i; }
+  const keep = new Set(S.thumbSel);
+  scrollToPage(i);
+  S.thumbSel = keep; paintThumbSel();
+  if (keep.size > 1) toast(`已選取 ${keep.size} 頁（${rangeText([...keep])}）`);
+}
+
+// the page clipboard is shared by every tab: copy in one file, paste in another
+let PAGE_CLIP = null;
+function updateClipUI(){
+  const el = $('#stClip'); if (!el) return;
+  el.innerHTML = PAGE_CLIP ? `<span title="可在任何分頁按 Ctrl+V 貼上">📋 剪貼簿：${PAGE_CLIP.count} 頁（${esc(PAGE_CLIP.from)} 第 ${esc(PAGE_CLIP.range)} 頁）</span>` : '';
+  const b = $('#bPaste'); if (b) b.disabled = !S.pdf || !PAGE_CLIP;
+}
+async function copySelected(cut){
+  if (!S.pdf) return;
+  const sel = selectedPages(), n = S.pages.length;
+  if (cut && sel.length >= n) { toast('不能剪下全部頁面，文件至少要保留一頁', 'err'); return; }
+  busy(true, cut ? '剪下頁面中…' : '複製頁面中…');
+  try {
+    const src = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false});
+    const out = await PDFDocument.create();
+    (await out.copyPages(src, sel)).forEach(p => out.addPage(p));
+    PAGE_CLIP = {bytes:await out.save(), count:sel.length, from:S.name, range:rangeText(sel)};
+  } catch (e) { console.error(e); toast('複製失敗：' + (e.message || e), 'err'); return; }
+  finally { busy(false); }
+  updateClipUI();
+  if (!cut) { toast(`已複製 ${sel.length} 頁（第 ${rangeText(sel)} 頁），可在任何分頁按 Ctrl+V 貼上`); return; }
+  await mutate(`已剪下 ${sel.length} 頁（第 ${rangeText(sel)} 頁），可在任何分頁貼上`, doc => {
+    [...sel].sort((a, b) => b - a).forEach(i => doc.removePage(i));
+    S.current = clamp(sel[0], 0, doc.getPageCount() - 1); S.thumbSel = new Set([S.current]);
+  });
+}
+async function pasteClip(at){
+  if (!S.pdf) return;
+  if (!PAGE_CLIP) { toast('剪貼簿裡沒有頁面，請先複製或剪下頁面', 'err'); return; }
+  const clip = PAGE_CLIP;
+  if (at == null) at = S.current + 1;
+  at = clamp(at, 0, S.pages.length);
+  await mutate(`已貼上 ${clip.count} 頁（來自「${clip.from}」）`, async doc => {
+    const src = await PDFDocument.load(clip.bytes, {ignoreEncryption:true, updateMetadata:false});
+    (await doc.copyPages(src, src.getPageIndices())).forEach((p, k) => doc.insertPage(at + k, p));
+    S.current = at;
+  }, {scrollToCurrent:true, highlight:{from:at, count:clip.count, label:'貼上的頁面'}});
+}
+const ctx = $('#ctx');
+function hideCtx(){ ctx.style.display = 'none'; }
+document.addEventListener('pointerdown', e => { if (!ctx.contains(e.target)) hideCtx(); }, true);
+let ctxShownAt = 0;
+viewer.addEventListener('scroll', () => { if (performance.now() - ctxShownAt > 600) hideCtx(); });   // ignore the scroll a right-click itself causes
+function showPageMenu(e, i){
+  const sel = selectedPages(), k = sel.length, lbl = k > 1 ? `${k} 頁` : `第 ${i + 1} 頁`;
+  const clip = PAGE_CLIP ? `${PAGE_CLIP.count} 頁` : '';
+  ctx.innerHTML = `<div class="hd">${k > 1 ? `已選取第 ${esc(rangeText(sel))} 頁` : `第 ${i + 1} 頁`}</div>
+    <button data-c="copy">${icon('copy')}複製 ${lbl}<kbd>Ctrl+C</kbd></button>
+    <button data-c="cut"${k >= S.pages.length ? ' disabled' : ''}>${icon('cut')}剪下 ${lbl}<kbd>Ctrl+X</kbd></button>
+    <button data-c="pasteBefore"${clip ? '' : ' disabled'}>${icon('paste')}貼上${clip ? ' ' + clip : ''}到第 ${i + 1} 頁之前</button>
+    <button data-c="pasteAfter"${clip ? '' : ' disabled'}>${icon('paste')}貼上${clip ? ' ' + clip : ''}到第 ${i + 1} 頁之後<kbd>Ctrl+V</kbd></button>
+    <hr>
+    <button data-c="add">${icon('pageAdd')}在第 ${i + 1} 頁之後加入空白頁…</button>
+    <button data-c="rotL">${icon('rotL')}${lbl}向左轉</button>
+    <button data-c="rotR">${icon('rotR')}${lbl}向右轉</button>
+    <button data-c="export">${icon('toImage')}將 ${lbl}轉存成圖片…</button>
+    <hr>
+    <button data-c="del"${k >= S.pages.length ? ' disabled' : ''}>${icon('pageDel')}刪除 ${lbl}…</button>`;
+  ctx.style.display = 'block'; ctxShownAt = performance.now();
+  const w = ctx.offsetWidth, h = ctx.offsetHeight;
+  ctx.style.left = Math.min(e.clientX, innerWidth - w - 8) + 'px';
+  ctx.style.top = Math.min(e.clientY, innerHeight - h - 8) + 'px';
+  ctx.onclick = ev => {
+    const b = ev.target.closest('button'); if (!b || b.disabled) return;
+    hideCtx();
+    const c = b.dataset.c;
+    if (c === 'copy') copySelected(false);
+    if (c === 'cut') copySelected(true);
+    if (c === 'pasteBefore') pasteClip(i);
+    if (c === 'pasteAfter') pasteClip(i + 1);
+    if (c === 'add') openAddPage(i + 1);
+    if (c === 'rotL') rotate(-90);
+    if (c === 'rotR') rotate(90);
+    if (c === 'export') openExportImages();
+    if (c === 'del') actions.delPage();
+  };
+}
+
 const actions = {
   async open(){
-    if (DESK) { const p = await DESK.openDialog(); if (p) await openPath(p); return; }
+    if (DESK) { const list = await DESK.openDialog(); for (const p of (Array.isArray(list) ? list : list ? [list] : [])) await openPath(p); return; }
     if (canPick()) {
       try {
         const [h] = await window.showOpenFilePicker({types:[{description:'PDF 文件', accept:{'application/pdf':['.pdf']}}], excludeAcceptAllOption:false, multiple:false});
@@ -2010,12 +2339,15 @@ const actions = {
     await loadDoc(r.bytes, {keepView:true}); toast('已重做'); await afterEdit();
   },
   addPage(){ return openAddPage(); },
+  copyPages(){ return copySelected(false); },
+  cutPages(){ return copySelected(true); },
+  pastePages(){ return pasteClip(); },
   exportImages(){ return openExportImages(); },
   async delPage(){
     const n = S.pages.length;
     if (n <= 1) { toast('文件至少要保留一頁', 'err'); return; }
     const res = await pagePicker({
-      title:'刪除頁面', mode:'delete', count:n, initial:[S.current], current:S.current,
+      title:'刪除頁面', mode:'delete', count:n, initial:selectedPages(), current:S.current,
       getPage:i => Promise.resolve(S.pages[i].page),
       okLabel:k => k ? `刪除 ${k} 頁` : '刪除',
       note:'勾選要刪除的頁面（可按住 Shift 連續選取），刪除後可用「復原」還原。',
@@ -2044,9 +2376,9 @@ function nextZoom(dir){
   return v / 100 * PX;
 }
 function rotate(delta){
-  const i = S.current;
-  return mutate(`第 ${i + 1} 頁已${delta < 0 ? '向左' : '向右'}旋轉`, doc => {
-    const p = doc.getPage(i); p.setRotation(degrees((((p.getRotation().angle + delta) % 360) + 360) % 360));
+  const sel = selectedPages();
+  return mutate(`第 ${rangeText(sel)} 頁已${delta < 0 ? '向左' : '向右'}旋轉`, doc => {
+    sel.forEach(i => { const p = doc.getPage(i); p.setRotation(degrees((((p.getRotation().angle + delta) % 360) + 360) % 360)); });
   });
 }
 
@@ -2554,7 +2886,8 @@ function buildThumbs(){
     const w = 120, h = Math.round(w * pg.h / pg.w);
     const W = h > 170 ? Math.round(170 * pg.w / pg.h) : w, H = Math.min(h, 170);
     t.innerHTML = `<canvas class="tc" style="width:${W}px;height:${H}px"></canvas><span class="tn">${i + 1}</span>`;
-    t.onclick = () => scrollToPage(i);
+    t.onclick = e => thumbClick(e, i);
+    t.oncontextmenu = e => { e.preventDefault(); if (!S.thumbSel.has(i)) { S.thumbSel = new Set([i]); S.thumbAnchor = i; scrollToPage(i); paintThumbSel(); } showPageMenu(e, i); };
     panel.appendChild(t); thumbObs.observe(t);
   });
   updatePager();
@@ -2711,8 +3044,7 @@ async function makeSample(){
     p.drawText('4', {x:A4[0] / 2, y:30, size:10, font});
     await doc.attach(new TextEncoder().encode('這是附加在範例 PDF 內的說明檔。\nThis file is embedded in the sample PDF.'), '說明.txt', {mimeType:'text/plain', description:'範例附件'});
     const bytes = await doc.save();
-    S.undo = []; S.redo = []; S.dirty = false; S.signed = false; S.handle = null;
-    await loadDoc(bytes, {name:'範例文件.pdf'});
+    await openInNewTab(bytes, '範例文件.pdf', null);
     toast('已載入範例文件');
   } catch (e) { console.error(e); toast('產生範例失敗：' + e.message, 'err'); }
   finally { busy(false); }
@@ -2740,14 +3072,17 @@ $('#zIn').addEventListener('blur', updateZoomUI);
 ['dragleave', 'drop'].forEach(ev => window.addEventListener(ev, e => { e.preventDefault(); if (ev === 'dragleave' && e.relatedTarget) return; viewer.classList.remove('drop'); }));
 window.addEventListener('drop', e => {
   const f = [...(e.dataTransfer && e.dataTransfer.files || [])];
-  const idx = f.findIndex(x => /\.pdf$/i.test(x.name) || x.type === 'application/pdf');
+  const isPdf = x => /\.pdf$/i.test(x.name) || x.type === 'application/pdf';
+  const pdfs = f.filter(isPdf);
+  if (pdfs.length > 1) { (async () => { for (const x of pdfs) { const fp = DESK && DESK.pathForFile(x); if (fp) await openPath(fp); else await openFile(x); } })(); return; }
+  const idx = f.findIndex(isPdf);
   const pdf = f[idx];
   const item = idx >= 0 && e.dataTransfer.items ? [...e.dataTransfer.items].filter(it => it.kind === 'file')[idx] : null;
   const hp = item && item.getAsFileSystemHandle ? item.getAsFileSystemHandle().catch(() => null) : Promise.resolve(null);
   if (pdf && DESK) { const fp = DESK.pathForFile(pdf); if (fp) openPath(fp); else openFile(pdf); }
   else if (pdf) hp.then(h => openFile(pdf, h && h.kind === 'file' ? h : null)); else if (f.length && S.pdf) { const dt = new DataTransfer(); f.forEach(x => dt.items.add(x)); $('#fAttach').files = dt.files; $('#fAttach').dispatchEvent(new Event('change')); }
 });
-window.addEventListener('beforeunload', e => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } });
+window.addEventListener('beforeunload', e => { if (anyDirty()) { e.preventDefault(); e.returnValue = ''; } });
 $$('[data-need]').forEach(b => b.disabled = true);
 updateUI();
 
@@ -2784,8 +3119,8 @@ function updateMessage(){
   }
 }
 async function installUpdate(){
-  if (S.dirty && !(await confirmDlg('安裝更新', '文件有尚未儲存的修改，重新啟動後這些修改會遺失。要繼續更新嗎？（建議先按「儲存」）', '仍要更新'))) return;
-  S.dirty = false;
+  if (anyDirty() && !(await confirmDlg('安裝更新', '文件有尚未儲存的修改，重新啟動後這些修改會遺失。要繼續更新嗎？（建議先按「儲存」）', '仍要更新'))) return;
+  S.dirty = false; docs.forEach(d => d.dirty = false);
   toast('正在重新啟動並安裝更新…');
   await DESK.update.install();
 }
@@ -2822,7 +3157,7 @@ if (DESK) {
   });
   DESK.update.state().then(st => { if (st) { UPD.state = st; renderUpdate(); } });
   DESK.onOpenPath(p => openPath(p));
-  DESK.ready().then(list => { if (list && list.length) openPath(list[list.length - 1]); });
+  DESK.ready().then(async list => { for (const p of (list || [])) await openPath(p); });
 }
 window.__pdfapp = {S, actions, scrollToPage, makeSample};
 </script>
