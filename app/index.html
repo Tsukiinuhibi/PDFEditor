@@ -623,6 +623,50 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
 .sc-cols{display:flex;align-items:center;gap:5px;height:30px}
 .sc-cols .swatch{width:20px;height:20px}
 .pens .cpick{margin-left:4px}
+
+/* layers panel */
+#p-layers{padding:8px 6px}
+.ly-tools{display:flex;align-items:center;gap:3px;margin-bottom:8px}
+.ly-tools .sp{flex:1}
+.ly-tools button{height:26px;padding:0 7px;white-space:nowrap;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);font-size:12px;cursor:pointer}
+.ly-tools button:hover,.ly-adopt:hover{background:#fff3bf;color:#1f2328}
+.ly-list{display:flex;flex-direction:column;gap:2px}
+.ly-row{display:flex;align-items:center;gap:2px;height:30px;padding:0 4px 0 0;border-radius:6px;border:1px solid transparent;cursor:pointer;user-select:none;font-size:12.5px;color:var(--ink)}
+.ly-row:hover{background:var(--hover)}
+.ly-row.act{background:rgba(28,100,217,.12);border-color:rgba(28,100,217,.45)}
+.ly-row.act .ly-name{font-weight:600}
+.ly-row.off .ly-name,.ly-row.off .ly-n{opacity:.45}
+.ly-row button{display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:0;background:none;color:var(--ink2);border-radius:4px;cursor:pointer;flex:none}
+.ly-row button:hover{background:#fff3bf;color:#1f2328}
+.ly-row svg,.ly-obj svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.ly-car{font-size:10px;width:14px!important;transition:transform .12s}
+.ly-car.open{transform:rotate(90deg)}
+.ly-row.off .ly-eye{color:var(--ink3)}
+.ly-lock{color:var(--ink3)!important;opacity:.55}
+.ly-lock.on{color:#c92a2a!important;opacity:1}
+.ly-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:3px}
+.ly-tag{font-size:10px;padding:0 4px;border-radius:3px;background:var(--hover);color:var(--ink3);margin-right:3px}
+.ly-n{font-size:11px;color:var(--ink3);min-width:16px;text-align:right}
+.ly-row.base{cursor:default;color:var(--ink3);border-top:1px dashed var(--line);border-radius:0;margin-top:4px}
+.ly-row.base:hover{background:none}
+.ly-pg{width:44px;text-align:center}
+.ly-row.loose .ly-name{color:var(--ink3);font-style:italic}
+.ly-row.drop-a{box-shadow:inset 0 2px 0 #1c64d9}
+.ly-row.drop-b{box-shadow:inset 0 -2px 0 #1c64d9}
+.ly-row.drop-in{background:rgba(28,100,217,.18);border-color:#1c64d9}
+.ly-objs{margin:0 0 4px 16px;border-left:1px solid var(--line);padding-left:4px}
+.ly-obj{display:flex;align-items:center;gap:4px;height:24px;font-size:11.5px;color:var(--ink2);border-radius:4px;cursor:pointer;padding-right:4px}
+.ly-obj:hover{background:var(--hover)}
+.ly-obj.hid .ly-on{opacity:.45;text-decoration:line-through}
+.ly-oeye{display:flex;align-items:center;justify-content:center;width:20px;height:20px;border:0;background:none;color:var(--ink3);cursor:pointer;border-radius:4px;padding:0}
+.ly-oeye:hover{background:#fff3bf;color:#1f2328}
+.ly-on{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ly-op{font-size:10.5px;color:var(--ink3)}
+.ly-ren{flex:1;min-width:0;height:22px;font-size:12.5px;padding:0 4px;border:1px solid #1c64d9;border-radius:4px;background:var(--surface);color:var(--ink)}
+.ly-adopt{margin:4px 0 2px 18px;padding:4px 8px;font-size:11.5px;border:1px dashed var(--line);border-radius:6px;background:var(--surface);color:var(--ink2);cursor:pointer}
+.ly-note{margin-top:10px;font-size:11.5px;line-height:1.6;color:var(--ink3)}
+.ly-pick{height:24px;font-size:12px;border:1px solid var(--line);border-radius:5px;background:var(--surface);color:var(--ink);max-width:150px}
+.tabs .tab{padding-left:6px;padding-right:6px}
 </style>
 </head>
 <body>
@@ -704,6 +748,7 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
   <label class="chk" title="雙頁模式時第一頁（封面）單獨顯示"><input type="checkbox" id="coverChk"> 封面單獨</label>
   <span class="sep"></span>
   <button class="vb" id="bAids" data-act="aids" data-need title="網格、輔助線、標尺與貼齊"><i data-i="gridI"></i>輔助工具 ▾</button>
+  <button class="vb" data-act="layers" data-need title="圖層面板：顯示／隱藏、鎖定、排列與管理圖層"><i data-i="layers"></i>圖層</button>
 </div>
 
 <div class="updbar" id="updBar"></div>
@@ -716,11 +761,13 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
       <button class="tab" data-tab="images">圖片</button>
       <button class="tab" data-tab="anns">註解</button>
       <button class="tab" data-tab="atts">附件</button>
+      <button class="tab" data-tab="layers">圖層</button>
     </div>
     <div class="panel on" id="p-thumbs"></div>
     <div class="panel" id="p-images"></div>
     <div class="panel" id="p-anns"></div>
     <div class="panel" id="p-atts"></div>
+    <div class="panel" id="p-layers"></div>
   </aside>
   <div class="vwrap" id="vwrap"><canvas class="ruler h" id="rulerH"></canvas><canvas class="ruler v" id="rulerV"></canvas><div class="rcorner"></div>
   <div class="viewer" id="viewer" tabindex="0">
@@ -848,6 +895,7 @@ const ICONS = {
   image:'M3 3h4M3 3v4M21 3h-4M21 3v4M3 21h4M3 21v-4M21 21h-4M21 21v-4M7 16l3.5-4 2.5 3 2-2 2 3zM15 8.5h.01',
   note:'M4 4h16v12H9l-5 4zM8 8.5h8M8 12h5',
   text:'M5 6V4.5h14V6M12 4.5v15M9 19.5h6',
+  layers:'M12 3 2 8.5 12 14l10-5.5zM2 12.5 12 18l10-5.5M2 16.5 12 22l10-5.5',
   insImg:'M13 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7M3 16l4.5-5 3.5 4 2.5-2.5L19 18M18 2.5v6M15 5.5h6M8.5 8.5h.01',
   hl:'m9 11-6 6v3h9l3-3M22 12l-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4',
   pen:'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z',
@@ -955,7 +1003,7 @@ async function saveFile(filename, data){
    Each open PDF is a document with its own pages, view, undo history and file handle.
    The active document's fields live on S; switching tabs stashes them and restores another set. */
 const DOC_KEYS = ['bytes', 'name', 'pdf', 'pages', 'scale', 'zoomMode', 'view', 'cover', 'current', 'undo', 'redo',
-  'dirty', 'signed', 'version', 'imgCache', 'annCache', 'handle', 'thumbSel', 'guides'];
+  'dirty', 'signed', 'version', 'imgCache', 'annCache', 'handle', 'thumbSel', 'guides', 'activeLayer'];
 const docs = [];
 let active = -1, docSeq = 0, VSEQ = 0;
 S.thumbSel = new Set();
@@ -963,7 +1011,7 @@ const activeDoc = () => docs[active] || null;
 function blankDoc(){
   return {id:++docSeq, bytes:null, name:'', pdf:null, pages:[], scale:PX, zoomMode:'fit-width', view:S.view || 'continuous',
     cover:S.cover, current:0, undo:[], redo:[], dirty:false, signed:false, version:0, imgCache:new Map(), annCache:new Map(),
-    handle:null, thumbSel:new Set(), guides:{h:[], v:[]}, scrollTop:0, scrollLeft:0};
+    handle:null, thumbSel:new Set(), guides:{h:[], v:[]}, scrollTop:0, scrollLeft:0, activeLayer:null};
 }
 function stashActive(){
   const d = activeDoc(); if (!d) return;
@@ -1339,7 +1387,14 @@ function hideTip(){ tip.style.display = 'none'; }
 
 /* ---------------- annotations (read) ---------------- */
 const ANN_LABEL = {Text:'便利貼', FreeText:'文字方塊', Highlight:'高亮', Underline:'底線', StrikeOut:'刪除線', Square:'矩形', Circle:'橢圓形', Ink:'畫筆', Stamp:'戳記', FileAttachment:'附件註解', Line:'線條', Polygon:'多邊形', PolyLine:'折線', Squiggly:'波浪線', Caret:'插入符號'};
+// annotations that can be worked with: not hidden, not on a hidden or locked layer
 async function getAnns(i){
+  const all = await getAllAnns(i);
+  if (!all.length) return all;
+  const blocked = await blockedAnnots();
+  return all.filter(a => !a.flagHidden && !(blocked && blocked.has(a.id)));
+}
+async function getAllAnns(i){
   const key = S.version + ':' + i; if (S.annCache.has(key)) return S.annCache.get(key);
   const pg = S.pages[i];
   const p = pg.page.getAnnotations().then(list => {
@@ -1354,7 +1409,7 @@ async function getAnns(i){
     const contents = (a.contentsObj && a.contentsObj.str) || a.contents || '';
     const author = (a.titleObj && a.titleObj.str) || a.title || '';
     const o = {id:a.id, subtype:a.subtype, x, y, w:Math.abs(r[2] - r[0]), h:Math.abs(r[3] - r[1]),
-      contents, author, sig:isSig, noap:a.subtype === 'Text' && !a.hasAppearance, mdate:a.modificationDate || a.creationDate || null,
+      contents, author, sig:isSig, noap:a.subtype === 'Text' && !a.hasAppearance, flagHidden:!!(a.annotationFlags & 2), mdate:a.modificationDate || a.creationDate || null,
       popupBox:a.popupRef && popups[a.popupRef] ? vbox(popups[a.popupRef]) : null,
       label: isSig ? '數位簽章欄位' : (ANN_LABEL[a.subtype] + (author ? ' · ' + author : ''))};
     if (a.subtype === 'Ink' && a.inkLists) {
@@ -2767,10 +2822,12 @@ function rotMatrix(r){ const a = r * Math.PI / 180, c = Math.round(Math.cos(a)),
 function addAnnot(doc, i, lit){
   const page = doc.getPage(i), ctx = doc.context;
   lit.P = page.ref;
+  if (!LAYER_SKIP.has(lit.Subtype) && !lit.OC) { const lr = activeLayerRef(doc); if (lr) lit.OC = lr; }   // new objects go into the current layer
   const ref = ctx.register(ctx.obj(lit));
   let annots = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray);
   if (!annots) { annots = ctx.obj([]); page.node.set(PDFName.of('Annots'), annots); }
   annots.push(ref);
+  if (lit.OC) restack(doc);
   return ref;
 }
 function formAP(doc, content, w, h, rot, resources){
@@ -3113,6 +3170,7 @@ function showPageMenu(e, i){
 }
 
 const actions = {
+  layers(){ showTab('layers'); },
   insertImage(){ chooseImage(); },
   async open(){
     if (DESK) { const list = await DESK.openDialog(); for (const p of (Array.isArray(list) ? list : list ? [list] : [])) await openPath(p); return; }
@@ -4744,6 +4802,7 @@ function selectAnnot(i, a){
   bar.addEventListener('pointerdown', e => e.stopPropagation());
   bar.addEventListener('click', e => { if (e.target.closest('[data-x="del"]')) deleteSelected(); if (e.target.closest('[data-x="edit"]')) { deselectAnnot(); editTextBox(i, a); } });
   drawASel();
+  addLayerPicker(i, a);
 }
 function drawASel(){
   if (!AS) return;
@@ -5283,12 +5342,14 @@ function showTab(t){
   if (t === 'images') buildImagesPanel();
   if (t === 'anns') buildAnnsPanel();
   if (t === 'atts') buildAttsPanel();
+  if (t === 'layers') buildLayersPanel();
   if (t === 'thumbs') updatePager();
 }
 $$('.tab').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+setTimeout(wireLayersPanel, 0);
 function refreshPanels(){
   const on = $('.panel.on').id.slice(2);
-  if (on === 'images') buildImagesPanel(); if (on === 'anns') buildAnnsPanel(); if (on === 'atts') buildAttsPanel();
+  if (on === 'images') buildImagesPanel(); if (on === 'anns') buildAnnsPanel(); if (on === 'atts') buildAttsPanel(); if (on === 'layers') buildLayersPanel();
 }
 
 let thumbObs = null;
@@ -5410,6 +5471,419 @@ async function buildAttsPanel(){
     d.querySelector('[data-x=rm]').onclick = async () => { if (await confirmDlg('移除附件', `確定要從 PDF 中移除「${a.filename}」？`, '移除')) removeAttachment(a.filename); };
     panel.appendChild(d);
   });
+}
+
+/* ====================================================================
+   圖層 (layers). Every layer is a PDF optional-content group (OCG) and every
+   annotation belongs to one through its /OC entry, so Acrobat and other readers
+   see the same layers, names and visibility. Stacking order of the layers is
+   reflected in the order of each page's /Annots (upper layers draw on top).
+   ==================================================================== */
+const N_ = k => PDFName.of(k);
+const refId = r => r.objectNumber + 'R' + (r.generationNumber ? r.generationNumber : '');
+const LAYER_SKIP = new Set(['Popup', 'Link', 'Widget']);
+const LY_OPEN = new Set();
+let LM = {bytes:null, p:null}, HL = {pdf:null, p:null};
+const txt = v => v && v.decodeText ? v.decodeText() : '';
+
+function ocpOf(doc, create){
+  const cat = doc.catalog, ctx = doc.context;
+  let ocp = cat.lookupMaybe(N_('OCProperties'), PDFDict);
+  if (!ocp && create) { ocp = ctx.obj({OCGs:[], D:{Order:[], ON:[], OFF:[]}}); cat.set(N_('OCProperties'), ocp); }
+  if (!ocp) return null;
+  let ocgs = ocp.lookupMaybe(N_('OCGs'), PDFArray); if (!ocgs) { ocgs = ctx.obj([]); ocp.set(N_('OCGs'), ocgs); }
+  let d = ocp.lookupMaybe(N_('D'), PDFDict); if (!d) { d = ctx.obj({}); ocp.set(N_('D'), d); }
+  const arr = k => { let a = d.lookupMaybe(N_(k), PDFArray); if (!a) { a = ctx.obj([]); d.set(N_(k), a); } return a; };
+  return {ocp, ocgs, d, arr};
+}
+const hasRef = (a, r) => { if (!a) return false; for (let k = 0; k < a.size(); k++) { const v = a.get(k); if (v instanceof PDFRef && refId(v) === refId(r)) return true; } return false; };
+const dropRef = (a, r) => { if (!a) return; for (let k = a.size() - 1; k >= 0; k--) { const v = a.get(k); if (v instanceof PDFRef && refId(v) === refId(r)) a.remove(k); } };
+// layers top-first, as listed by /D /Order (nested groups are flattened)
+function readLayers(doc){
+  const o = ocpOf(doc, false); if (!o) return [];
+  const ctx = doc.context, all = [];
+  for (let k = 0; k < o.ocgs.size(); k++) { const r = o.ocgs.get(k); if (r instanceof PDFRef && ctx.lookupMaybe(r, PDFDict)) all.push(r); }
+  const ids = new Set(all.map(refId)), order = [], seen = new Set();
+  const flat = a => { for (let k = 0; k < a.size(); k++) { const v = a.get(k);
+    if (v instanceof PDFRef && ids.has(refId(v))) { if (!seen.has(refId(v))) { seen.add(refId(v)); order.push(v); } }
+    else { const sub = v instanceof PDFArray ? v : v instanceof PDFRef ? ctx.lookup(v) : null; if (sub instanceof PDFArray) flat(sub); } } };
+  const ord = o.d.lookupMaybe(N_('Order'), PDFArray); if (ord) flat(ord);
+  all.forEach(r => { if (!seen.has(refId(r))) { seen.add(refId(r)); order.push(r); } });
+  const base = o.d.lookupMaybe(N_('BaseState'), PDFName), baseOff = !!base && base.asString() === '/OFF';
+  const on = o.d.lookupMaybe(N_('ON'), PDFArray), off = o.d.lookupMaybe(N_('OFF'), PDFArray);
+  return order.map(r => {
+    const dict = ctx.lookup(r, PDFDict);
+    return {ref:r, id:refId(r), name:txt(dict.lookupMaybe(N_('Name'), PDFString, PDFHexString)) || '未命名圖層',
+      visible:baseOff ? hasRef(on, r) : !hasRef(off, r), locked:String(dict.get(N_('PDFE_Lock'))) === 'true', app:String(dict.get(N_('PDFE_Layer'))) === 'true'};
+  });
+}
+function ocOfDict(doc, dict, ids){
+  let oc = dict.get(N_('OC')); if (!(oc instanceof PDFRef)) return null;
+  if (ids.has(refId(oc))) return refId(oc);
+  const md = doc.context.lookupMaybe(oc, PDFDict); if (!md) return null;   // membership dictionary: use its first group
+  let g = md.get(N_('OCGs')); if (g instanceof PDFRef && !ids.has(refId(g))) g = doc.context.lookup(g);
+  if (g instanceof PDFArray) g = g.get(0);
+  return g instanceof PDFRef && ids.has(refId(g)) ? refId(g) : null;
+}
+const subOf = dict => { const s = dict.lookupMaybe(N_('Subtype'), PDFName); return s ? s.asString().slice(1) : ''; };
+const layerable = dict => { const s = subOf(dict); return !LAYER_SKIP.has(s) && !!ANN_LABEL[s]; };
+function eachAnnot(doc, cb){
+  doc.getPages().forEach((page, i) => {
+    const annots = page.node.lookupMaybe(N_('Annots'), PDFArray); if (!annots) return;
+    for (let k = 0; k < annots.size(); k++) { const r = annots.get(k); if (!(r instanceof PDFRef)) continue; const d = doc.context.lookupMaybe(r, PDFDict); if (d) cb(d, r, i, k); }
+  });
+}
+function layerModel(){
+  if (LM.bytes === S.bytes && LM.p) return LM.p;
+  const bytes = S.bytes;
+  LM = {bytes, p:(async () => {
+    if (!bytes) return {layers:[], objs:[], byId:new Map()};
+    const doc = await PDFDocument.load(bytes, {ignoreEncryption:true, updateMetadata:false});
+    const layers = readLayers(doc), ids = new Set(layers.map(l => l.id)), objs = [], byId = new Map();
+    eachAnnot(doc, (d, r, i, k) => {
+      if (!layerable(d)) return;
+      const sub = subOf(d), f = d.lookupMaybe(N_('F'), PDFNumber), subj = txt(d.lookupMaybe(N_('Subj'), PDFString, PDFHexString));
+      const o = {id:refId(r), i, k, sub, layer:ocOfDict(doc, d, ids), hidden:!!((f ? f.asNumber() : 0) & 2),
+        label:subj || ANN_LABEL[sub] || sub, contents:txt(d.lookupMaybe(N_('Contents'), PDFString, PDFHexString))};
+      objs.push(o); byId.set(o.id, o);
+    });
+    return {layers, objs, byId};
+  })().catch(e => { console.error(e); return {layers:[], objs:[], byId:new Map()}; })};
+  return LM.p;
+}
+// only documents that actually have layers pay for parsing them
+function docHasLayers(){
+  if (HL.pdf === S.pdf && HL.p) return HL.p;
+  HL = {pdf:S.pdf, p:S.pdf ? S.pdf.getOptionalContentConfig().then(c => !!(c && c.getGroups())).catch(() => false) : Promise.resolve(false)};
+  return HL.p;
+}
+// annotations that cannot be touched right now (hidden or locked layer)
+async function blockedAnnots(){
+  if (!(await docHasLayers())) return null;
+  const lm = await layerModel(), bad = new Set(lm.layers.filter(l => !l.visible || l.locked).map(l => l.id));
+  if (!bad.size) return null;
+  return new Set(lm.objs.filter(o => o.layer && bad.has(o.layer)).map(o => o.id));
+}
+// the layer that new annotations go into
+function activeLayerRef(doc){
+  const L = readLayers(doc); if (!L.length) return null;
+  const ok = l => l.visible && !l.locked;
+  const pick = L.find(l => l.id === S.activeLayer && ok(l)) || (S.activeLayer || L.some(l => l.app) ? L.find(l => ok(l) && (l.app || S.activeLayer)) : null);
+  return pick ? pick.ref : null;
+}
+// keep each page's /Annots in layer order: unlayered at the bottom, upper layers last
+function restack(doc){
+  const L = readLayers(doc); if (!L.length) return;
+  const rank = new Map(L.map((l, k) => [l.id, L.length - k])), ids = new Set(rank.keys());
+  doc.getPages().forEach(page => {
+    const annots = page.node.lookupMaybe(N_('Annots'), PDFArray); if (!annots || annots.size() < 2) return;
+    const items = [];
+    for (let k = 0; k < annots.size(); k++) {
+      const r = annots.get(k), d = r instanceof PDFRef ? doc.context.lookupMaybe(r, PDFDict) : null;
+      let rk = 0;
+      if (d) { let src = d; const par = d.get(N_('Parent')); if (subOf(d) === 'Popup' && par instanceof PDFRef) src = doc.context.lookupMaybe(par, PDFDict) || d;
+        const oc = ocOfDict(doc, src, ids); if (oc) rk = rank.get(oc); }
+      items.push({r, rk, k});
+    }
+    const sorted = [...items].sort((a, b) => a.rk - b.rk || a.k - b.k);
+    if (sorted.every((it, k) => it.k === k)) return;
+    page.node.set(N_('Annots'), doc.context.obj(sorted.map(it => it.r)));
+  });
+}
+function createLayer(doc, name, {top = true, after = null} = {}){
+  const before = readLayers(doc).map(l => l.ref);
+  const o = ocpOf(doc, true), ref = doc.context.register(doc.context.obj({Type:'OCG', Name:PDFHexString.fromText(name), PDFE_Layer:true}));
+  o.ocgs.push(ref);
+  let order = top ? [ref, ...before] : [...before, ref];
+  if (after) { const k = before.findIndex(r => refId(r) === after); if (k >= 0) order = [...before.slice(0, k), ref, ...before.slice(k)]; }
+  o.d.set(N_('Order'), doc.context.obj(order));
+  dropRef(o.arr('OFF'), ref); o.arr('ON').push(ref);
+  return ref;
+}
+// documents without layers show a virtual 「圖層 1」; the first change turns it into a real one
+function materialize(doc){
+  const L = readLayers(doc); if (L.length) return null;
+  const ref = createLayer(doc, '圖層 1');
+  eachAnnot(doc, d => { if (layerable(d) && !(d.get(N_('OC')) instanceof PDFRef)) d.set(N_('OC'), ref); });
+  return ref;
+}
+const layerById = (doc, id) => readLayers(doc).find(l => l.id === id);
+function setLayerVisible(doc, l, vis){ const o = ocpOf(doc, true); dropRef(o.arr('ON'), l.ref); dropRef(o.arr('OFF'), l.ref); o.arr(vis ? 'ON' : 'OFF').push(l.ref); }
+function removeLayer(doc, l, {deleteObjects = false, moveTo = null} = {}){
+  const o = ocpOf(doc, true), ids = new Set([l.id]);
+  doc.getPages().forEach((page, i) => {
+    const doomed = [];
+    eachAnnotOnPage(doc, page, (d, r) => { if (ocOfDict(doc, d, ids)) { if (deleteObjects) doomed.push(r); else if (moveTo) d.set(N_('OC'), moveTo); else d.delete(N_('OC')); } });
+    doomed.forEach(r => removeAnnotRefs(doc, i, r));
+  });
+  dropRef(o.ocgs, l.ref); ['ON', 'OFF', 'Locked', 'RBGroups'].forEach(k => dropRef(o.d.lookupMaybe(N_(k), PDFArray), l.ref));
+  const rest = readLayers(doc).map(x => x.ref).filter(r => refId(r) !== l.id);
+  o.d.set(N_('Order'), doc.context.obj(rest));
+  if (!readLayers(doc).length) doc.catalog.delete(N_('OCProperties'));
+}
+function eachAnnotOnPage(doc, page, cb){
+  const annots = page.node.lookupMaybe(N_('Annots'), PDFArray); if (!annots) return;
+  for (let k = 0; k < annots.size(); k++) { const r = annots.get(k); if (!(r instanceof PDFRef)) continue; const d = doc.context.lookupMaybe(r, PDFDict); if (d) cb(d, r, k); }
+}
+function annDict(doc, o){ const ref = findAnnotRef(doc, o.i, o.id); return ref ? doc.context.lookup(ref, PDFDict) : null; }
+
+/* ---------------- operations (each one is a normal, undoable edit) ---------------- */
+const lyRef = (doc, id) => id === '__v' ? materialize(doc) || (readLayers(doc)[0] || {}).ref : (layerById(doc, id) || {}).ref;
+async function layerEdit(label, fn){
+  deselectAnnot && deselectAnnot();
+  const ok = await mutate(label, async doc => { const r = await fn(doc); if (r === false) return false; restack(doc); });
+  if (ok) buildLayersPanel();
+  return ok;
+}
+function uniqueLayerName(L){ let n = L.length + 1; const names = new Set(L.map(l => l.name)); while (names.has('圖層 ' + n)) n++; return '圖層 ' + n; }
+async function addLayer(){
+  const lm = await layerModel(); let newId = null;
+  const act = activeId(lm);
+  await layerEdit('已新增圖層', doc => {
+    const mat = materialize(doc);
+    const ref = createLayer(doc, uniqueLayerName(readLayers(doc)), {after:act && act !== '__v' ? act : null});
+    newId = refId(ref);
+  });
+  if (newId) { S.activeLayer = newId; buildLayersPanel(); }
+}
+async function toggleLayerVisible(id, solo){
+  await layerEdit(null, doc => {
+    const ref = lyRef(doc, id); if (!ref) return false;
+    const L = readLayers(doc), me = L.find(l => l.id === refId(ref));
+    if (solo) {
+      const alone = L.every(l => l.id === me.id ? l.visible : !l.visible);
+      L.forEach(l => setLayerVisible(doc, l, alone ? true : l.id === me.id));
+    } else setLayerVisible(doc, me, !me.visible);
+  });
+}
+async function toggleLayerLock(id){
+  await layerEdit(null, doc => {
+    const ref = lyRef(doc, id); if (!ref) return false;
+    const d = doc.context.lookup(ref, PDFDict);
+    if (String(d.get(N_('PDFE_Lock'))) === 'true') d.delete(N_('PDFE_Lock')); else d.set(N_('PDFE_Lock'), doc.context.obj(true));
+  });
+}
+async function renameLayer(id, name){
+  name = (name || '').trim(); if (!name) return;
+  await layerEdit('已重新命名圖層', doc => { const ref = lyRef(doc, id); if (!ref) return false; doc.context.lookup(ref, PDFDict).set(N_('Name'), PDFHexString.fromText(name)); });
+}
+async function moveLayer(id, target, after){   // place layer `id` before (or after) layer `target`; target null = by one step (after: +1 down / -1 up)
+  await layerEdit('已調整圖層順序', doc => {
+    const L = readLayers(doc).map(l => l.ref), k = L.findIndex(r => refId(r) === id); if (k < 0) return false;
+    const [me] = L.splice(k, 1);
+    let at;
+    if (target == null) at = clamp(k + after, 0, L.length);
+    else { at = L.findIndex(r => refId(r) === target); if (at < 0) return false; if (after) at++; }
+    if (at === k) return false;
+    L.splice(at, 0, me);
+    ocpOf(doc, true).d.set(N_('Order'), doc.context.obj(L));
+  });
+}
+async function mergeDown(id){
+  const lm = await layerModel(), k = lm.layers.findIndex(l => l.id === id);
+  if (k < 0 || k >= lm.layers.length - 1) { toast('下方沒有可以合併的圖層', 'err'); return; }
+  const below = lm.layers[k + 1];
+  await layerEdit(`已合併到「${below.name}」`, doc => { const me = layerById(doc, id), to = layerById(doc, below.id); if (!me || !to) return false; removeLayer(doc, me, {moveTo:to.ref}); });
+  if (S.activeLayer === id) S.activeLayer = below.id;
+}
+async function deleteLayer(id){
+  const lm = await layerModel(), l = lm.layers.find(x => x.id === id); if (!l) return;
+  const n = lm.objs.filter(o => o.layer === id).length, k = lm.layers.indexOf(l), other = lm.layers[k + 1] || lm.layers[k - 1];
+  let mode = 'delete';
+  if (n) {
+    mode = await openModal({title:'刪除圖層', body:`<div style="max-width:400px">「${esc(l.name)}」裡有 ${n} 個物件，要怎麼處理？</div>`,
+      buttons:[{label:'取消', value:null}, {label:other ? `保留物件，移到「${other.name}」` : '保留物件（不分層）', value:'keep'}, {label:'連同物件一起刪除', value:'delete', primary:true}]});
+    if (!mode) return;
+  } else if (!(await confirmDlg('刪除圖層', `確定要刪除「${l.name}」？`, '刪除'))) return;
+  await layerEdit('已刪除圖層', doc => { const me = layerById(doc, id); if (!me) return false; const to = other && layerById(doc, other.id);
+    removeLayer(doc, me, mode === 'delete' ? {deleteObjects:true} : {moveTo:to ? to.ref : null}); });
+  if (S.activeLayer === id) S.activeLayer = other ? other.id : null;
+}
+async function moveObjToLayer(oids, id){
+  const lm = await layerModel(), list = oids.map(x => lm.byId.get(x)).filter(Boolean); if (!list.length) return;
+  const name = id === '__loose' ? '不分層' : ((lm.layers.find(l => l.id === id) || {}).name || '圖層 1');
+  await layerEdit(`已移到「${name}」`, doc => {
+    const ref = id === '__loose' ? null : lyRef(doc, id); if (id !== '__loose' && !ref) return false;
+    list.forEach(o => { const d = annDict(doc, o); if (!d) return; if (ref) d.set(N_('OC'), ref); else d.delete(N_('OC')); });
+  });
+}
+async function toggleObjHidden(oid){
+  const lm = await layerModel(), o = lm.byId.get(oid); if (!o) return;
+  await layerEdit(null, doc => { const d = annDict(doc, o); if (!d) return false; const f = d.lookupMaybe(N_('F'), PDFNumber), v = f ? f.asNumber() : 4; d.set(N_('F'), doc.context.obj(v & 2 ? v & ~2 : v | 2)); });
+}
+async function deleteObjs(oids){
+  const lm = await layerModel(), list = oids.map(x => lm.byId.get(x)).filter(Boolean); if (!list.length) return;
+  await layerEdit('已刪除', doc => { list.forEach(o => { const ref = findAnnotRef(doc, o.i, o.id); if (ref) removeAnnotRefs(doc, o.i, ref); }); });
+}
+async function gotoObj(oid){
+  const lm = await layerModel(), o = lm.byId.get(oid); if (!o) return;
+  const l = o.layer && lm.layers.find(x => x.id === o.layer);
+  scrollToPage(o.i); setTool('select');
+  if (o.hidden || (l && !l.visible)) { toast('這個物件目前隱藏中'); return; }
+  if (l && l.locked) { toast('這個圖層已鎖定，解鎖後才能編輯'); return; }
+  setTimeout(async () => { const a = (await getAnns(o.i)).find(x => x.id === oid); if (a && S.els[o.i]) selectAnnot(o.i, a); }, 250);
+}
+function activeId(lm){
+  if (!lm.layers.length) return '__v';
+  const l = lm.layers.find(x => x.id === S.activeLayer);
+  if (l) return l.id;
+  const d = lm.layers.find(x => x.app && x.visible && !x.locked);
+  return d ? d.id : null;
+}
+
+/* ---------------- panel ---------------- */
+const LY_ICON = {
+  eye:'<svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+  eyeOff:'<svg viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6C3.9 8.4 2 12 2 12s3.6 7 10 7a9.6 9.6 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>',
+  lock:'<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
+  unlock:'<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.8-1.2"/></svg>',
+};
+async function buildLayersPanel(){
+  const panel = $('#p-layers'); if (!panel || !panel.classList.contains('on')) return;
+  if (!S.pdf) { panel.innerHTML = '<div class="empty-note">尚未開啟檔案</div>'; return; }
+  const bytes = S.bytes, lm = await layerModel(); if (bytes !== S.bytes) return;
+  const virtual = !lm.layers.length, act = activeId(lm);
+  const rows = virtual ? [{id:'__v', name:'圖層 1', visible:true, locked:false, app:true, virtual:true}] : lm.layers;
+  const objsOf = id => lm.objs.filter(o => id === '__v' ? true : id === '__loose' ? !o.layer : o.layer === id);
+  const loose = virtual ? [] : objsOf('__loose');
+  const objRow = o => `<div class="ly-obj${o.hidden ? ' hid' : ''}" data-oid="${o.id}" draggable="true" title="點一下前往並選取；拖曳到其他圖層可移動">
+      <button class="ly-oeye" title="${o.hidden ? '顯示' : '隱藏'}這個物件">${o.hidden ? LY_ICON.eyeOff : LY_ICON.eye}</button>
+      <span class="ly-on">${esc(o.label)}${o.contents && o.sub !== 'Stamp' ? '：' + esc(o.contents.slice(0, 18)) : ''}</span><span class="ly-op">P${o.i + 1}</span></div>`;
+  const row = l => {
+    const list = objsOf(l.id), open = LY_OPEN.has(l.id);
+    return `<div class="ly-row${l.id === act ? ' act' : ''}${l.visible ? '' : ' off'}${l.locked ? ' lk' : ''}" data-id="${l.id}" draggable="${l.virtual ? 'false' : 'true'}">
+      <button class="ly-car${open ? ' open' : ''}" title="展開／收合物件">${list.length ? '▸' : ''}</button>
+      <button class="ly-eye" title="顯示／隱藏（Alt+點：只顯示這個圖層）">${l.visible ? LY_ICON.eye : LY_ICON.eyeOff}</button>
+      <button class="ly-lock${l.locked ? ' on' : ''}" title="${l.locked ? '解除鎖定' : '鎖定（不能選取、移動或擦除）'}">${l.locked ? LY_ICON.lock : LY_ICON.unlock}</button>
+      <span class="ly-name" title="雙擊重新命名">${esc(l.name)}</span>${l.app ? '' : '<span class="ly-tag" title="文件原有的圖層">文件</span>'}<span class="ly-n">${list.length}</span></div>
+      ${open && list.length ? `<div class="ly-objs">${list.map(objRow).join('')}</div>` : ''}`;
+  };
+  panel.innerHTML = `<div class="ly-tools">
+      <button data-ly="add" title="新增圖層（放在目前圖層上方）">＋ 新增</button>
+      <span class="sp"></span>
+      <button data-ly="up" title="上移目前圖層">▲</button><button data-ly="down" title="下移目前圖層">▼</button>
+      <button data-ly="merge" title="把目前圖層合併到下方圖層">⤓</button><button data-ly="del" title="刪除目前圖層">🗑</button></div>
+    <div class="ly-list">${rows.map(row).join('')}
+      ${loose.length ? `<div class="ly-row loose" data-id="__loose"><button class="ly-car${LY_OPEN.has('__loose') ? ' open' : ''}">▸</button><span class="ly-name">未分層的物件</span><span class="ly-n">${loose.length}</span></div>
+        ${LY_OPEN.has('__loose') ? `<div class="ly-objs">${loose.map(objRow).join('')}</div>` : ''}
+        <button class="ly-adopt" data-ly="adopt">把未分層的物件放進目前圖層</button>` : ''}
+      <div class="ly-row base" title="PDF 原本的頁面內容永遠在最底層"><span class="ly-car"></span><span class="ly-pg">📄</span><span class="ly-name">頁面內容</span></div>
+    </div>
+    <div class="ly-note">${virtual ? '目前所有註解都在「圖層 1」。按「＋ 新增圖層」建立更多圖層，新畫的註解會放進選取（反白）的圖層。' : '反白的是目前圖層，新畫的註解會放在這裡。拖曳圖層調整上下順序，拖曳物件可換圖層；右鍵有更多選項。'}</div>`;
+}
+const lyPanel = () => $('#p-layers');
+function wireLayersPanel(){
+  const p = lyPanel();
+  p.addEventListener('click', async e => {
+    const t = e.target, tool = t.closest('[data-ly]');
+    if (tool) {
+      const lm = await layerModel(), act = activeId(lm), k = tool.dataset.ly;
+      if (k === 'add') return addLayer();
+      if (k === 'adopt') return moveObjToLayer(lm.objs.filter(o => !o.layer).map(o => o.id), act || (lm.layers[0] || {}).id);
+      if (!act || act === '__v') { toast(k === 'del' ? '至少要有一個圖層' : '請先新增圖層'); return; }
+      if (k === 'up') return moveLayer(act, null, -1);
+      if (k === 'down') return moveLayer(act, null, 1);
+      if (k === 'merge') return mergeDown(act);
+      if (k === 'del') return deleteLayer(act);
+      return;
+    }
+    const ob = t.closest('.ly-obj');
+    if (ob) { if (t.closest('.ly-oeye')) toggleObjHidden(ob.dataset.oid); else gotoObj(ob.dataset.oid); return; }
+    const r = t.closest('.ly-row'); if (!r || r.classList.contains('base')) return;
+    const id = r.dataset.id;
+    if (t.closest('.ly-car')) { LY_OPEN.has(id) ? LY_OPEN.delete(id) : LY_OPEN.add(id); buildLayersPanel(); return; }
+    if (id === '__loose') return;
+    if (t.closest('.ly-eye')) return toggleLayerVisible(id, e.altKey);
+    if (t.closest('.ly-lock')) return toggleLayerLock(id);
+    if (id !== '__v' && S.activeLayer !== id) {   // switch in place so a following double-click can rename
+      S.activeLayer = id; lyPanel().querySelectorAll('.ly-row').forEach(x => x.classList.toggle('act', x.dataset.id === id));
+    }
+  });
+  p.addEventListener('dblclick', e => {
+    const nm = e.target.closest('.ly-row:not(.base):not(.loose) .ly-name'); if (!nm) return;
+    const id = nm.closest('.ly-row').dataset.id, inp = document.createElement('input');
+    inp.className = 'ly-ren'; inp.value = nm.textContent; nm.replaceWith(inp); inp.focus(); inp.select();
+    let done = false;
+    const fin = ok => { if (done) return; done = true; if (ok && inp.value.trim() && inp.value.trim() !== nm.textContent) renameLayer(id, inp.value); else buildLayersPanel(); };
+    inp.onkeydown = ev => { ev.stopPropagation(); if (ev.key === 'Enter') fin(true); if (ev.key === 'Escape') fin(false); };
+    inp.onblur = () => fin(true);
+  });
+  p.addEventListener('contextmenu', async e => {
+    const ob = e.target.closest('.ly-obj'), r = e.target.closest('.ly-row');
+    if (!ob && (!r || r.classList.contains('base'))) return;
+    e.preventDefault();
+    const lm = await layerModel();
+    if (ob) {
+      const o = lm.byId.get(ob.dataset.oid); if (!o) return;
+      const targets = (lm.layers.length ? lm.layers : [{id:'__v', name:'圖層 1'}]).filter(l => l.id !== o.layer);
+      showLyMenu(e, `<div class="hd">${esc(o.label)} · 第 ${o.i + 1} 頁</div><button data-m="go">前往並選取</button><button data-m="hide">${o.hidden ? '顯示' : '隱藏'}這個物件</button>
+        ${targets.length ? '<hr><div class="hd">移到圖層</div>' + targets.map(l => `<button data-m="to" data-v="${l.id}">→ ${esc(l.name)}</button>`).join('') : ''}
+        ${o.layer && lm.layers.length ? '<button data-m="to" data-v="__loose">→ 不分層</button>' : ''}<hr><button data-m="del" class="danger">刪除</button>`,
+        (m, v) => { if (m === 'go') gotoObj(o.id); if (m === 'hide') toggleObjHidden(o.id); if (m === 'to') moveObjToLayer([o.id], v); if (m === 'del') deleteObjs([o.id]); });
+      return;
+    }
+    const id = r.dataset.id; if (id === '__loose') return;
+    const l = id === '__v' ? {name:'圖層 1', visible:true, locked:false} : lm.layers.find(x => x.id === id); if (!l) return;
+    const k = lm.layers.findIndex(x => x.id === id), n = lm.objs.filter(o => id === '__v' || o.layer === id).length;
+    showLyMenu(e, `<div class="hd">${esc(l.name)}</div><button data-m="active">設為目前圖層</button><button data-m="ren">重新命名</button>
+      <button data-m="vis">${l.visible ? '隱藏' : '顯示'}圖層</button><button data-m="solo">只顯示這個圖層</button><button data-m="all">顯示全部圖層</button>
+      <button data-m="lock">${l.locked ? '解除鎖定' : '鎖定圖層'}</button><hr>
+      <button data-m="up"${k <= 0 ? ' disabled' : ''}>上移</button><button data-m="down"${k < 0 || k >= lm.layers.length - 1 ? ' disabled' : ''}>下移</button>
+      <button data-m="merge"${k < 0 || k >= lm.layers.length - 1 ? ' disabled' : ''}>合併到下方圖層</button><button data-m="sel"${n ? '' : ' disabled'}>選取範圍：前往第一個物件</button>
+      <hr><button data-m="del" class="danger"${k < 0 ? ' disabled' : ''}>刪除圖層</button>`,
+      async m => {
+        if (m === 'active' && id !== '__v') { S.activeLayer = id; buildLayersPanel(); }
+        if (m === 'ren') { const nm = lyPanel().querySelector(`.ly-row[data-id="${id}"] .ly-name`); nm && nm.dispatchEvent(new MouseEvent('dblclick', {bubbles:true})); }
+        if (m === 'vis') toggleLayerVisible(id, false);
+        if (m === 'solo') toggleLayerVisible(id, true);
+        if (m === 'all') layerEdit(null, doc => { const L = readLayers(doc); if (!L.length) return false; L.forEach(x => setLayerVisible(doc, x, true)); });
+        if (m === 'lock') toggleLayerLock(id);
+        if (m === 'up') moveLayer(id, null, -1);
+        if (m === 'down') moveLayer(id, null, 1);
+        if (m === 'merge') mergeDown(id);
+        if (m === 'sel') { const o = lm.objs.find(x => id === '__v' || x.layer === id); if (o) gotoObj(o.id); }
+        if (m === 'del') deleteLayer(id);
+      });
+  });
+  // drag layers to restack them, drag objects onto a layer to move them
+  let drag = null;
+  p.addEventListener('dragstart', e => {
+    const ob = e.target.closest && e.target.closest('.ly-obj'), r = e.target.closest && e.target.closest('.ly-row');
+    if (ob) drag = {obj:ob.dataset.oid}; else if (r && r.draggable) drag = {layer:r.dataset.id}; else return;
+    e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'pdfe-layer');
+  });
+  const target = e => { const r = e.target.closest && e.target.closest('.ly-row'); return r && !r.classList.contains('base') && (drag && drag.obj ? true : !r.classList.contains('loose')) ? r : null; };
+  const clear = () => p.querySelectorAll('.drop-a,.drop-b,.drop-in').forEach(x => x.classList.remove('drop-a', 'drop-b', 'drop-in'));
+  p.addEventListener('dragover', e => {
+    if (!drag) return; const r = target(e); clear(); if (!r) return;
+    e.preventDefault(); e.stopPropagation();
+    if (drag.obj) r.classList.add('drop-in');
+    else if (r.dataset.id !== drag.layer && r.dataset.id !== '__v') { const b = r.getBoundingClientRect(); r.classList.add(e.clientY < b.top + b.height / 2 ? 'drop-a' : 'drop-b'); }
+  });
+  p.addEventListener('dragleave', e => { if (!p.contains(e.relatedTarget)) clear(); });
+  p.addEventListener('drop', e => {
+    if (!drag) return; e.preventDefault(); e.stopPropagation();
+    const r = target(e), d = drag; clear(); drag = null; if (!r) return;
+    if (d.obj) moveObjToLayer([d.obj], r.dataset.id);
+    else if (r.dataset.id !== d.layer && r.dataset.id !== '__v') { const b = r.getBoundingClientRect(); moveLayer(d.layer, r.dataset.id, e.clientY >= b.top + b.height / 2); }
+  });
+  p.addEventListener('dragend', () => { drag = null; clear(); });
+}
+function showLyMenu(e, html, onPick){
+  ctx.innerHTML = html; ctx.style.display = 'block'; ctxShownAt = performance.now();
+  ctx.style.left = Math.min(e.clientX, innerWidth - ctx.offsetWidth - 8) + 'px'; ctx.style.top = Math.min(e.clientY, innerHeight - ctx.offsetHeight - 8) + 'px';
+  ctx.onclick = ev => { const b = ev.target.closest('button[data-m]'); if (!b || b.disabled) return; hideCtx(); ctx.onclick = null; onPick(b.dataset.m, b.dataset.v); };
+}
+// the selection bar shows which layer the object is on and can move it
+async function addLayerPicker(i, a){
+  if (!AS || AS.a !== a) return;
+  const lm = await layerModel(); if (!AS || AS.a !== a || !lm.layers.length) return;
+  const o = lm.byId.get(a.id); if (!o) return;
+  const sel = document.createElement('select'); sel.className = 'ly-pick'; sel.title = '物件所在的圖層';
+  sel.innerHTML = lm.layers.filter(l => (l.visible && !l.locked) || l.id === o.layer).map(l => `<option value="${l.id}"${l.id === o.layer ? ' selected' : ''}>圖層：${esc(l.name)}</option>`).join('') + (o.layer ? '' : '<option value="__loose" selected>圖層：未分層</option>');
+  sel.onchange = () => moveObjToLayer([a.id], sel.value);
+  sel.addEventListener('pointerdown', e => e.stopPropagation());
+  const del = AS.bar.querySelector('[data-x="del"]'); AS.bar.insertBefore(sel, del);
 }
 
 /* ====================================================================
