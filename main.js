@@ -76,6 +76,9 @@ function createWindow() {
   });
 
   if (process.env.PDFEDITOR_DEVTOOLS) win.webContents.openDevTools({ mode: 'detach' });
+  // Windows sends mouse side buttons (and some keyboards' back/forward keys) as app commands too;
+  // the page decides whether a binding uses them
+  win.on('app-command', (_e, cmd) => send('app-command', cmd));
   win.on('closed', () => { win = null; rendererReady = false; });
 }
 
@@ -191,7 +194,11 @@ ipcMain.handle('export:write', async (_e, root, sub, name, data) => {
   return full;
 });
 ipcMain.handle('export:open-folder', (_e, dir) => { if (isAllowed(dir)) shell.openPath(dir); });
-ipcMain.handle('app:info', () => ({ version: app.getVersion(), dev: isDev, platform: process.platform }));
+ipcMain.handle('app:info', () => {
+  let user = '';
+  try { user = require('os').userInfo().username || ''; } catch (_) {}
+  return { version: app.getVersion(), dev: isDev, platform: process.platform, user };
+});
 ipcMain.handle('app:open-external', (_e, url) => { if (/^https:\/\//i.test(url)) shell.openExternal(url); });
 
 /* ---------------- auto update ---------------- */

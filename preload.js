@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('desktop', {
     openFolder: dir => ipcRenderer.invoke('export:open-folder', dir),
   },
   onOpenPath: cb => ipcRenderer.on('open-path', (_e, p) => cb(p)),
+  onAppCommand: cb => ipcRenderer.on('app-command', (_e, c) => cb(c)),
   update: {
     state: () => ipcRenderer.invoke('update:state'),
     check: () => ipcRenderer.invoke('update:check'),
