@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('desktop', {
   saveAs: (name, data) => ipcRenderer.invoke('file:save-as', name, data),
   pathForFile: f => { try { return webUtils.getPathForFile(f) || ''; } catch (_) { return ''; } },
   openExternal: url => ipcRenderer.invoke('app:open-external', url),
+  setTheme: t => ipcRenderer.invoke('app:set-theme', t),
   exportImages: {
     defaultDir: (pdfPath, last) => ipcRenderer.invoke('export:default-dir', pdfPath, last),
     chooseDir: current => ipcRenderer.invoke('export:choose-dir', current),

@@ -6,7 +6,7 @@
  *  - "open with" (.pdf file association) and single-instance handling
  *  - automatic updates from GitHub Releases (electron-updater)
  */
-const { app, BrowserWindow, ipcMain, dialog, protocol, net, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, protocol, net, shell, Menu, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const { pathToFileURL } = require('url');
@@ -198,6 +198,12 @@ ipcMain.handle('app:info', () => {
   let user = '';
   try { user = require('os').userInfo().username || ''; } catch (_) {}
   return { version: app.getVersion(), dev: isDev, platform: process.platform, user };
+});
+// 顯示模式: 'system' follows Windows; the title bar, dialogs and prefers-color-scheme all follow themeSource
+ipcMain.handle('app:set-theme', (_e, t) => {
+  nativeTheme.themeSource = ['system', 'light', 'dark'].includes(t) ? t : 'system';
+  if (win && !win.isDestroyed()) win.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#141416' : '#cfcbc2');
+  return nativeTheme.shouldUseDarkColors;
 });
 ipcMain.handle('app:open-external', (_e, url) => { if (/^https:\/\//i.test(url)) shell.openExternal(url); });
 
