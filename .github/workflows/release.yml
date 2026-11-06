@@ -29,8 +29,9 @@ jobs:
         run: |
           VER="v$(node -p "require('./package.json').version")"
           echo "tag=$VER" >> "$GITHUB_OUTPUT"
-          if gh release view "$VER" >/dev/null 2>&1; then
-            echo "Release $VER already exists, nothing to do."
+          # a release counts as done only when the updater manifest (latest.yml) is attached
+          if gh release view "$VER" --json assets -q '.assets[].name' 2>/dev/null | grep -qx 'latest.yml'; then
+            echo "Release $VER is complete, nothing to do."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -45,18 +46,18 @@ jobs:
       - run: npm ci
         if: steps.ver.outputs.skip == 'false'
 
-      - name: Create release tag
+      - name: Create tag and release
         if: steps.ver.outputs.skip == 'false'
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.ver.outputs.tag }}"
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            NOTES="RELEASE_NOTES.md"; [ -f "$NOTES" ] || { echo "PDF 工作台 $TAG" > /tmp/notes.md; NOTES=/tmp/notes.md; }
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "PDF 工作台 $TAG" --notes-file "$NOTES"
           else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag "$TAG" "$GITHUB_SHA"
-            git push origin "refs/tags/$TAG"
+            echo "Release $TAG exists; assets will be (re)uploaded"
           fi
 
       - name: Build installer and publish to GitHub Releases

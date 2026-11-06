@@ -33,7 +33,7 @@ Windows 桌面版 PDF 閱讀與編輯工具，會自動檢查並安裝新版本�
 
 ## 發佈新版本（給維護者）
 
-1. 修改 `package.json` 的 `version`，例如改成 `1.0.1`
+1. 修改 `package.json` 的 `version`，例如改成 `1.0.1`，並把這次的更新內容寫進 `RELEASE_NOTES.md`（會顯示在程式的更新視窗裡）
 2. 提交並推送到 `main`：
 
    ```bash
