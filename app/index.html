@@ -548,6 +548,18 @@ html[data-theme="light"] .rb:hover,html[data-theme="light"] .rs:hover,html[data-
 html[data-theme="light"] .rb.split .sp-main:hover,html[data-theme="light"] .rb.split .sp-arr:hover{background:#ffe066;color:#3d2a00}
 html[data-theme="light"] .rb:hover svg,html[data-theme="light"] .rs:hover svg,html[data-theme="light"] .vb:hover svg,html[data-theme="light"] .rb.split .sp-main:hover svg{stroke:#3d2a00}
 .rb.split:hover{background:transparent!important}
+.automark{position:fixed;z-index:98;width:32px;height:32px;margin:-16px 0 0 -16px;pointer-events:none;display:none;filter:drop-shadow(0 1px 3px rgba(0,0,0,.35))}
+.automark svg{width:100%;height:100%}
+.automark circle{fill:rgba(255,255,255,.92);stroke:#57606a;stroke-width:1.2}
+.automark path{fill:#3d4248}
+.automark circle.dot{fill:#3d4248;stroke:none}
+html[data-theme="dark"] .automark circle{fill:rgba(40,41,44,.92);stroke:#b4b1ab}
+html[data-theme="dark"] .automark path,html[data-theme="dark"] .automark circle.dot{fill:#f4f2ee}
+body.autoscrolling,body.autoscrolling *{cursor:all-scroll!important;user-select:none}
+body.autoscrolling[data-autodir=n],body.autoscrolling[data-autodir=n] *{cursor:n-resize!important}
+body.autoscrolling[data-autodir=s],body.autoscrolling[data-autodir=s] *{cursor:s-resize!important}
+body.autoscrolling[data-autodir=w],body.autoscrolling[data-autodir=w] *{cursor:w-resize!important}
+body.autoscrolling[data-autodir=e],body.autoscrolling[data-autodir=e] *{cursor:e-resize!important}
 .thememenu button .ck{width:14px;color:var(--seal);font-weight:700;display:inline-block}
 .pcs{width:16px;height:16px;border-radius:4px;border:1px solid var(--line2);display:inline-block;flex:none}
 .pcs-original{background:#fff}
@@ -668,6 +680,7 @@ html[data-theme="light"] .rb:hover svg,html[data-theme="light"] .rs:hover svg,ht
           <span><kbd>滾輪</kbd></span><span>上下捲動閱讀</span>
           <span><kbd>Ctrl</kbd> + <kbd>滾輪</kbd></span><span>以滑鼠位置為中心縮放</span>
           <span>按住 <kbd>空白鍵</kbd></span><span>拖曳移動整個頁面</span>
+          <span>點一下 <kbd>滾輪</kbd></span><span>移動滑鼠快速捲動，再點一下停止</span>
           <span><kbd>←</kbd> <kbd>→</kbd></span><span>上一頁 / 下一頁</span>
         </div>
       </div>
@@ -1543,7 +1556,8 @@ window.addEventListener('blur', () => { S.spaceDown = false; viewer.classList.re
 
 viewer.addEventListener('pointerdown', e => {
   if (!S.pdf) return;
-  if (S.spaceDown || S.tool === 'hand' || (e.button === 1 && !mouseBound(1))) {
+  if (e.button === 1 && !mouseBound(1)) { e.preventDefault(); e.stopPropagation(); startAutoScroll(e); return; }
+  if (S.spaceDown || S.tool === 'hand') {
     e.preventDefault(); e.stopPropagation();
     S.panning = {x:e.clientX, y:e.clientY, sl:viewer.scrollLeft, st:viewer.scrollTop, id:e.pointerId};
     viewer.setPointerCapture(e.pointerId); viewer.classList.add('panning');
@@ -1557,6 +1571,64 @@ viewer.addEventListener('pointermove', e => {
 const endPan = e => { if (!S.panning) return; try { viewer.releasePointerCapture(S.panning.id); } catch (_) {} S.panning = null; viewer.classList.remove('panning'); };
 viewer.addEventListener('pointerup', endPan); viewer.addEventListener('pointercancel', endPan);
 viewer.focus();
+
+/* ---------------- middle-click autoscroll (點一下滾輪快速捲動) ----------------
+   click the wheel once: move away from the mark to scroll, faster the farther you go; any click / Esc stops.
+   press and hold the wheel while moving: scrolls until you let go. */
+let AUTO = null;
+const autoMark = document.createElement('div'); autoMark.className = 'automark';
+autoMark.innerHTML = '<svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="14.5"/><path d="M16 5l-4 5h8zM16 27l-4-5h8zM5 16l5-4v8zM27 16l-5-4v8z"/><circle cx="16" cy="16" r="2.2" class="dot"/></svg>';
+document.body.appendChild(autoMark);
+function startAutoScroll(e){
+  if (!S.pdf) return;
+  if (AUTO) { stopAutoScroll(); return; }
+  AUTO = {x0:e.clientX, y0:e.clientY, x:e.clientX, y:e.clientY, t0:performance.now(), moved:false, held:true, edgeT:0};
+  autoMark.style.left = e.clientX + 'px'; autoMark.style.top = e.clientY + 'px'; autoMark.style.display = 'block';
+  document.body.classList.add('autoscrolling');
+  const step = () => {
+    if (!AUTO) return;
+    const DZ = 10, f = d => Math.sign(d) * Math.min(120, Math.pow(Math.max(0, Math.abs(d) - DZ), 1.25) * .06);
+    const dx = AUTO.x - AUTO.x0, dy = AUTO.y - AUTO.y0, vx = f(dx), vy = f(dy);
+    if (vx || vy) {
+      const before = viewer.scrollTop;
+      viewer.scrollLeft += vx; viewer.scrollTop += vy;
+      // single / two-page views: keep going onto the next spread when the edge is reached
+      if (!isCont() && vy && Math.abs(viewer.scrollTop - before) < .5) {
+        if (!AUTO.edgeT) AUTO.edgeT = performance.now();
+        else if (performance.now() - AUTO.edgeT > 450) { AUTO.edgeT = 0; goPage(vy > 0 ? 1 : -1); viewer.scrollTop = vy > 0 ? 0 : viewer.scrollHeight; }
+      } else AUTO.edgeT = 0;
+    }
+    const a = Math.abs(dx) < DZ && Math.abs(dy) < DZ ? 'all' : Math.abs(dy) >= Math.abs(dx) ? (dy < 0 ? 'n' : 's') : (dx < 0 ? 'w' : 'e');
+    if (AUTO.dir !== a) { AUTO.dir = a; document.body.dataset.autodir = a; }
+    AUTO.raf = requestAnimationFrame(step);
+  };
+  AUTO.raf = requestAnimationFrame(step);
+}
+function stopAutoScroll(){
+  if (!AUTO) return;
+  cancelAnimationFrame(AUTO.raf); AUTO = null;
+  autoMark.style.display = 'none'; document.body.classList.remove('autoscrolling'); delete document.body.dataset.autodir;
+  scheduleRender(0);
+}
+window.addEventListener('pointermove', e => { if (!AUTO) return; AUTO.x = e.clientX; AUTO.y = e.clientY; if (Math.hypot(e.clientX - AUTO.x0, e.clientY - AUTO.y0) > 12) AUTO.moved = true; }, true);
+window.addEventListener('pointerup', e => {
+  if (!AUTO || e.button !== 1) return;
+  AUTO.held = false;
+  // released after moving while held (or after a long hold) -> that was "hold to scroll": stop now; otherwise stay in click mode
+  if (AUTO.moved || performance.now() - AUTO.t0 > 600) stopAutoScroll();
+}, true);
+window.addEventListener('pointerdown', e => {
+  if (!AUTO || (e.button === 1 && AUTO.held)) return;
+  if (e.button === 1 && viewer.contains(e.target)) return;   // handled by startAutoScroll (toggles off)
+  e.preventDefault(); e.stopPropagation(); stopAutoScroll();
+  swallowClick = performance.now();   // the click that ends autoscroll must not also press whatever is under the mouse
+}, true);
+let swallowClick = 0;
+window.addEventListener('click', e => { if (performance.now() - swallowClick < 500) { e.preventDefault(); e.stopPropagation(); swallowClick = 0; } }, true);
+window.addEventListener('mousedown', e => { if (e.button === 1) e.preventDefault(); }, true);   // no paste / browser autoscroll
+window.addEventListener('wheel', () => { if (AUTO) stopAutoScroll(); }, {capture:true, passive:true});
+window.addEventListener('keydown', e => { if (AUTO && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); stopAutoScroll(); } }, true);
+window.addEventListener('blur', stopAutoScroll);
 
 /* ---------------- page interactions for tools ---------------- */
 function pagePoint(i, e){ return pagePointXY(i, e.clientX, e.clientY); }
