@@ -22,7 +22,8 @@ jobs:
     runs-on: windows-latest
     env:
       FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
-      # GitHub Releases is only kept for the hand-over release that moves older installs to Forgejo
+      # Updates are published to GitHub Releases for now. Once the Forgejo server accepts the
+      # installer, package.json gets an updateServer entry and one hand-over release goes to both.
       PUBLISH_GITHUB: 'true'
     steps:
       - uses: actions/checkout@v4
