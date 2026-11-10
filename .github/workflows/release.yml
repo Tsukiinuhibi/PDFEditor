@@ -77,6 +77,8 @@ jobs:
           json() { node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const v=($1)(JSON.parse(s));process.stdout.write(v==null?'':String(v))}catch(e){}})"; }
           export BRANCH=$(curl -fsS -H "$AUTH" "$API" | json 'j=>j.default_branch')
           ID=$(curl -sS -H "$AUTH" "$API/releases/tags/$TAG" | json 'j=>j.id')
+          # an unfinished draft from an earlier attempt has no tag yet: find it in the list
+          if [ -z "$ID" ]; then ID=$(curl -fsS -H "$AUTH" "$API/releases?limit=50" | json "a=>(a.find(r=>r.tag_name===process.env.TAG)||{}).id"); fi
           if [ -z "$ID" ]; then
             # created as a draft, so clients only see it once every file is in place
             BODY=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify({tag_name:process.env.TAG,target_commitish:process.env.BRANCH,name:'PDF 工作台 '+process.env.TAG,body:fs.existsSync('RELEASE_NOTES.md')?fs.readFileSync('RELEASE_NOTES.md','utf8'):'',draft:true}))")
