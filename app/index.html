@@ -491,6 +491,8 @@ kbd{font-family:inherit;background:var(--surface);border:1px solid var(--line2);
 @keyframes tin{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .busy{position:fixed;inset:0;z-index:85;display:none;place-items:center;background:rgba(255,255,255,.25);cursor:progress}
 .busy.show{display:grid}
+.busy.quiet{background:transparent}
+.busy.quiet>div{visibility:hidden}
 .busy div{background:var(--surface);padding:12px 20px;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.2);display:flex;gap:10px;align-items:center}
 .spin{width:16px;height:16px;border:2px solid #eee;border-top-color:var(--seal);border-radius:50%;animation:sp .8s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
@@ -683,6 +685,11 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
 .asel .eh:hover{background:#fff3bf}
 .geoprev{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;overflow:visible}
 .rlabel{position:absolute;transform:translate(-50%,calc(-100% - 10px));padding:2px 7px;border-radius:5px;background:rgba(20,22,26,.85);color:#fff;font-size:11.5px;white-space:nowrap;pointer-events:none;z-index:6}
+
+/* stand-ins kept on screen until the edited page is redrawn */
+.hold{pointer-events:none!important}
+.asel.hold{outline:none;box-shadow:none;cursor:default}
+.tbed.hold{outline:none!important;caret-color:transparent}
 </style>
 </head>
 <body>
@@ -948,7 +955,13 @@ function toast(msg, kind){
   const t = document.createElement('div'); t.className = 'toast' + (kind === 'err' ? ' err' : ''); t.textContent = msg;
   $('#toasts').appendChild(t); setTimeout(() => t.remove(), kind === 'err' ? 4200 : 2400);
 }
-function busy(on, txt){ $('#busy').classList.toggle('show', !!on); if (txt) $('#busyTxt').textContent = txt; }
+let busyT = 0;
+function busy(on, txt){   // input is blocked at once; the veil and spinner only appear if the work takes a while
+  const b = $('#busy'); clearTimeout(busyT);
+  if (on) { b.classList.add('show', 'quiet'); busyT = setTimeout(() => b.classList.remove('quiet'), 450); }
+  else b.classList.remove('show', 'quiet');
+  if (txt) $('#busyTxt').textContent = txt;
+}
 function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmtSize(n){ return n < 1024 ? n + ' B' : n < 1048576 ? (n/1024).toFixed(1) + ' KB' : (n/1048576).toFixed(2) + ' MB'; }
 const isTyping = e => { const t = e.target; return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable); };
@@ -1129,7 +1142,7 @@ async function loadDoc(bytes, {name, keepView = false, scrollToCurrent = false} 
   let anchorOffset = 0;
   if (keepView && S.pos[S.current]) anchorOffset = viewer.scrollTop - S.pos[S.current].y;
   S.st.forEach(st => st && st.task && st.task.cancel());
-  const old = S.pdf;
+  const old = S.pdf, prev = keepView ? {els:S.els, pages:S.pages} : null;
   const pdf = await pdfjsLib.getDocument({...PDF_OPTS, data:bytes.slice()}).promise;
   const pages = [];
   for (let i = 1; i <= pdf.numPages; i++) {
@@ -1143,16 +1156,25 @@ async function loadDoc(bytes, {name, keepView = false, scrollToCurrent = false} 
   S.current = clamp(S.current, 0, pages.length - 1);
   const keepSel = keepView ? [...(S.thumbSel || [])].filter(i => i < pages.length) : [];
   S.thumbSel = new Set(keepSel.length ? keepSel : [S.current]);
-  mountDoc(keepView && !scrollToCurrent ? {scroll:'anchor', anchorOffset} : {scroll:'current'});
+  mountDoc({...(keepView && !scrollToCurrent ? {scroll:'anchor', anchorOffset} : {scroll:'current'}), prev});
   if (old && old !== pdf) setTimeout(() => old.destroy(), 500);
 }
-function mountDoc({scroll = 'current', anchorOffset = 0, scrollTop = 0, scrollLeft = 0} = {}){
-  pagesEl.innerHTML = '';
+function mountDoc({scroll = 'current', anchorOffset = 0, scrollTop = 0, scrollLeft = 0, prev = null} = {}){
+  // after an edit the old picture of each page stays up until its new rendering is ready (no blank flash);
+  // only when the pages are the same ones, so nothing shows in the wrong place
+  const reuse = prev && prev.els && prev.pages && prev.pages.length === S.pages.length ? prev : null;
   S.els = S.pages.map((p, i) => {
     const d = document.createElement('div'); d.className = 'page'; d.dataset.i = i;
     d.innerHTML = `<div class="ld">${i + 1}</div><div class="grd"></div><div class="ovl"></div><div class="gdl"></div>`;
+    const o = reuse && reuse.els[i], op = reuse && reuse.pages[i];
+    if (o && Math.abs(op.w - p.w) < .01 && Math.abs(op.h - p.h) < .01) {
+      const c = o.querySelector('canvas.pc');
+      if (c) { d.querySelector('.ld').remove(); d.insertBefore(c, d.firstChild); }
+      o.querySelectorAll('.hold, svg.dsvg').forEach(h => { h.classList.add('hold'); d.appendChild(h); });
+    }
     return d;
   });
+  pagesEl.innerHTML = '';
   S.st = S.pages.map(() => ({rendered:0, ver:-1, task:null, ovlVer:-1}));
   XS = null; AS = null; rulerPage = -1; clearSnapMarks(); if (NP) closeNoteDom(); POLY = null;
   $('#welcome').style.display = 'none';
@@ -1163,7 +1185,7 @@ function mountDoc({scroll = 'current', anchorOffset = 0, scrollTop = 0, scrollLe
   else if (scroll === 'restore') { viewer.scrollTop = scrollTop; viewer.scrollLeft = scrollLeft; updateCurrentFromScroll(); }
   else scrollToPage(S.current);
   updateUI(); scheduleRender(0);
-  buildThumbs(); refreshPanels(); applyViewAids();
+  buildThumbs(!!reuse); refreshPanels(); applyViewAids();
 }
 
 async function openFile(file, handle = null){
@@ -1375,6 +1397,7 @@ async function renderPage(i){
   const el = S.els[i], oldC = el.querySelector('canvas.pc');
   if (oldC) { oldC.replaceWith(c); oldC.width = oldC.height = 0; } else el.insertBefore(c, el.firstChild);
   const ld = el.querySelector('.ld'); if (ld) ld.remove();
+  el.querySelectorAll('.hold').forEach(n => n.remove());   // what stood in for the edit until now
   st.rendered = want; st.ver = ver;
   ensureOverlay(i);
 }
@@ -3325,7 +3348,7 @@ async function addHighlight(i, box){
   });
 }
 async function deleteAnnot(i, id){
-  await mutate('已刪除註解', doc => {
+  return mutate('已刪除註解', doc => {
     const ref = findAnnotRef(doc, i, id);
     if (!ref) { toast('找不到此註解', 'err'); return false; }
     removeAnnotRefs(doc, i, ref);
@@ -3560,18 +3583,21 @@ function commitTextEditor(){
   if (!TBE) return tbSaving;
   const {i, id, x, y, el, veil, orig, edit} = TBE;
   const lines = htmlToRuns(el), box = {boxBg:el.dataset.boxbg || '', border:!!el.dataset.border};
-  el.remove(); veil && veil.remove(); if (S.els[i]) S.els[i].style.zIndex = '';
+  el.contentEditable = 'false'; el.classList.add('hold'); veil && veil.classList.add('hold');
+  const drop = () => { el.remove(); veil && veil.remove(); };
+  const settle = p => p.then(ok => { if (!ok) drop(); return ok; }, e => { drop(); throw e; });
+  if (S.els[i]) S.els[i].style.zIndex = '';
   TBE = null; syncTBBar();
   const empty = !lines.some(l => l.some(r => r.text.trim()));
-  if (edit) return (tbSaving = commitPageTextEdit(i, x, y, lines, box, edit, empty));
-  if (empty) { if (id) tbSaving = deleteAnnot(i, id); return tbSaving; }
+  if (edit) return (tbSaving = settle(commitPageTextEdit(i, x, y, lines, box, edit, empty)));
+  if (empty) { if (id) { veil && veil.classList.remove('hold'); tbSaving = settle(deleteAnnot(i, id)); el.remove(); } else drop(); return tbSaving; }
   const data = JSON.stringify({lines, box});
   if (id && orig && orig === JSON.stringify(lines) && !TBE) { /* unchanged text; box style may still differ */ }
   tbSaving = (async () => {
     const r = await renderTextBox(lines, box);
     const plain = lines.map(l => l.map(x => x.text).join('')).join('\n');
     const b = {x, y, w:r.w, h:r.h};
-    await mutate(id ? '已更新文字方塊' : '已新增文字方塊', async doc => {
+    return mutate(id ? '已更新文字方塊' : '已新增文字方塊', async doc => {
       const g = visToPdf(i, b), ap = await imageAP(doc, r.png, b.w, b.h, g.rot);
       const f = lines[0] && lines[0][0] || TB_STYLE, col = hexColor(f.color || '#000000');
       const fields = {Rect:g.rect, Contents:PDFHexString.fromText(plain), RC:PDFHexString.fromText(richTextXHTML(lines)),
@@ -3583,13 +3609,14 @@ function commitTextEditor(){
       } else addAnnot(doc, i, {Type:'Annot', Subtype:'FreeText', T:PDFHexString.fromText(AUTHOR), CreationDate:nowStr(), Subj:PDFHexString.fromText('文字方塊'), F:4, ...fields});
     });
   })();
+  tbSaving = settle(tbSaving);
   return tbSaving;
 }
 // the PDF's own text was edited: take the original out of the page and put the new text in its place
 async function commitPageTextEdit(i, x, y, lines, box, edit, empty){
-  if (JSON.stringify(lines) === edit.orig && !box.boxBg && !box.border) return;   // nothing changed
+  if (JSON.stringify(lines) === edit.orig && !box.boxBg && !box.border) return false;   // nothing changed
   let r = empty ? null : await renderTextBox(lines, box), removed = 0;
-  await mutate(empty ? '已刪除文字' : '已修改文字', async doc => {
+  return mutate(empty ? '已刪除文字' : '已修改文字', async doc => {
     removed = removePageText(doc, i, edit.U);
     if (!removed) {   // the text sits where it cannot be taken out (e.g. inside a form object): cover it instead
       if (empty) { toast('這段文字無法直接刪除', 'err'); return false; }
@@ -5154,6 +5181,16 @@ document.addEventListener('pointerdown', e => { const m = $('#toolMenu'); if (m.
 const NO_MOVE = new Set(['Highlight', 'StrikeOut', 'Underline', 'Squiggly', 'Widget', 'Popup', 'Link']);
 const REGEN = new Set(['Line', 'Square', 'Circle', 'Polygon', 'PolyLine', 'Ink']);
 let AS = null;   // {i, a, box, el, bar, ghost, veil}
+// keep the moved picture (and the veil over the old place) on screen until the page is redrawn
+function holdSelection(){
+  if (!AS) return;
+  AS.el.querySelectorAll('.h,.eh,.rh').forEach(h => h.remove());
+  AS.el.classList.add('hold'); AS.veil && AS.veil.classList.add('hold');
+  if (!AS.ghost) AS.el.remove();
+  AS.bar.remove(); if (S.els[AS.i]) S.els[AS.i].style.zIndex = '';
+  AS = null; clearSnapMarks();
+}
+function clearHolds(i){ const el = S.els[i]; if (el) el.querySelectorAll('.hold').forEach(n => n.remove()); }
 function deselectAnnot(){
   if (!AS) return;
   AS.el.remove(); AS.bar.remove(); AS.veil && AS.veil.remove();
@@ -5275,7 +5312,7 @@ const flatPts = (i, arr) => { const out = [], vp = S.pages[i].vp1; for (let k = 
 const numArr = a => a.asArray().map(x => x.asNumber ? x.asNumber() : 0);
 async function commitAnnotBox(i, a, ob, nb){
   const id = a.id, isMove = Math.abs(nb.w - ob.w) < .05 && Math.abs(nb.h - ob.h) < .05;
-  deselectAnnot();
+  holdSelection();
   const ok = await mutate(isMove ? '已移動' : '已調整大小', doc => {
     const ref = findAnnotRef(doc, i, id); if (!ref) { toast('找不到此註解', 'err'); return false; }
     const ctx = doc.context, dict = ctx.lookup(ref, PDFDict), N = k => PDFName.of(k);
@@ -5328,6 +5365,7 @@ async function commitAnnotBox(i, a, ob, nb){
       if (pr) { const v = numArr(pr), dx = nR[0] - oR[0], dy = nR[1] - oR[1]; pd.set(N('Rect'), ctx.obj([v[0] + dx, v[1] + dy, v[2] + dx, v[3] + dy])); }
     }
   });
+  if (!ok) clearHolds(i);
   if (ok && S.tool === 'select') {   // keep it selected at its new place
     const a2 = (await getAnns(i)).find(x => x.id === id);
     if (a2 && S.els[i]) selectAnnot(i, a2);
@@ -5406,10 +5444,9 @@ function geomDrag(e, mode, k){
   const up = async ev => {
     if (moved) move(ev);   // the release point decides
     window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
-    veil.remove(); svg.remove(); lab.remove(); clearSnapMarks();
-    if (!AS) return;
-    AS.el.style.visibility = ''; AS.bar.style.visibility = '';
-    if (!moved || (mode === 'rot' && Math.abs(deg) < .2)) return;
+    lab.remove(); clearSnapMarks();
+    if (!AS || !moved || (mode === 'rot' && Math.abs(deg) < .2)) { veil.remove(); svg.remove(); if (AS) { AS.el.style.visibility = ''; AS.bar.style.visibility = ''; } return; }
+    veil.classList.add('hold'); svg.classList.add('hold');
     await commitGeom(i, a, cur, mode === 'rot' ? '已旋轉' : '已調整線條');
   };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
@@ -5441,6 +5478,7 @@ async function commitGeom(i, a, strokes, label){
       dict.set(N('Rect'), ctx.obj(visToPdf(i, b).rect)); dict.delete(N('AP'));
     }
   });
+  if (!ok) clearHolds(i);
   if (ok && S.tool === 'select') { const a2 = (await getAnns(i)).find(x => x.id === id); if (a2 && S.els[i]) selectAnnot(i, a2); }
 }
 
@@ -5850,24 +5888,30 @@ function refreshPanels(){
 }
 
 let thumbObs = null;
-function buildThumbs(){
-  const panel = $('#p-thumbs'); panel.innerHTML = '';
+function buildThumbs(reuse = false){
+  const panel = $('#p-thumbs');
+  const olds = reuse ? [...panel.querySelectorAll('.thumb canvas.tc')] : [];
+  if (olds.length !== S.pages.length) olds.length = 0;
+  panel.innerHTML = '';
   thumbObs && thumbObs.disconnect();
   const ver = S.version;
   thumbObs = new IntersectionObserver(ents => ents.forEach(async en => {
     if (!en.isIntersecting) return;
     const t = en.target; thumbObs.unobserve(t);
     const i = +t.dataset.i, pg = S.pages[i]; if (!pg || ver !== S.version) return;
-    const c = t.querySelector('canvas'), dpr = window.devicePixelRatio || 1;
-    const s = (c.clientWidth * dpr) / pg.w, vp = pg.page.getViewport({scale:s});
+    const shown = t.querySelector('canvas'), dpr = window.devicePixelRatio || 1;
+    const c = document.createElement('canvas'); c.className = 'tc'; c.style.cssText = shown.style.cssText;
+    const s = (parseFloat(shown.style.width) * dpr) / pg.w, vp = pg.page.getViewport({scale:s});
     c.width = vp.width; c.height = vp.height;
-    try { await pg.page.render({canvasContext:c.getContext('2d'), viewport:vp, annotationMode:pdfjsLib.AnnotationMode.ENABLE}).promise; } catch (_) {}
+    try { await pg.page.render({canvasContext:c.getContext('2d'), viewport:vp, annotationMode:pdfjsLib.AnnotationMode.ENABLE}).promise; } catch (_) { return; }
+    if (ver === S.version && shown.isConnected) shown.replaceWith(c);
   }), {root:panel, rootMargin:'200px'});
   S.pages.forEach((pg, i) => {
     const t = document.createElement('div'); t.className = 'thumb'; t.dataset.i = i;
     const w = 120, h = Math.round(w * pg.h / pg.w);
     const W = h > 170 ? Math.round(170 * pg.w / pg.h) : w, H = Math.min(h, 170);
     t.innerHTML = `<canvas class="tc" style="width:${W}px;height:${H}px"></canvas><span class="tn">${i + 1}</span>`;
+    const oc = olds[i]; if (oc && oc.style.width === W + 'px' && oc.style.height === H + 'px') t.querySelector('canvas').replaceWith(oc);
     t.onclick = e => thumbClick(e, i);
     t.oncontextmenu = e => { e.preventDefault(); if (!S.thumbSel.has(i)) { S.thumbSel = new Set([i]); S.thumbAnchor = i; scrollToPage(i); paintThumbSel(); } showPageMenu(e, i); };
     panel.appendChild(t); thumbObs.observe(t);
