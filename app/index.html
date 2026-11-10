@@ -667,6 +667,22 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
 .ly-note{margin-top:10px;font-size:11.5px;line-height:1.6;color:var(--ink3)}
 .ly-pick{height:24px;font-size:12px;border:1px solid var(--line);border-radius:5px;background:var(--surface);color:var(--ink);max-width:150px}
 .tabs .tab{padding-left:6px;padding-right:6px}
+
+/* editing the PDF's own text */
+.txhov{position:absolute;outline:1.5px solid rgba(28,100,217,.55);background:rgba(28,100,217,.06);pointer-events:none;border-radius:2px;z-index:3}
+.txsel{position:absolute;background:rgba(28,100,217,.22);pointer-events:none;z-index:3}
+.txband{position:absolute;border:1px dashed #1c64d9;background:rgba(28,100,217,.05);pointer-events:none;z-index:3}
+.tool-textbox .page.over-text{cursor:text}
+
+/* rotation & end-point handles */
+.asel .rh{position:absolute;left:50%;top:-30px;width:20px;height:20px;margin-left:-10px;border-radius:50%;background:#fff;border:2px solid #1c64d9;cursor:grab;display:flex;align-items:center;justify-content:center;z-index:3}
+.asel .rh::after{content:"";position:absolute;left:50%;top:18px;width:0;height:11px;border-left:1.5px dashed #1c64d9}
+.asel .rh svg{width:13px;height:13px;fill:none;stroke:#1c64d9;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.asel .rh:hover{background:#fff3bf}
+.asel .eh{position:absolute;width:13px;height:13px;margin:-6.5px 0 0 -6.5px;border-radius:50%;background:#fff;border:2px solid #1c64d9;cursor:crosshair;z-index:3}
+.asel .eh:hover{background:#fff3bf}
+.geoprev{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;overflow:visible}
+.rlabel{position:absolute;transform:translate(-50%,calc(-100% - 10px));padding:2px 7px;border-radius:5px;background:rgba(20,22,26,.85);color:#fff;font-size:11.5px;white-space:nowrap;pointer-events:none;z-index:6}
 </style>
 </head>
 <body>
@@ -676,7 +692,7 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
   <div class="brand"><div class="seal">印</div><b>PDF 工作台</b></div>
   <div class="grp"><div class="btns">
     <button class="rb" data-act="open" title="開啟 (Ctrl+O)"><i data-i="open"></i>開啟</button>
-    <button class="rb primary" data-act="save" data-need title="儲存 (Ctrl+S)"><i data-i="save"></i>儲存</button>
+    <button class="rb primary" data-act="save" data-need title="另存新檔 (Ctrl+S)：修改後的內容一律存成新檔案，不會覆蓋原檔"><i data-i="save"></i>另存新檔</button>
     <button class="rb" data-act="exportImages" data-need title="將頁面轉存成 PNG、JPG、WebP、BMP、TIFF、GIF 圖片"><i data-i="toImage"></i>轉存圖片</button>
   </div><div class="cap">檔案</div></div>
   <div class="grp"><div class="btns">
@@ -922,7 +938,7 @@ const S = {
   scale:PX, zoomMode:'fit-width', view:'continuous', cover:false,
   current:0, rows:[], pos:[], tool:'select', undo:[], redo:[],
   dirty:false, signed:false, version:0, imgCache:new Map(), annCache:new Map(),
-  handle:null, autoWrite:true, writing:null,
+  handle:null, autoWrite:false, writing:null,
   sigImg:null, sigAspect:3, hlColor:'#ffd43b', spaceDown:false, panning:null,
 };
 const viewer = $('#viewer'), pagesEl = $('#pages');
@@ -977,6 +993,24 @@ function getDownloads(){
   return dlPromise;
 }
 setTimeout(getDownloads, 0);
+// every save goes to a new file; the file that was opened is never overwritten
+async function saveAsNew(bytes, suffix){
+  const base = S.name.replace(/\.pdf$/i, '').replace(/_已編輯(\(\d+\))?$/, '');
+  const fn = base + suffix + '.pdf';
+  const orig = S.handle && (S.handle.orig || S.handle.path);
+  if (DESK) {
+    const dir = S.handle && S.handle.path ? S.handle.path.replace(/[\\/][^\\/]*$/, '') : '';
+    const where = await DESK.saveAs(dir ? dir + (S.handle.path.includes('\\') ? '\\' : '/') + fn : fn, bytes, {avoid:orig ? [orig] : []});
+    if (!where) { toast('已取消儲存'); return false; }
+    if (where.error) { toast(where.error, 'err'); return false; }
+    const name = where.split(/[\\/]/).pop();
+    S.dirty = false; S.name = name; S.handle = {...desktopHandle(where, name), orig};
+    updateUI(); toast('已另存新檔：' + name);
+    return true;
+  }
+  if (await saveFile(fn, new Blob([bytes], {type:'application/pdf'}))) { S.dirty = false; updateUI(); return true; }
+  return false;
+}
 async function saveFile(filename, data){
   const blob = data instanceof Blob ? data : new Blob([data]);
   const dl = await getDownloads();
@@ -1045,7 +1079,12 @@ async function openInNewTab(bytes, name, handle){
 }
 async function closeTab(i){
   const d = docs[i]; if (!d) return;
-  if (docField(d, 'dirty') && !(await confirmDlg('關閉分頁', `「${docField(d, 'name')}」有尚未儲存的修改，關閉後這些修改會遺失。`, '不儲存並關閉'))) return;
+  if (docField(d, 'dirty')) {
+    const v = await openModal({title:'關閉分頁', body:`<div style="max-width:400px">「${esc(docField(d, 'name'))}」有尚未儲存的修改。原檔不會被修改，要先另存新檔嗎？</div>`,
+      buttons:[{label:'取消', value:null}, {label:'不儲存並關閉', value:'drop'}, {label:'另存新檔', value:'save', primary:true}]});
+    if (!v) return;
+    if (v === 'save') { if (i !== active) switchTab(i); await new Promise(r => setTimeout(r, 50)); if (!(await saveAsNew(S.bytes, '_已編輯'))) return; i = active; }
+  }
   const pdf = docField(d, 'pdf');
   if (i === active) {
     S.st.forEach(st => st && st.task && st.task.cancel());
@@ -1136,7 +1175,7 @@ async function openFile(file, handle = null){
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
     await openInNewTab(bytes, file.name, handle);
-    toast('已開啟 ' + file.name + (handle ? '（修改會直接存回原檔）' : ''));
+    toast('已開啟 ' + file.name + '（修改不會動到原檔，完成後請另存新檔）');
   } catch (e) {
     console.error(e);
     toast(e && e.name === 'PasswordException' ? '此 PDF 受密碼保護，目前版本尚不支援' : '無法開啟此檔案：' + (e.message || e), 'err');
@@ -1522,9 +1561,7 @@ function updateUI(){
   $('#stSig').innerHTML = S.signed ? '<span class="sig">✓ 已數位簽署</span>' : '';
   const sw = $('#stWrite');
   if (!S.pdf) sw.innerHTML = '';
-  else if (S.handle) sw.innerHTML = `<span class="wmode"><b>● 直接編輯原檔</b><label><input type="checkbox" id="autoW"${S.autoWrite ? ' checked' : ''}> 修改後自動存回</label></span>`;
-  else sw.innerHTML = `<span class="wmode ro"><b>● 編輯副本</b><span>按「儲存」以原檔名下載${canPick() ? '' : '（此瀏覽器環境不允許直接覆寫原檔）'}</span></span>`;
-  const aw = $('#autoW'); if (aw) aw.onchange = () => { S.autoWrite = aw.checked; if (aw.checked && S.dirty) { primeWrite(); writeBack(S.bytes); } };
+  else sw.innerHTML = `<span class="wmode ro"><b>● 編輯副本</b><span>原檔不會被修改，完成後按「另存新檔」(Ctrl+S)</span></span>`;
   document.title = (S.dirty ? '● ' : '') + (S.pdf ? S.name + ' — ' : '') + 'PDF 工作台';
   renderTabs(); updateClipUI();
   viewer.className = 'viewer tool-' + S.tool + (S.spaceDown ? ' pan-ready' : '') + (S.panning ? ' panning' : '') + (VIEW.grid ? ' show-grid' : '') + (VIEW.guides ? ' show-guides' : '');
@@ -1540,7 +1577,7 @@ const HINTS = {
   polyline:'逐一點選各點，雙擊或按 Enter 完成；Backspace 刪除上一點，Esc 取消。', polygon:'逐一點選各點，點回第一點、雙擊或按 Enter 完成；Esc 取消。',
   fill:'點一下要填色的區塊（例如表格欄位、圖形內部）即自動填滿；也可以拖曳矩形，或改用套索圈出範圍。點在已畫好的圖形內則會改變它的填色。',
   pen:'按住拖曳即可手繪，停筆約 1 秒後自動儲存。', eraser:'在畫筆筆跡上拖曳即可擦除經過的部分。', stamp:'在頁面上點一下放置戳記，或拖曳決定大小。',
-  textbox:'在頁面上點一下（左鍵或右鍵）即可在十字處輸入文字；反白文字可修改字級、顏色、底色；點現有文字方塊可再編輯。',
+  textbox:'點一下 PDF 上的文字即可修改那一行，拖曳可選取多行文字；點空白處（或按右鍵）在十字處新增文字；反白文字可修改字級、顏色、底色。',
   image:'在頁面上點一下放置圖片，或拖曳決定寬度；放好後可直接拖曳移動、拉把手調整大小。',
   highlight:'在頁面上拖曳要標示的範圍。',
   signature:'在頁面上點一下要放置簽名的位置。',
@@ -1551,7 +1588,7 @@ function setTool(t){
   if (!S.pdf) return;
   if (t !== 'extract') cancelXSel();
   if (t !== 'select') deselectAnnot();
-  if (t !== S.tool) { cancelPoly(); cancelFillPoly(); if (S.tool === 'pen') flushPen(); if (S.tool === 'textbox') commitTextEditor(); }
+  if (t !== S.tool) { cancelPoly(); cancelFillPoly(); clearTextMarks(); if (S.tool === 'pen') flushPen(); if (S.tool === 'textbox') commitTextEditor(); }
   if (t === 'image' && !PENDING_IMG) { chooseImage(); return; }
   S.tool = t; updateUI();
   $$('[data-act="insertImage"]').forEach(b => b.classList.toggle('on', t === 'image'));
@@ -2128,6 +2165,8 @@ pagesEl.addEventListener('contextmenu', e => {
   if (!S.thumbSel.has(i)) { S.thumbSel = new Set([i]); S.current = i; updatePager(); }
   showPageMenu(e, i);
 });
+pagesEl.addEventListener('pointermove', e => textboxHover(e));
+pagesEl.addEventListener('pointerleave', () => { if (S.tool === 'textbox') clearTextMarks(); });
 pagesEl.addEventListener('pointerdown', e => {
   if (S.panning || S.spaceDown || e.button !== 0) return;
   if (AS && !(e.target.closest && e.target.closest('.asel,.abar'))) deselectAnnot();
@@ -2139,7 +2178,7 @@ pagesEl.addEventListener('pointerdown', e => {
   if (t === 'note') { if (NP) return; const p = snapPoint(i, pagePoint(i, e), {mark:false}); newNoteAt(i, p.x, p.y); return; }
   if (t === 'signature') { const p = snapPoint(i, pagePoint(i, e), {mark:false}); placeSignature(i, p.x, p.y); return; }
   if (t === 'extract') { e.preventDefault(); startExtractDraw(i, e); return; }
-  if (t === 'textbox') { e.preventDefault(); if (performance.now() - tbCommittedAt > 250) textboxAt(i, e); return; }
+  if (t === 'textbox') { e.preventDefault(); textboxDown(i, e); return; }
   if (t === 'image' || t === 'highlight' || t === 'digisign') {
     e.preventDefault();
     const p0 = snapPoint(i, pagePoint(i, e));
@@ -2186,8 +2225,7 @@ async function mutate(label, fn, opts = {}){
     S.redo = []; S.signed = false; S.dirty = true;
     await loadDoc(out, {keepView:true, scrollToCurrent:!!opts.scrollToCurrent});
     if (opts.highlight) highlightPages(opts.highlight.from, opts.highlight.count, opts.highlight.label);
-    if (S.handle && S.autoWrite) { const ok = await writeBack(out, {quiet:true}); if (label) toast(label + (ok ? '，已存回原檔' : '')); }
-    else if (label) toast(label);
+    if (label) toast(label);
     return true;
   } catch (e) { console.error(e); toast('操作失敗：' + (e.message || e), 'err'); return false; }
   finally { busy(false); }
@@ -2902,7 +2940,7 @@ async function writeBack(bytes, {quiet = false} = {}){
     return false;
   }
 }
-async function afterEdit(){ if (S.handle && S.autoWrite) await writeBack(S.bytes, {quiet:true}); }
+async function afterEdit(){}   // edits stay in the app until the user saves a new file
 
 /* ---------------- page picker (shared by 減頁 and 插入PDF) ---------------- */
 function parseRange(txt, n){
@@ -3191,9 +3229,7 @@ const actions = {
   async save(){
     if (!S.pdf) return;
     await closeNote(true); await flushPen(); await commitTextEditor();
-    if (S.handle) { primeWrite(); await writeBack(S.bytes); return; }
-    const fn = /\.pdf$/i.test(S.name) ? S.name : S.name + '.pdf';
-    if (await saveFile(fn, new Blob([S.bytes], {type:'application/pdf'}))) { S.dirty = false; updateUI(); }
+    await saveAsNew(S.bytes, '_已編輯');
   },
   async undo(){
     if (!S.undo.length) return;
@@ -3379,7 +3415,7 @@ function richTextXHTML(lines){
   const sp = r => `<span style="font-size:${r.size}pt;color:${r.color}${r.bold ? ';font-weight:bold' : ''}${r.italic ? ';font-style:italic' : ''}${r.underline ? ';text-decoration:underline' : ''}${r.bg ? ';background-color:' + r.bg : ''}">${esc(r.text)}</span>`;
   return `<?xml version="1.0"?><body xmlns="http://www.w3.org/1999/xhtml" xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/" xfa:APIVersion="Acrobat:11.0.0" xfa:spec="2.0.2">${lines.map(l => `<p>${l.map(sp).join('') || ' '}</p>`).join('')}</body>`;
 }
-function openTextEditor(i, x, y, {id = null, lines = null, box = null, veilBox = null} = {}){
+function openTextEditor(i, x, y, {id = null, lines = null, box = null, veilBox = null, veilColor = null, edit = null, selectAll = false} = {}){
   commitTextEditor();
   const pg = S.pages[i], el = document.createElement('div');
   el.className = 'tbed'; el.contentEditable = 'true'; el.spellcheck = false;
@@ -3396,13 +3432,14 @@ function openTextEditor(i, x, y, {id = null, lines = null, box = null, veilBox =
   if (veilBox) {   // hide the old appearance while it is being edited
     veil = document.createElement('div'); veil.className = 'tbveil';
     Object.assign(veil.style, {left:veilBox.x / pg.w * 100 + '%', top:veilBox.y / pg.h * 100 + '%', width:veilBox.w / pg.w * 100 + '%', height:veilBox.h / pg.h * 100 + '%'});
+    if (veilColor) veil.style.background = veilColor;
     S.els[i].appendChild(veil);
   }
-  TBE = {i, id, x, y, el, veil, range:null, orig:lines ? JSON.stringify(lines) : null};
+  TBE = {i, id, x, y, el, veil, range:null, orig:lines ? JSON.stringify(lines) : null, edit};
   placeTBE();
   try { document.execCommand('styleWithCSS', false, true); } catch (_) {}
   el.focus();
-  const r = document.createRange(); r.selectNodeContents(el); r.collapse(false); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  const r = document.createRange(); r.selectNodeContents(el); if (!selectAll) r.collapse(false); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
   if (d.bg && !lines) document.execCommand('hiliteColor', false, d.bg);
   el.addEventListener('pointerdown', e => e.stopPropagation());
   el.addEventListener('keydown', e => {
@@ -3521,11 +3558,12 @@ function showTextMenu(e){
 let tbSaving = Promise.resolve();
 function commitTextEditor(){
   if (!TBE) return tbSaving;
-  const {i, id, x, y, el, veil, orig} = TBE;
+  const {i, id, x, y, el, veil, orig, edit} = TBE;
   const lines = htmlToRuns(el), box = {boxBg:el.dataset.boxbg || '', border:!!el.dataset.border};
   el.remove(); veil && veil.remove(); if (S.els[i]) S.els[i].style.zIndex = '';
   TBE = null; syncTBBar();
   const empty = !lines.some(l => l.some(r => r.text.trim()));
+  if (edit) return (tbSaving = commitPageTextEdit(i, x, y, lines, box, edit, empty));
   if (empty) { if (id) tbSaving = deleteAnnot(i, id); return tbSaving; }
   const data = JSON.stringify({lines, box});
   if (id && orig && orig === JSON.stringify(lines) && !TBE) { /* unchanged text; box style may still differ */ }
@@ -3546,6 +3584,26 @@ function commitTextEditor(){
     });
   })();
   return tbSaving;
+}
+// the PDF's own text was edited: take the original out of the page and put the new text in its place
+async function commitPageTextEdit(i, x, y, lines, box, edit, empty){
+  if (JSON.stringify(lines) === edit.orig && !box.boxBg && !box.border) return;   // nothing changed
+  let r = empty ? null : await renderTextBox(lines, box), removed = 0;
+  await mutate(empty ? '已刪除文字' : '已修改文字', async doc => {
+    removed = removePageText(doc, i, edit.U);
+    if (!removed) {   // the text sits where it cannot be taken out (e.g. inside a form object): cover it instead
+      if (empty) { toast('這段文字無法直接刪除', 'err'); return false; }
+      r = await renderTextBox(lines, {...box, boxBg:box.boxBg || edit.bg});
+    }
+    if (empty) return;
+    const plain = lines.map(l => l.map(x => x.text).join('')).join('\n');
+    const b = {x, y, w:r.w, h:r.h}, g = visToPdf(i, b), ap = await imageAP(doc, r.png, b.w, b.h, g.rot);
+    const f = lines[0] && lines[0][0] || TB_STYLE, col = hexColor(f.color || '#000000');
+    addAnnot(doc, i, {Type:'Annot', Subtype:'FreeText', T:PDFHexString.fromText(AUTHOR), CreationDate:nowStr(), Subj:PDFHexString.fromText('修改的文字'), F:4,
+      Rect:g.rect, Contents:PDFHexString.fromText(plain), RC:PDFHexString.fromText(richTextXHTML(lines)),
+      DA:PDFString.of(`/Helv ${f.size || 12} Tf ${col.map(v => v.toFixed(3)).join(' ')} rg`), M:nowStr(), PDFE:true,
+      PDFE_RT:PDFHexString.fromText(JSON.stringify({lines, box:removed ? box : {...box, boxBg:box.boxBg || edit.bg}})), AP:{N:ap}});
+  });
 }
 async function editTextBox(i, a){
   await tbSaving;
@@ -3569,6 +3627,331 @@ async function textboxAt(i, e){
   if (hit) { editTextBox(i, hit); return; }
   const pg = S.pages[i], lh = TB_STYLE.size * 1.3;
   openTextEditor(i, clamp(p.x - TB_PAD, 0, pg.w - 20), clamp(p.y - lh / 2 - TB_PAD, 0, pg.h - lh));
+}
+
+/* ====================================================================
+   Edit the PDF's own text (文字方塊模式：選取原文並修改)
+   The chosen text is taken out of the page's content stream (its glyphs are
+   replaced by an equal amount of empty spacing, so nothing else moves) and the
+   edited text is put back as a text box at the same place.
+   ==================================================================== */
+const CS_WS = new Set([0, 9, 10, 12, 13, 32]), CS_DL = new Set([40, 41, 60, 62, 91, 93, 123, 125, 47, 37]);
+const enc8 = s => new TextEncoder().encode(s);
+function csTokens(b){
+  const ops = [], n = b.length, stack = [];
+  let i = 0, args = [], argStart = -1;
+  const push = (v, s) => { if (stack.length) stack[stack.length - 1].push(v); else { if (argStart < 0) argStart = s; args.push(v); } };
+  const skipString = () => { let depth = 1; i++; while (i < n && depth) { const ch = b[i++]; if (ch === 92) i++; else if (ch === 40) depth++; else if (ch === 41) depth--; } };
+  while (i < n) {
+    const c = b[i];
+    if (CS_WS.has(c)) { i++; continue; }
+    if (c === 37) { while (i < n && b[i] !== 10 && b[i] !== 13) i++; continue; }
+    const s = i;
+    if (c === 40) {
+      let depth = 1; const out = []; i++;
+      while (i < n) {
+        const ch = b[i++];
+        if (ch === 92) {
+          const nx = b[i++];
+          if (nx === 110) out.push(10); else if (nx === 114) out.push(13); else if (nx === 116) out.push(9); else if (nx === 98) out.push(8); else if (nx === 102) out.push(12);
+          else if (nx >= 48 && nx <= 55) { let v = nx - 48; for (let k = 0; k < 2 && b[i] >= 48 && b[i] <= 55; k++) v = v * 8 + b[i++] - 48; out.push(v & 255); }
+          else if (nx === 13) { if (b[i] === 10) i++; } else if (nx !== 10) out.push(nx);
+          continue;
+        }
+        if (ch === 40) depth++;
+        else if (ch === 41 && !--depth) break;
+        out.push(ch);
+      }
+      push({str:Uint8Array.from(out)}, s); continue;
+    }
+    if (c === 60 && b[i + 1] === 60) {   // dictionary operand (BDC properties): kept opaque
+      let depth = 0;
+      while (i < n) {
+        if (b[i] === 60 && b[i + 1] === 60) { depth++; i += 2; }
+        else if (b[i] === 62 && b[i + 1] === 62) { depth--; i += 2; if (!depth) break; }
+        else if (b[i] === 40) skipString(); else i++;
+      }
+      push({dict:true}, s); continue;
+    }
+    if (c === 60) {
+      i++; let hex = '';
+      while (i < n && b[i] !== 62) { const ch = b[i++]; if (!CS_WS.has(ch)) hex += String.fromCharCode(ch); }
+      i++; if (hex.length % 2) hex += '0';
+      const out = new Uint8Array(hex.length / 2); for (let k = 0; k < out.length; k++) out[k] = parseInt(hex.substr(k * 2, 2), 16) || 0;
+      push({str:out}, s); continue;
+    }
+    if (c === 91) { if (!stack.length && argStart < 0) argStart = s; stack.push([]); i++; continue; }
+    if (c === 93) { i++; const a = stack.pop() || []; push(a, s); continue; }
+    if (c === 47) { i++; let name = ''; while (i < n && !CS_WS.has(b[i]) && !CS_DL.has(b[i])) name += String.fromCharCode(b[i++]); push({name}, s); continue; }
+    if (CS_DL.has(c)) { i++; continue; }
+    let tok = ''; while (i < n && !CS_WS.has(b[i]) && !CS_DL.has(b[i])) tok += String.fromCharCode(b[i++]);
+    if (/^[+-]?(\d+\.?\d*|\.\d+)$/.test(tok)) { push(+tok, s); continue; }
+    if (tok === 'BI') {   // inline image: jump past EI
+      let k = i; while (k < n - 2 && !(b[k] === 73 && b[k + 1] === 68 && CS_WS.has(b[k - 1]) && CS_WS.has(b[k + 2]))) k++;
+      k += 3; while (k < n - 1 && !(CS_WS.has(b[k - 1]) && b[k] === 69 && b[k + 1] === 73 && (k + 2 >= n || CS_WS.has(b[k + 2])))) k++;
+      i = Math.min(n, k + 2); args = []; argStart = -1; stack.length = 0; continue;
+    }
+    ops.push({op:tok, args, s:argStart < 0 ? s : argStart, e:i}); args = []; argStart = -1; stack.length = 0;
+  }
+  return ops;
+}
+const MUL = (m1, m2) => [m1[0] * m2[0] + m1[1] * m2[2], m1[0] * m2[1] + m1[1] * m2[3], m1[2] * m2[0] + m1[3] * m2[2], m1[2] * m2[1] + m1[3] * m2[3], m1[4] * m2[0] + m1[5] * m2[2] + m2[4], m1[4] * m2[1] + m1[5] * m2[3] + m2[5]];
+const MPT = (m, x, y) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+function fontMetrics(doc, res, name){
+  const ctx = doc.context, N = k => PDFName.of(k), num = v => { v = ctx.lookup(v); return v && v.asNumber ? v.asNumber() : 0; };
+  const fonts = res && res.lookupMaybe(N('Font'), PDFDict), f = fonts && name && fonts.lookupMaybe(N(name), PDFDict);
+  if (!f) return {two:false, exact:false, w:() => .5};
+  if (String(f.get(N('Subtype'))) === '/Type0') {
+    const desc = f.lookupMaybe(N('DescendantFonts'), PDFArray), df = desc && ctx.lookupMaybe(desc.get(0), PDFDict);
+    const DW = df && df.get(N('DW')) ? num(df.get(N('DW'))) : 1000, map = new Map(), W = df && df.lookupMaybe(N('W'), PDFArray);
+    if (W) { const a = W.asArray().map(x => ctx.lookup(x));
+      for (let k = 0; k < a.length;) {
+        const c0 = num(a[k]), nx = a[k + 1];
+        if (nx instanceof PDFArray) { nx.asArray().forEach((v, j) => map.set(c0 + j, num(v))); k += 2; }
+        else { const c1 = num(nx), w = num(a[k + 2]); for (let c = c0; c <= c1 && c - c0 < 70000; c++) map.set(c, w); k += 3; }
+      } }
+    return {two:true, exact:true, w:c => (map.has(c) ? map.get(c) : DW) / 1000};
+  }
+  const ws = f.lookupMaybe(N('Widths'), PDFArray), first = f.get(N('FirstChar')) ? num(f.get(N('FirstChar'))) : 0;
+  const fd = f.lookupMaybe(N('FontDescriptor'), PDFDict), mw = fd && fd.get(N('MissingWidth')) ? num(fd.get(N('MissingWidth'))) : 500;
+  const arr = ws ? ws.asArray().map(num) : null;
+  const t3 = String(f.get(N('Subtype'))) === '/Type3';
+  if (!arr && !t3) {   // the 14 standard fonts may come without /Widths: use their built-in metrics
+    const base = String(f.get(N('BaseFont')) || '').replace(/^\/([A-Z]{6}\+)?/, '').replace(/,/g, '-');
+    const alias = {Arial:'Helvetica', 'Arial-Bold':'Helvetica-Bold', 'Arial-Italic':'Helvetica-Oblique', 'Arial-BoldItalic':'Helvetica-BoldOblique', TimesNewRoman:'Times-Roman', 'TimesNewRoman-Bold':'Times-Bold', CourierNew:'Courier'};
+    const std = ['Times-Roman', 'Times-Bold', 'Times-Italic', 'Times-BoldItalic', 'Helvetica', 'Helvetica-Bold', 'Helvetica-Oblique', 'Helvetica-BoldOblique', 'Courier', 'Courier-Bold', 'Courier-Oblique', 'Courier-BoldOblique'];
+    const nm = alias[base] || base;
+    if (std.includes(nm)) {
+      try {
+        const em = PDFLib.StandardFontEmbedder.for(nm), cache = new Map();
+        const w = c => { if (!cache.has(c)) { let v; try { v = em.widthOfTextAtSize(String.fromCharCode(c), 1000) / 1000; } catch (_) { v = null; } cache.set(c, v); } return cache.get(c); };
+        if (w(65) != null) return {two:false, exact:true, w:c => w(c) ?? mw / 1000};
+      } catch (_) {}
+    }
+  }
+  return {two:false, exact:!!arr && !t3, w:c => (arr && c - first >= 0 && c - first < arr.length ? arr[c - first] : mw) / 1000};
+}
+// walk the content stream and report every text-showing operator with where it starts and ends on the page
+function locateTextOps(doc, page, bytes){
+  const res = page.node.Resources(), ops = csTokens(bytes), runs = [], fonts = new Map();
+  const fm = n => { if (!fonts.has(n)) fonts.set(n, fontMetrics(doc, res, n)); return fonts.get(n); };
+  const num = v => typeof v === 'number' ? v : 0;
+  let g = {ctm:[1, 0, 0, 1, 0, 0], Tc:0, Tw:0, Tz:100, TL:0, Ts:0, Tr:0, font:null, fs:12}, Tm = [1, 0, 0, 1, 0, 0], Tlm = Tm;
+  const st = [];
+  const nextLine = () => { Tlm = MUL([1, 0, 0, 1, 0, -g.TL], Tlm); Tm = Tlm; };
+  const show = (o, items) => {
+    const m0 = MUL(Tm, g.ctm), p0 = MPT(m0, 0, g.Ts), f = fm(g.font), Th = g.Tz / 100;
+    let adv = 0;
+    items.forEach(it => {
+      if (typeof it === 'number') { const tx = -it / 1000 * g.fs * Th; adv += tx; Tm = MUL([1, 0, 0, 1, tx, 0], Tm); return; }
+      if (!it || !it.str) return;
+      const s = it.str, step = f.two ? 2 : 1;
+      for (let k = 0; k + step - 1 < s.length; k += step) {
+        const code = f.two ? (s[k] << 8) | s[k + 1] : s[k];
+        const tx = (f.w(code) * g.fs + g.Tc + (!f.two && code === 32 ? g.Tw : 0)) * Th;
+        adv += tx; Tm = MUL([1, 0, 0, 1, tx, 0], Tm);
+      }
+    });
+    const m1 = MUL(Tm, g.ctm), p1 = MPT(m1, 0, g.Ts);
+    runs.push({o, p0, p1, fs:Math.abs(g.fs) * Math.hypot(m0[2], m0[3]), tr:g.Tr, adv, Th, fsText:g.fs, exact:f.exact, Tw:g.Tw, Tc:g.Tc});
+  };
+  for (const o of ops) {
+    const a = o.args;
+    switch (o.op) {
+      case 'q': st.push({...g}); break;
+      case 'Q': if (st.length) g = st.pop(); break;
+      case 'cm': if (a.length >= 6) g.ctm = MUL(a.slice(-6).map(num), g.ctm); break;
+      case 'BT': Tm = Tlm = [1, 0, 0, 1, 0, 0]; break;
+      case 'Td': Tlm = MUL([1, 0, 0, 1, num(a[0]), num(a[1])], Tlm); Tm = Tlm; break;
+      case 'TD': g.TL = -num(a[1]); Tlm = MUL([1, 0, 0, 1, num(a[0]), num(a[1])], Tlm); Tm = Tlm; break;
+      case 'Tm': if (a.length >= 6) { Tlm = a.slice(-6).map(num); Tm = Tlm; } break;
+      case 'T*': nextLine(); break;
+      case 'Tf': g.font = a[0] && a[0].name; g.fs = num(a[1]); break;
+      case 'Tc': g.Tc = num(a[0]); break;
+      case 'Tw': g.Tw = num(a[0]); break;
+      case 'Tz': g.Tz = num(a[0]); break;
+      case 'TL': g.TL = num(a[0]); break;
+      case 'Ts': g.Ts = num(a[0]); break;
+      case 'Tr': g.Tr = num(a[0]); break;
+      case 'Tj': show(o, [a[0]]); break;
+      case "'": nextLine(); show(o, [a[0]]); break;
+      case '"': g.Tw = num(a[0]); g.Tc = num(a[1]); nextLine(); show(o, [a[2]]); break;
+      case 'TJ': show(o, Array.isArray(a[0]) ? a[0] : []); break;
+    }
+  }
+  return runs;
+}
+function pageContentBytes(doc, page){
+  const c = page.node.get(PDFName.of('Contents')); if (!c) return null;
+  const v = doc.context.lookup(c), list = v instanceof PDFArray ? v.asArray().map(r => doc.context.lookup(r)) : [v];
+  const parts = [];
+  for (const s of list) {
+    if (!s) continue;
+    try { parts.push(s instanceof PDFLib.PDFRawStream ? PDFLib.decodePDFRawStream(s).decode() : s.getUnencodedContents ? s.getUnencodedContents() : s.getContents()); }
+    catch (_) { return null; }
+    parts.push(enc8('\n'));
+  }
+  return concatBytes(parts);
+}
+function concatBytes(parts){ const n = parts.reduce((t, p) => t + p.length, 0), out = new Uint8Array(n); let k = 0; parts.forEach(p => { out.set(p, k); k += p.length; }); return out; }
+// take the text inside box U (PDF units) out of page i; returns how many text operators were removed
+function removePageText(doc, i, U){
+  const page = doc.getPage(i), bytes = pageContentBytes(doc, page); if (!bytes) return 0;
+  const hits = locateTextOps(doc, page, bytes).filter(r => {
+    const fs = r.fs || 1, x0 = Math.min(r.p0[0], r.p1[0]), x1 = Math.max(r.p0[0], r.p1[0], x0 + fs * .3), y0 = Math.min(r.p0[1], r.p1[1]) - fs * .2, y1 = Math.max(r.p0[1], r.p1[1]) + fs * .8;
+    const ix = Math.max(0, Math.min(x1, U.x1) - Math.max(x0, U.x0)), iy = Math.max(0, Math.min(y1, U.y1) - Math.max(y0, U.y0));
+    return ix * iy >= .5 * (x1 - x0) * (y1 - y0);
+  }).sort((a, b) => a.o.s - b.o.s);
+  if (!hits.length) return 0;
+  const parts = []; let pos = 0;
+  hits.forEach(r => {
+    parts.push(bytes.subarray(pos, r.o.s));
+    const k = r.fsText * r.Th, op = r.o.op;
+    const lead = op === "'" ? 'T* ' : op === '"' ? `${r.Tw} Tw ${r.Tc} Tc T* ` : '';
+    if (r.exact && Math.abs(k) > 1e-6) parts.push(enc8(` ${lead}[${(-r.adv * 1000 / k).toFixed(3)}] TJ `));   // same advance, no glyphs
+    else parts.push(enc8(` /PDFE_Hide BMC ${r.tr >= 4 ? 7 : 3} Tr `), bytes.subarray(r.o.s, r.o.e), enc8(` ${r.tr} Tr EMC `));
+    pos = r.o.e;
+  });
+  parts.push(bytes.subarray(pos));
+  page.node.set(PDFName.of('Contents'), doc.context.register(doc.context.flateStream(concatBytes(parts))));
+  return hits.length;
+}
+
+/* ---------------- picking text on the page ---------------- */
+const TXT_CACHE = new Map();
+function pageTextItems(i){
+  const key = S.version + ':' + i;
+  if (TXT_CACHE.has(key)) return TXT_CACHE.get(key);
+  if (TXT_CACHE.size > 40) TXT_CACHE.clear();
+  const pg = S.pages[i];
+  const p = pg.page.getTextContent({includeMarkedContent:true}).then(tc => {
+    const out = []; let hide = 0;
+    for (const it of tc.items) {
+      if (it.type === 'beginMarkedContent' || it.type === 'beginMarkedContentProps') { if (hide || it.tag === 'PDFE_Hide') hide++; continue; }
+      if (it.type === 'endMarkedContent') { if (hide) hide--; continue; }
+      if (hide || !it.str || !it.str.trim()) continue;
+      const [a, b, c, d, e, f] = it.transform;
+      if (Math.abs(b) > Math.abs(a) * .02 || Math.abs(c) > Math.abs(d) * .02 || a <= 0 || d <= 0) continue;   // horizontal text only
+      const fs = Math.abs(d), sty = tc.styles[it.fontName] || {}, asc = sty.ascent || .88, desc = sty.descent != null ? sty.descent : -.22;
+      const w = it.width || it.str.length * fs * .5;
+      const q = [pg.vp1.convertToViewportPoint(e, f + fs * desc), pg.vp1.convertToViewportPoint(e + w, f + fs * asc)], b0 = pg.vp1.convertToViewportPoint(e, f), b1 = pg.vp1.convertToViewportPoint(e + w, f);
+      if (Math.abs(b0[1] - b1[1]) > 1) continue;   // shows vertical on a rotated page
+      out.push({str:it.str, fs, font:it.fontName, base:f, x0:e, x1:e + w, y0:f + fs * desc, y1:f + fs * asc,
+        v:{x:Math.min(q[0][0], q[1][0]), y:Math.min(q[0][1], q[1][1]), w:Math.abs(q[1][0] - q[0][0]), h:Math.abs(q[1][1] - q[0][1])}, vb:b0[1]});
+    }
+    return out;
+  }).catch(() => []);
+  TXT_CACHE.set(key, p); return p;
+}
+const inBox = (p, v, pad = 0) => p.x >= v.x - pad && p.x <= v.x + v.w + pad && p.y >= v.y - pad && p.y <= v.y + v.h + pad;
+const boxHit = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+// the line around one piece of text: same baseline, no big gap
+function lineOf(items, it){
+  const same = items.filter(o => Math.abs(o.base - it.base) < it.fs * .35 && Math.abs(o.fs - it.fs) < it.fs * .35).sort((a, b) => a.x0 - b.x0);
+  let k = same.indexOf(it), lo = k, hi = k;
+  while (lo > 0 && same[lo].x0 - same[lo - 1].x1 < it.fs * 1.6) lo--;
+  while (hi < same.length - 1 && same[hi + 1].x0 - same[hi].x1 < it.fs * 1.6) hi++;
+  return same.slice(lo, hi + 1);
+}
+function groupLines(items){
+  const rows = [];
+  [...items].sort((a, b) => b.base - a.base || a.x0 - b.x0).forEach(it => {
+    const r = rows.find(r => Math.abs(r.base - it.base) < it.fs * .35); if (r) r.items.push(it); else rows.push({base:it.base, items:[it]});
+  });
+  rows.forEach(r => r.items.sort((a, b) => a.x0 - b.x0));
+  return rows;
+}
+let TXH = null;   // hover / selection highlight layer
+function showTextMarks(i, list, cls = 'txhov'){
+  clearTextMarks();
+  if (!list.length || !S.els[i]) return;
+  const pg = S.pages[i], ovl = S.els[i].querySelector('.ovl');
+  TXH = list.map(it => { const d = document.createElement('div'); d.className = cls;
+    Object.assign(d.style, {left:it.v.x / pg.w * 100 + '%', top:it.v.y / pg.h * 100 + '%', width:it.v.w / pg.w * 100 + '%', height:it.v.h / pg.h * 100 + '%'});
+    ovl.appendChild(d); return d; });
+}
+function clearTextMarks(){ if (TXH) TXH.forEach(d => d.remove()); TXH = null; }
+// colours under the text: the most common colour round the edge is the background, the most different one is the ink
+function sampleTextColors(i, v){
+  const c = S.els[i] && S.els[i].querySelector('canvas.pc'); if (!c) return {fg:'#1f2328', bg:'#ffffff'};
+  const pg = S.pages[i], k = c.width / pg.w, x = Math.max(0, Math.floor((v.x - 1) * k)), y = Math.max(0, Math.floor((v.y - 1) * k));
+  const w = Math.max(1, Math.min(c.width - x, Math.ceil((v.w + 2) * k))), h = Math.max(1, Math.min(c.height - y, Math.ceil((v.h + 2) * k)));
+  let d; try { d = c.getContext('2d').getImageData(x, y, w, h).data; } catch (_) { return {fg:'#1f2328', bg:'#ffffff'}; }
+  const q = (o) => ((d[o] >> 4) << 8) | ((d[o + 1] >> 4) << 4) | (d[o + 2] >> 4), cnt = new Map();
+  for (let xx = 0; xx < w; xx++) for (const yy of [0, h - 1]) { const o = (yy * w + xx) * 4, key = q(o); cnt.set(key, (cnt.get(key) || 0) + 1); }
+  for (let yy = 0; yy < h; yy++) for (const xx of [0, w - 1]) { const o = (yy * w + xx) * 4, key = q(o); cnt.set(key, (cnt.get(key) || 0) + 1); }
+  let bk = 0xfff, best = -1; cnt.forEach((n, key) => { if (n > best) { best = n; bk = key; } });
+  const br = ((bk >> 8) & 15) * 17, bgc = ((bk >> 4) & 15) * 17, bb = (bk & 15) * 17;
+  let far = 0, fg = [31, 35, 40];
+  for (let o = 0; o < d.length; o += 4) { const dist = Math.abs(d[o] - br) + Math.abs(d[o + 1] - bgc) + Math.abs(d[o + 2] - bb); if (dist > far) { far = dist; fg = [d[o], d[o + 1], d[o + 2]]; } }
+  const hx = a => '#' + a.map(v => pad2(v.toString(16))).join('');
+  return {fg:hx(fg), bg:hx([br, bgc, bb])};
+}
+async function editPageText(i, items, {selectAll = false} = {}){
+  await tbSaving;
+  if (!items.length || !S.pages[i]) return;
+  const rows = groupLines(items), pg = S.pages[i];
+  const U = {x0:Math.min(...items.map(t => t.x0)) - .5, x1:Math.max(...items.map(t => t.x1)) + .5, y0:Math.min(...items.map(t => t.y0)) - .5, y1:Math.max(...items.map(t => t.y1)) + .5};
+  const vx = Math.min(...items.map(t => t.v.x)), vy = Math.min(...items.map(t => t.v.y));
+  const vU = {x:vx, y:vy, w:Math.max(...items.map(t => t.v.x + t.v.w)) - vx, h:Math.max(...items.map(t => t.v.y + t.v.h)) - vy};
+  const col = sampleTextColors(i, vU);
+  const sizes = items.map(t => t.fs).sort((a, b) => a - b), size = Math.round(sizes[sizes.length >> 1] * 10) / 10;
+  let fontName = '';
+  try { const f = pg.page.commonObjs.has(items[0].font) && pg.page.commonObjs.get(items[0].font); fontName = f ? (f.name || '') + (f.bold ? ' bold' : '') + (f.italic ? ' italic' : '') : ''; } catch (_) {}
+  const bold = /bold|black|heavy|semibold|demi|w[6-9]\b/i.test(fontName), italic = /italic|oblique/i.test(fontName);
+  const lines = rows.map(r => {
+    let text = '';
+    r.items.forEach((t, k) => { if (k && t.x0 - r.items[k - 1].x1 > t.fs * .2 && !/\s$/.test(text) && !/^\s/.test(t.str)) text += ' '; text += t.str; });
+    return [{text, size, color:col.fg, bg:'', bold, italic, underline:false}];
+  });
+  const top = Math.min(...rows[0].items.map(t => t.vb));
+  openTextEditor(i, vU.x - TB_PAD, top - TB_PAD - size * 1.01, {lines, box:{boxBg:'', border:false}, veilBox:{x:vU.x - 1, y:vU.y - 1, w:vU.w + 2, h:vU.h + 2}, veilColor:col.bg,
+    edit:{U, bg:col.bg, orig:JSON.stringify(lines)}, selectAll});
+  clearTextMarks();
+}
+// textbox mode: click text to edit its line, drag across text to pick several lines, click empty space for a new box
+function textboxDown(i, e){
+  if (performance.now() - tbCommittedAt < 250) return;
+  const p0 = pagePoint(i, e), sx = e.clientX, sy = e.clientY, itemsP = pageTextItems(i);
+  let items = [], rect = null, picked = [], band = null;
+  itemsP.then(v => { items = v; });
+  const mv = ev => {
+    if (!rect && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) return;
+    const p = pagePoint(i, ev);
+    rect = {x:Math.min(p0.x, p.x), y:Math.min(p0.y, p.y), w:Math.abs(p.x - p0.x), h:Math.abs(p.y - p0.y)};
+    if (!band) { band = document.createElement('div'); band.className = 'txband'; S.els[i].querySelector('.ovl').appendChild(band); }
+    const pg = S.pages[i]; Object.assign(band.style, {left:rect.x / pg.w * 100 + '%', top:rect.y / pg.h * 100 + '%', width:rect.w / pg.w * 100 + '%', height:rect.h / pg.h * 100 + '%'});
+    picked = items.filter(t => boxHit(t.v, rect)); showTextMarks(i, picked, 'txsel');
+  };
+  const up = async () => {
+    window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); band && band.remove();
+    items = await itemsP;
+    if (rect) picked = items.filter(t => boxHit(t.v, rect));
+    if (rect) { if (picked.length) editPageText(i, picked, {selectAll:true}); else clearTextMarks(); return; }
+    // a plain click
+    await tbSaving;
+    const hit = (await getAnns(i)).filter(a => a.subtype === 'FreeText' && inBox(p0, a)).pop();
+    if (hit) { editTextBox(i, hit); return; }
+    const it = items.find(t => inBox(p0, t.v, 1));
+    if (it) { editPageText(i, lineOf(items, it)); return; }
+    const pg = S.pages[i], lh = TB_STYLE.size * 1.3;
+    openTextEditor(i, clamp(p0.x - TB_PAD, 0, pg.w - 20), clamp(p0.y - lh / 2 - TB_PAD, 0, pg.h - lh));
+  };
+  window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
+}
+// hover feedback in textbox mode
+let txHoverT = 0;
+function textboxHover(e){
+  if (S.tool !== 'textbox' || TBE || e.buttons) { if (TXH && !e.buttons) clearTextMarks(); return; }
+  const pel = e.target.closest && e.target.closest('.page'); if (!pel) { clearTextMarks(); return; }
+  const now = performance.now(); if (now - txHoverT < 40) return; txHoverT = now;
+  const i = +pel.dataset.i, p = pagePoint(i, e);
+  pageTextItems(i).then(items => {
+    if (S.tool !== 'textbox' || TBE) return;
+    const it = items.find(t => inBox(p, t.v, 1));
+    pel.classList.toggle('over-text', !!it);
+    if (it) showTextMarks(i, lineOf(items, it)); else clearTextMarks();
+  });
 }
 
 /* ---------------- 插入圖片 ---------------- */
@@ -4798,11 +5181,16 @@ function selectAnnot(i, a){
   AS = {i, a, box:{x:a.x, y:a.y, w:a.w, h:a.h}, el, bar, movable, resizable, keep:a.subtype === 'Stamp'};
   const hp = {nw:[0, 0], n:[50, 0], ne:[100, 0], e:[100, 50], se:[100, 100], s:[50, 100], sw:[0, 100], w:[0, 50]};
   el.querySelectorAll('.h').forEach(h => { const [x, y] = hp[h.dataset.d]; h.style.left = x + '%'; h.style.top = y + '%'; });
-  el.addEventListener('pointerdown', e => { if (e.button !== 0 || S.spaceDown) return; e.preventDefault(); e.stopPropagation(); if (AS && AS.movable) dragAnnot(e, e.target.dataset.d || 'move'); });
+  el.addEventListener('pointerdown', e => { if (e.button !== 0 || S.spaceDown) return; e.preventDefault(); e.stopPropagation();
+    if (!AS || !AS.movable) return;
+    if (e.target.closest('.rh')) return geomDrag(e, 'rot');
+    if (e.target.closest('.eh')) return geomDrag(e, 'end', +e.target.closest('.eh').dataset.e);
+    dragAnnot(e, e.target.dataset.d || 'move'); });
   bar.addEventListener('pointerdown', e => e.stopPropagation());
   bar.addEventListener('click', e => { if (e.target.closest('[data-x="del"]')) deleteSelected(); if (e.target.closest('[data-x="edit"]')) { deselectAnnot(); editTextBox(i, a); } });
   drawASel();
   addLayerPicker(i, a);
+  addGeomHandles(i, a);
 }
 function drawASel(){
   if (!AS) return;
@@ -4945,6 +5333,117 @@ async function commitAnnotBox(i, a, ob, nb){
     if (a2 && S.els[i]) selectAnnot(i, a2);
   }
 }
+/* ---------------- rotate lines / arrows / polylines / pen strokes; drag a line's end points ---------------- */
+const ROT_SUBS = new Set(['Line', 'PolyLine', 'Polygon', 'Ink']);
+let GEO_DOC = {bytes:null, p:null};
+function geoDoc(){
+  if (GEO_DOC.bytes !== S.bytes) GEO_DOC = {bytes:S.bytes, p:PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false})};
+  return GEO_DOC.p;
+}
+async function annGeom(i, id){
+  try {
+    const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); if (!ref) return null;
+    const d = doc.context.lookup(ref, PDFDict), sub = String(d.get(PDFName.of('Subtype'))).slice(1);
+    if (sub === 'Line') { const L = d.lookupMaybe(PDFName.of('L'), PDFArray); return L ? [flatPts(i, numArr(L))] : null; }
+    if (sub === 'Polygon' || sub === 'PolyLine') { const v = d.lookupMaybe(PDFName.of('Vertices'), PDFArray); return v ? [flatPts(i, numArr(v))] : null; }
+    if (sub === 'Ink') { const k = d.lookupMaybe(PDFName.of('InkList'), PDFArray); return k ? k.asArray().map(s => flatPts(i, numArr(doc.context.lookup(s)))) : null; }
+  } catch (_) {}
+  return null;
+}
+async function addGeomHandles(i, a){
+  if (!ROT_SUBS.has(a.subtype)) return;
+  const geo = await annGeom(i, a.id);
+  if (!AS || AS.a !== a || !geo || !geo.flat().length) return;
+  AS.geo = geo;
+  const el = AS.el, box = AS.box;
+  if (a.subtype === 'Line') {   // a line is edited by its two ends instead of a frame
+    el.querySelectorAll('.h').forEach(h => h.remove());
+    geo[0].forEach((p, k) => { const h = document.createElement('div'); h.className = 'eh'; h.dataset.e = k; h.title = '拖曳端點改變方向與長度（Shift：45° 角）';
+      h.style.left = (p.x - box.x) / box.w * 100 + '%'; h.style.top = (p.y - box.y) / box.h * 100 + '%'; el.appendChild(h); });
+  }
+  const r = document.createElement('div'); r.className = 'rh'; r.title = '拖曳旋轉（Shift：每 15°）';
+  r.innerHTML = '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg>';
+  el.appendChild(r);
+  const hint = AS.bar.querySelector('.hintk'); if (hint) hint.textContent = a.subtype === 'Line' ? '拖曳移動・端點改方向・↻ 旋轉' : '拖曳移動・把手調整大小・↻ 旋轉';
+}
+const centerOf = pts => { const xs = pts.map(p => p.x), ys = pts.map(p => p.y); return {x:(Math.min(...xs) + Math.max(...xs)) / 2, y:(Math.min(...ys) + Math.max(...ys)) / 2}; };
+const rotPts = (strokes, c, deg) => { const r = deg * Math.PI / 180, co = Math.cos(r), si = Math.sin(r);
+  return strokes.map(s => s.map(p => ({x:c.x + (p.x - c.x) * co - (p.y - c.y) * si, y:c.y + (p.x - c.x) * si + (p.y - c.y) * co}))); };
+function geomDrag(e, mode, k){
+  const {i, a} = AS, pg = S.pages[i], s0 = {...AS.box}, g0 = AS.geo, c = centerOf(g0.flat());
+  const p0 = pagePointXY(i, e.clientX, e.clientY), ang0 = Math.atan2(p0.y - c.y, p0.x - c.x);
+  let cur = g0, deg = 0, moved = false;
+  const ovl = S.els[i].querySelector('.ovl');
+  const veil = document.createElement('div'); veil.className = 'aveil';
+  Object.assign(veil.style, {left:s0.x / pg.w * 100 + '%', top:s0.y / pg.h * 100 + '%', width:s0.w / pg.w * 100 + '%', height:s0.h / pg.h * 100 + '%'});
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('class', 'geoprev'); svg.setAttribute('viewBox', `0 0 ${pg.w} ${pg.h}`); svg.setAttribute('preserveAspectRatio', 'none');
+  const lab = document.createElement('div'); lab.className = 'rlabel';
+  const draw = () => {
+    const u = 1 / S.scale;
+    svg.innerHTML = cur.map(s => `<polyline points="${s.map(p => p.x + ',' + p.y).join(' ')}" fill="none" stroke="#1c64d9" stroke-width="${2 * u}" stroke-dasharray="${5 * u} ${3 * u}"/>`).join('') +
+      (a.subtype === 'Line' ? cur[0].map(p => `<circle cx="${p.x}" cy="${p.y}" r="${4 * u}" fill="#fff" stroke="#1c64d9" stroke-width="${1.5 * u}"/>`).join('') : '') +
+      (mode === 'rot' ? `<circle cx="${c.x}" cy="${c.y}" r="${3 * u}" fill="#1c64d9"/>` : '');
+    const q = cur.flat(), top = Math.min(...q.map(p => p.y)), mid = centerOf(q);
+    lab.style.left = mid.x / pg.w * 100 + '%'; lab.style.top = top / pg.h * 100 + '%';
+    if (mode === 'rot') lab.textContent = Math.round(deg) + '°';
+    else { const [A, B] = cur[0]; lab.textContent = `${Math.round((Math.atan2(-(B.y - A.y), B.x - A.x) * 180 / Math.PI + 360) % 360)}°・${(Math.hypot(B.x - A.x, B.y - A.y) / MM).toFixed(1)} mm`; }
+  };
+  const move = ev => {
+    if (!moved) { if (Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return; moved = true; ovl.appendChild(veil); ovl.appendChild(svg); ovl.appendChild(lab); AS.el.style.visibility = 'hidden'; AS.bar.style.visibility = 'hidden'; }
+    const p = pagePointXY(i, ev.clientX, ev.clientY);
+    if (mode === 'rot') {
+      deg = (Math.atan2(p.y - c.y, p.x - c.x) - ang0) * 180 / Math.PI;
+      deg = ((deg + 540) % 360) - 180;
+      if (ev.shiftKey) deg = Math.round(deg / 15) * 15;
+      else { const n = Math.round(deg / 45) * 45; if (Math.abs(n - deg) < 2) deg = n; }
+      cur = rotPts(g0, c, deg);
+    } else {
+      const other = g0[0][1 - k]; let q = ev.shiftKey ? constrain45(other, p) : snapPoint(i, p);
+      cur = [k ? [other, q] : [q, other]];
+    }
+    draw();
+  };
+  const up = async ev => {
+    if (moved) move(ev);   // the release point decides
+    window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+    veil.remove(); svg.remove(); lab.remove(); clearSnapMarks();
+    if (!AS) return;
+    AS.el.style.visibility = ''; AS.bar.style.visibility = '';
+    if (!moved || (mode === 'rot' && Math.abs(deg) < .2)) return;
+    await commitGeom(i, a, cur, mode === 'rot' ? '已旋轉' : '已調整線條');
+  };
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+}
+async function commitGeom(i, a, strokes, label){
+  const id = a.id;
+  deselectAnnot();
+  const ok = await mutate(label, doc => {
+    const ref = findAnnotRef(doc, i, id); if (!ref) { toast('找不到此註解', 'err'); return false; }
+    const ctx = doc.context, dict = ctx.lookup(ref, PDFDict), N = k => PDFName.of(k), sub = String(dict.get(N('Subtype'))).slice(1);
+    const st = readAnnStyle(dict);
+    if (sub === 'Line') dict.set(N('L'), ctx.obj(toPdfPts(i, strokes[0])));
+    else if (sub === 'Ink') dict.set(N('InkList'), ctx.obj(strokes.map(s => toPdfPts(i, s))));
+    else dict.set(N('Vertices'), ctx.obj(toPdfPts(i, strokes[0])));
+    dict.set(N('M'), nowStr());
+    if (dict.get(N('PDFE'))) {   // our own drawing: redraw it crisply at the new angle
+      let geom;
+      if (sub === 'Line') {
+        const le = dict.lookupMaybe(N('LE'), PDFArray), names = le ? le.asArray().map(String) : ['/None', '/None'];
+        st.head = names[0] !== '/None' ? 'both' : names[1] === '/ClosedArrow' ? 'closed' : 'open';
+        geom = geomLine(strokes[0][0], strokes[0][1], st, names[1] !== '/None');
+      } else if (sub === 'Ink') geom = geomInk(strokes, st);
+      else geom = geomPoly(strokes[0], st, sub === 'Polygon');
+      dict.set(N('Rect'), ctx.obj(visToPdf(i, geom.b).rect));
+      dict.set(N('AP'), ctx.obj({N:formAP(doc, geom.ops, geom.b.w, geom.b.h, S.pages[i].rot, gsRes(st))}));
+    } else {   // someone else's drawing: new geometry and frame; the viewer redraws it
+      const pad = (st.width || 1) * 4 + 2, q = strokes.flat(), xs = q.map(p => p.x), ys = q.map(p => p.y);
+      const b = {x:Math.min(...xs) - pad, y:Math.min(...ys) - pad, w:Math.max(...xs) - Math.min(...xs) + 2 * pad, h:Math.max(...ys) - Math.min(...ys) + 2 * pad};
+      dict.set(N('Rect'), ctx.obj(visToPdf(i, b).rect)); dict.delete(N('AP'));
+    }
+  });
+  if (ok && S.tool === 'select') { const a2 = (await getAnns(i)).find(x => x.id === id); if (a2 && S.els[i]) selectAnnot(i, a2); }
+}
+
 // sticky-note icons: click opens the note, dragging moves it
 function noteIconDown(ev, i, a){
   const x0 = ev.clientX, y0 = ev.clientY;
@@ -5288,9 +5787,9 @@ async function openDigiSign(i, box){
     <div class="field"><label>地點</label><input type="text" id="dsLoc" placeholder="例如：台北"></div>
     <div class="field"><label>聯絡方式</label><input type="text" id="dsContact" placeholder="選填"></div></div>
   <label class="chk" style="padding:0;${S.sigImg ? '' : 'display:none'}"><input type="checkbox" id="dsHand" checked> 簽章外觀加上我的手寫簽名</label>
-  <div class="note warn" style="margin-top:10px">數位簽章必須是最後一個步驟：簽署後若再修改文件，簽章就會失效。簽署完成後會${S.handle && S.autoWrite ? '直接存回原檔' : '下載已簽署的 PDF'}。</div>`;
+  <div class="note warn" style="margin-top:10px">數位簽章必須是最後一個步驟：簽署後若再修改文件，簽章就會失效。簽署完成後會另存成新的 PDF 檔，原檔不會被修改。</div>`;
   primeWrite();
-  const res = await openModal({title:'數位簽章', body:f, width:560, buttons:[{label:'取消', value:false}, {label:S.handle && S.autoWrite ? '簽署並存回原檔' : '簽署並下載', primary:true, id:'dsGo', handler:async btn => {
+  const res = await openModal({title:'數位簽章', body:f, width:560, buttons:[{label:'取消', value:false}, {label:'簽署並另存新檔', primary:true, id:'dsGo', handler:async btn => {
     const mode = f.querySelector('input[name=cm]:checked').value;
     btn.disabled = true; const oldTxt = btn.textContent;
     try {
@@ -5325,9 +5824,7 @@ async function openDigiSign(i, box){
     setTool('select');
     busy(false);
     toast('數位簽章完成');
-    if (S.handle && S.autoWrite) { await writeBack(out); return; }
-    const fn = S.name.replace(/\.pdf$/i, '') + '_已簽署.pdf';
-    if (await saveFile(fn, new Blob([out], {type:'application/pdf'}))) { S.dirty = false; updateUI(); }
+    await saveAsNew(out, '_已簽署');
   } catch (e) { console.error(e); toast('簽署失敗：' + (e.message || e), 'err'); }
   finally { busy(false); }
 }
@@ -6176,7 +6673,7 @@ function updateMessage(){
   }
 }
 async function installUpdate(){
-  if (anyDirty() && !(await confirmDlg('安裝更新', '文件有尚未儲存的修改，重新啟動後這些修改會遺失。要繼續更新嗎？（建議先按「儲存」）', '仍要更新'))) return;
+  if (anyDirty() && !(await confirmDlg('安裝更新', '文件有尚未儲存的修改，重新啟動後這些修改會遺失。要繼續更新嗎？（建議先按「另存新檔」）', '仍要更新'))) return;
   S.dirty = false; docs.forEach(d => d.dirty = false);
   toast('正在重新啟動並安裝更新…');
   await DESK.update.install();
@@ -6256,7 +6753,7 @@ function showThemeMenu(){
 document.addEventListener('pointerdown', e => { const m = $('#themeMenu'); if (m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('#bTheme')) m.style.display = 'none'; }, true);
 if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyTheme();
 paintSplitButtons();
-window.__pdfapp = {S, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box}};
+window.__pdfapp = {S, setTool, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box}};
 </script>
 </body>
 </html>

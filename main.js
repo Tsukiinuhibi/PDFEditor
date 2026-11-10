@@ -139,13 +139,21 @@ ipcMain.handle('file:write', async (_e, p, data) => {
   catch (err) { await fs.copyFile(tmp, p); await fs.unlink(tmp).catch(() => {}); }
   return true;
 });
-ipcMain.handle('file:save-as', async (_e, suggested, data) => {
+ipcMain.handle('file:save-as', async (_e, suggested, data, opts) => {
   const ext = (path.extname(suggested).slice(1) || 'bin').toLowerCase();
-  const r = await dialog.showSaveDialog(win, {
-    title: '另存新檔', defaultPath: suggested,
-    filters: [{ name: ext.toUpperCase() + ' 檔案', extensions: [ext] }, { name: '所有檔案', extensions: ['*'] }],
-  });
-  if (r.canceled || !r.filePath) return null;
+  const avoid = ((opts && opts.avoid) || []).map(p => path.resolve(p).toLowerCase());
+  let r;
+  for (;;) {
+    r = await dialog.showSaveDialog(win, {
+      title: '另存新檔', defaultPath: suggested,
+      filters: [{ name: ext.toUpperCase() + ' 檔案', extensions: [ext] }, { name: '所有檔案', extensions: ['*'] }],
+    });
+    if (r.canceled || !r.filePath) return null;
+    if (!avoid.includes(path.resolve(r.filePath).toLowerCase())) break;
+    // never write over the file that was opened for editing
+    await dialog.showMessageBox(win, { type: 'warning', title: '不能覆蓋原檔', message: '不能存回原本的檔案', detail: '修改後的內容一律另存新檔，請換一個檔名或位置。', buttons: ['重新選擇'] });
+    suggested = r.filePath.replace(/(\.[^.\\/]+)?$/, '_已編輯$1');
+  }
   await fs.writeFile(r.filePath, toBuf(data));
   allowDir(path.dirname(r.filePath));
   return r.filePath;
