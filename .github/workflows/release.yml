@@ -1,7 +1,9 @@
 name: Build & Release
 
 # A new release is built whenever the version in package.json on main changes
-# (or when run by hand from the Actions tab). The tag vX.Y.Z is created with the release.
+# (or when run by hand from the Actions tab).
+# The installer is built here on GitHub's Windows machines and published to the Forgejo
+# server named in package.json (updateServer), which is where the app looks for updates.
 on:
   push:
     branches: [main]
@@ -18,56 +20,96 @@ concurrency:
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+      # GitHub Releases is only kept for the hand-over release that moves older installs to Forgejo
+      PUBLISH_GITHUB: 'true'
     steps:
       - uses: actions/checkout@v4
 
-      - name: Read version and skip if already released
+      - name: Read version and see what still has to be published
         id: ver
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VER="v$(node -p "require('./package.json').version")"
-          echo "tag=$VER" >> "$GITHUB_OUTPUT"
-          # a release counts as done only when the updater manifest (latest.yml) is attached
-          if gh release view "$VER" --json assets -q '.assets[].name' 2>/dev/null | grep -qx 'latest.yml'; then
-            echo "Release $VER is complete, nothing to do."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+          TAG="v$(node -p "require('./package.json').version")"
+          HOST=$(node -p "(require('./package.json').updateServer || {}).host || ''")
+          REPO=$(node -p "(require('./package.json').updateServer || {}).repo || ''")
+          { echo "tag=$TAG"; echo "host=$HOST"; echo "repo=$REPO"; } >> "$GITHUB_OUTPUT"
+          FJ=false
+          if [ -n "$HOST" ]; then
+            if [ -z "$FORGEJO_TOKEN" ]; then echo "::error::GitHub secret FORGEJO_TOKEN is missing"; exit 1; fi
+            # a release counts as done only when the updater manifest (latest.yml) is attached
+            if curl -fsS -H "Authorization: token $FORGEJO_TOKEN" "$HOST/api/v1/repos/$REPO/releases/tags/$TAG" 2>/dev/null | grep -q '"name":"latest.yml"'; then
+              echo "Forgejo release $TAG is complete."
+            else FJ=true; fi
           fi
+          GHP=false
+          if [ "$PUBLISH_GITHUB" = "true" ] && ! gh release view "$TAG" --json assets -q '.assets[].name' 2>/dev/null | grep -qx 'latest.yml'; then GHP=true; fi
+          BUILD=false; if [ "$FJ" = true ] || [ "$GHP" = true ]; then BUILD=true; fi
+          { echo "forgejo=$FJ"; echo "github=$GHP"; echo "build=$BUILD"; } >> "$GITHUB_OUTPUT"
+          echo "forgejo=$FJ github=$GHP"
 
       - uses: actions/setup-node@v4
-        if: steps.ver.outputs.skip == 'false'
+        if: steps.ver.outputs.build == 'true'
         with:
           node-version: 22
           cache: npm
 
       - run: npm ci
-        if: steps.ver.outputs.skip == 'false'
+        if: steps.ver.outputs.build == 'true'
 
-      - name: Create tag and release
-        if: steps.ver.outputs.skip == 'false'
+      - name: Build installer
+        if: steps.ver.outputs.build == 'true'
+        run: npx electron-builder --win --publish never
+
+      - name: Publish to Forgejo
+        if: steps.ver.outputs.forgejo == 'true'
+        shell: bash
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+          HOST: ${{ steps.ver.outputs.host }}
+          REPO: ${{ steps.ver.outputs.repo }}
+        run: |
+          set -euo pipefail
+          API="$HOST/api/v1/repos/$REPO"; AUTH="Authorization: token $FORGEJO_TOKEN"
+          json() { node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const v=($1)(JSON.parse(s));process.stdout.write(v==null?'':String(v))}catch(e){}})"; }
+          export BRANCH=$(curl -fsS -H "$AUTH" "$API" | json 'j=>j.default_branch')
+          ID=$(curl -sS -H "$AUTH" "$API/releases/tags/$TAG" | json 'j=>j.id')
+          if [ -z "$ID" ]; then
+            # created as a draft, so clients only see it once every file is in place
+            BODY=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify({tag_name:process.env.TAG,target_commitish:process.env.BRANCH,name:'PDF 工作台 '+process.env.TAG,body:fs.existsSync('RELEASE_NOTES.md')?fs.readFileSync('RELEASE_NOTES.md','utf8'):'',draft:true}))")
+            ID=$(curl -fsS -X POST -H "$AUTH" -H "Content-Type: application/json" -d "$BODY" "$API/releases" | json 'j=>j.id')
+          fi
+          echo "Forgejo release id $ID"
+          EXISTING=$(curl -fsS -H "$AUTH" "$API/releases/$ID/assets" | json "a=>a.map(x=>x.id+' '+x.name).join('\n')")
+          # the installer first, the manifest last
+          for f in dist/*.exe dist/*.exe.blockmap dist/latest.yml; do
+            name=$(basename "$f")
+            old=$(printf '%s\n' "$EXISTING" | awk -v n="$name" '$2==n{print $1}')
+            if [ -n "$old" ]; then curl -fsS -X DELETE -H "$AUTH" "$API/releases/$ID/assets/$old"; fi
+            echo "uploading $name"
+            curl -fsS -X POST -H "$AUTH" -F "attachment=@$f" "$API/releases/$ID/assets?name=$name" > /dev/null
+          done
+          curl -fsS -X PATCH -H "$AUTH" -H "Content-Type: application/json" -d '{"draft":false}' "$API/releases/$ID" > /dev/null
+          echo "Published $TAG to $HOST/$REPO"
+
+      - name: Publish to GitHub Releases
+        if: steps.ver.outputs.github == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ver.outputs.tag }}
         run: |
-          TAG="${{ steps.ver.outputs.tag }}"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             NOTES="RELEASE_NOTES.md"; [ -f "$NOTES" ] || { echo "PDF 工作台 $TAG" > /tmp/notes.md; NOTES=/tmp/notes.md; }
             gh release create "$TAG" --target "$GITHUB_SHA" --title "PDF 工作台 $TAG" --notes-file "$NOTES"
-          else
-            echo "Release $TAG exists; assets will be (re)uploaded"
           fi
-
-      - name: Build installer and publish to GitHub Releases
-        if: steps.ver.outputs.skip == 'false'
-        run: npx electron-builder --win --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          gh release upload "$TAG" dist/*.exe dist/*.exe.blockmap dist/latest.yml --clobber
 
       - uses: actions/upload-artifact@v4
-        if: steps.ver.outputs.skip == 'false'
+        if: steps.ver.outputs.build == 'true'
         with:
           name: windows-installer-${{ steps.ver.outputs.tag }}
           path: |

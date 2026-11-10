@@ -225,6 +225,21 @@ let updater = null;
 let updateState = { state: 'idle' };
 function setUpdate(s) { updateState = s; send('update', s); }
 
+// updates come from the Forgejo server named in package.json (updateServer); without it the
+// built-in app-update.yml is used. The newest release is looked up through the Forgejo API and
+// the updater is pointed at that release's download folder (latest.yml + installer).
+const UPD = require('./package.json').updateServer || null;
+async function pointFeed() {
+  if (!UPD) return;
+  const r = await net.fetch(`${UPD.host}/api/v1/repos/${UPD.repo}/releases/latest`, { headers: { Accept: 'application/json' } });
+  if (r.status === 404) throw new Error('更新伺服器上還沒有任何版本');
+  if (!r.ok) throw new Error(`無法連線到更新伺服器（${r.status}）`);
+  const j = await r.json();
+  updater.setFeedURL({ provider: 'generic', url: `${UPD.host}/${UPD.repo}/releases/download/${encodeURIComponent(j.tag_name)}` });
+}
+async function checkNow() { await pointFeed(); return updater.checkForUpdates(); }
+const quietCheck = () => checkNow().catch(e => { if (updateState.state === 'checking' || updateState.state === 'idle') setUpdate({ state: 'error', message: String(e.message || e).split('\n')[0] }); });
+
 function initUpdater() {
   if (isDev) return;
   try { ({ autoUpdater: updater } = require('electron-updater')); } catch (e) { console.error(e); return; }
@@ -238,8 +253,8 @@ function initUpdater() {
   updater.on('update-downloaded', info => setUpdate({ state: 'ready', version: info.version, notes: notesText(info.releaseNotes) }));
   updater.on('error', err => setUpdate({ state: 'error', message: String(err && err.message || err).split('\n')[0] }));
   // check shortly after start, then every 4 hours
-  setTimeout(() => updater.checkForUpdates().catch(() => {}), 4000);
-  setInterval(() => updater.checkForUpdates().catch(() => {}), 4 * 3600 * 1000);
+  setTimeout(quietCheck, 4000);
+  setInterval(quietCheck, 4 * 3600 * 1000);
 }
 function notesText(n) {
   if (!n) return '';
@@ -252,7 +267,7 @@ ipcMain.handle('update:check', async () => {
   if (!updater) return { state: 'error', message: '更新模組無法載入' };
   if (['checking', 'downloading', 'ready'].includes(updateState.state)) return updateState;
   try {
-    const r = await updater.checkForUpdates();
+    const r = await checkNow();
     if (!r) setUpdate({ state: 'unsupported' });   // updater inactive for this install type
   } catch (e) { setUpdate({ state: 'error', message: String(e.message || e).split('\n')[0] }); }
   return updateState;

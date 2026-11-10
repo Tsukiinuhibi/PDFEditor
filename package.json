@@ -1,7 +1,11 @@
 {
   "name": "pdfeditor",
   "productName": "PDF 工作台",
-  "version": "1.0.13",
+  "version": "1.0.14",
+  "updateServer": {
+    "host": "https://forgejo.taiyopen.com",
+    "repo": "tsukiinuhibi/PDFEditor"
+  },
   "description": "PDF 閱讀與編輯工具：頁面增減與插入、圖片擷取裁切、旋轉、附件、註解、手寫簽名與數位簽章",
   "main": "main.js",
   "author": "Tsukiinuhibi",
@@ -81,10 +85,8 @@
     },
     "publish": [
       {
-        "provider": "github",
-        "owner": "Tsukiinuhibi",
-        "repo": "PDFEditor",
-        "releaseType": "release"
+        "provider": "generic",
+        "url": "https://forgejo.taiyopen.com/tsukiinuhibi/PDFEditor/releases/latest/download"
       }
     ]
   }
