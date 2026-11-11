@@ -1,0 +1,23 @@
+name: Forgejo download check
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/diag.yml']
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      T: ${{ secrets.FORGEJO_TOKEN }}
+      H: https://forgejo.taiyopen.com
+      R: tsukiinuhibi/PDFEditor
+    steps:
+      - run: |
+          code() { curl -s -o /tmp/b -w "%{http_code} -> %{redirect_url}" "$@"; echo; head -c 300 /tmp/b | tr '\n' ' '; echo; echo ---; }
+          echo "== anonymous: repo";            code "$H/api/v1/repos/$R"
+          echo "== anonymous: latest release";  code "$H/api/v1/repos/$R/releases/latest"
+          echo "== anonymous: download";        code -I "$H/$R/releases/download/v1.0.16/latest.yml"
+          echo "== anonymous: download (follow)"; curl -sL -o /tmp/y -w "%{http_code} %{url_effective}\n" "$H/$R/releases/download/v1.0.16/latest.yml"; head -c 200 /tmp/y; echo; echo ---
+          echo "== with token: repo flags"; curl -s -H "Authorization: token $T" "$H/api/v1/repos/$R" | python3 -c "import json,sys; j=json.load(sys.stdin); print({k:j.get(k) for k in ['private','internal','has_releases','default_branch','empty']})"
+          echo "== with token: release flags"; curl -s -H "Authorization: token $T" "$H/api/v1/repos/$R/releases/tags/v1.0.16" | python3 -c "import json,sys; j=json.load(sys.stdin); print({k:j.get(k) for k in ['id','draft','prerelease','tag_name']}); print([(a['name'],a['size'],a['browser_download_url']) for a in j.get('assets',[])])"
+          echo "== with token: all releases"; curl -s -H "Authorization: token $T" "$H/api/v1/repos/$R/releases?draft=true&limit=20" | python3 -c "import json,sys; print([(r['tag_name'],r['draft'],len(r['assets'])) for r in json.load(sys.stdin)])"
+          echo "== with token: download"; curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: token $T" -L "$H/$R/releases/download/v1.0.16/latest.yml"
