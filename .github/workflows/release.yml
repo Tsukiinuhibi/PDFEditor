@@ -22,9 +22,9 @@ jobs:
     runs-on: windows-latest
     env:
       FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
-      # v1.0.16 is the hand-over release: it also goes to GitHub Releases so installs that still
-      # look there move over to Forgejo. Set to 'false' after it is out.
-      PUBLISH_GITHUB: 'true'
+      # Updates come from Forgejo. GitHub Releases only carried v1.0.16, the hand-over release
+      # that moved older installs over; set to 'true' to publish there as well.
+      PUBLISH_GITHUB: 'false'
     steps:
       - uses: actions/checkout@v4
 
