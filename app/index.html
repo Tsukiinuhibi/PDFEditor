@@ -1539,7 +1539,8 @@ async function renderRegion(i, box, pxPerPt){
   const vp = pg.page.getViewport({scale:s});
   const c = document.createElement('canvas');
   c.width = Math.max(1, Math.round(box.w * s)); c.height = Math.max(1, Math.round(box.h * s));
-  await pg.page.render({canvasContext:c.getContext('2d'), viewport:vp, transform:[1, 0, 0, 1, -box.x * s, -box.y * s], annotationMode:pdfjsLib.AnnotationMode.DISABLE}).promise;
+  // what is on the page, including everything added to it (shapes, text boxes, stamps, pictures…)
+  await pg.page.render({canvasContext:c.getContext('2d'), viewport:vp, transform:[1, 0, 0, 1, -box.x * s, -box.y * s], annotationMode:pdfjsLib.AnnotationMode.ENABLE}).promise;
   return c;
 }
 function nativeScale(box){
@@ -2315,7 +2316,13 @@ function exportSize(i, dpi){
   if (w * h * k * k > MAX_AREA) k = Math.min(k, Math.sqrt(MAX_AREA / (w * h)));
   return {scale:s * k, w:Math.max(1, Math.round(w * k)), h:Math.max(1, Math.round(h * k)), capped:k < 1};
 }
-async function renderForExport(i, dpi, {transparent, annots}){
+// finish anything still being edited (open note, pen strokes waiting to be saved, text being typed)
+async function settleEdits(){
+  try { await closeNote(true); } catch (_) {}
+  try { await flushPen(); } catch (_) {}
+  try { await commitTextEditor(); await tbSaving; } catch (_) {}
+}
+async function renderForExport(i, dpi, {transparent, annots = true}){
   const pg = S.pages[i], {scale} = exportSize(i, dpi);
   const vp = pg.page.getViewport({scale});
   const c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
@@ -2428,11 +2435,12 @@ const SEPS = {us:'_', dash:'-', space:' ', none:''};
 
 async function openExportImages(){
   if (!S.pdf) return;
+  await settleEdits();
   const n = S.pages.length, pr = loadExpPrefs();
   const st = {
     sel:new Set(selectedPages()), custom:new Map(),
     fmt:IMG_FORMATS[pr.fmt] ? pr.fmt : 'png', dpi:pr.dpi || 150, quality:pr.quality || 92,
-    transparent:!!pr.transparent, annots:pr.annots !== false,
+    transparent:!!pr.transparent, annots:true,   // pages are always exported with everything added to them
     tpl:pr.tpl || '{檔案名稱}_第{頁碼}頁', pad:pr.pad ?? 'auto', policy:pr.policy || 'rename',
     nameMode:pr.nameMode || 'macro',
     macOrder:Array.isArray(pr.macOrder) && pr.macOrder.length === 4 ? pr.macOrder : ['name', 'page', 'date', 'seq'],
@@ -2465,7 +2473,7 @@ async function openExportImages(){
         <div class="field" id="exQF"><label>品質 <span id="exQV"></span></label><input type="range" id="exQ" min="10" max="100" step="1" style="width:140px;padding:0"></div>
       </div>
       <label class="chk" id="exTrF" style="padding:0;margin-right:14px"><input type="checkbox" id="exTr"> 透明背景</label>
-      <label class="chk" style="padding:0"><input type="checkbox" id="exAn"> 包含註解與簽名</label>
+      <span class="chk" style="padding:0;color:var(--ink3)">✓ 包含新增的註解、圖形、文字、圖片與簽名</span>
       <div class="cropinfo" id="exPx"></div>
 
       <div class="ex-h" style="margin-top:14px">3　輸出位置與檔名</div>
@@ -2541,7 +2549,7 @@ async function openExportImages(){
   $b('#exDpiC').oninput = () => { const v = parseInt($b('#exDpiC').value, 10); if (v >= 24 && v <= 1200) { st.dpi = v; refresh(); } };
   $b('#exQ').value = st.quality; $b('#exQ').oninput = () => { st.quality = +$b('#exQ').value; refresh(); };
   $b('#exTr').checked = st.transparent; $b('#exTr').onchange = () => { st.transparent = $b('#exTr').checked; refresh(); };
-  $b('#exAn').checked = st.annots; $b('#exAn').onchange = () => { st.annots = $b('#exAn').checked; };
+
   $b('#exTpl').value = st.tpl; $b('#exTpl').oninput = () => { st.tpl = $b('#exTpl').value; refresh(); };
   body.querySelectorAll('input[name=exNm]').forEach(r => { r.checked = r.value === st.nameMode; r.onchange = () => {
     if (r.value === 'tpl' && st.nameMode === 'macro') { st.tpl = composeTpl(); $b('#exTpl').value = st.tpl; }   // start the template from the current selection
@@ -5611,6 +5619,7 @@ async function removeAttachment(name){
    Image crop dialog
    ==================================================================== */
 async function openCrop(i, box, k){
+  await settleEdits();
   busy(true, '擷取圖片中…');
   let src;
   try { src = await renderRegion(i, box, nativeScale(box)); }
@@ -5942,6 +5951,7 @@ async function buildImagesPanel(){
   const zb = $('#zipAll'); if (all.length) { zb.disabled = false; zb.onclick = () => zipAll(all); } else zb.remove();
 }
 async function zipAll(all){
+  await settleEdits();
   busy(true, '打包圖片中…');
   try {
     const files = [];
@@ -6797,7 +6807,7 @@ function showThemeMenu(){
 document.addEventListener('pointerdown', e => { const m = $('#themeMenu'); if (m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('#bTheme')) m.style.display = 'none'; }, true);
 if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyTheme();
 paintSplitButtons();
-window.__pdfapp = {S, setTool, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box}};
+window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box}};
 </script>
 </body>
 </html>
