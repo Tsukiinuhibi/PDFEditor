@@ -82,8 +82,9 @@ jobs:
           if [ -z "$ID" ]; then ID=$(curl -fsS -H "$AUTH" "$API/releases?limit=50" | json "a=>(a.find(r=>r.tag_name===process.env.TAG)||{}).id"); fi
           if [ -z "$ID" ]; then
             # created as a draft, so clients only see it once every file is in place
-            BODY=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify({tag_name:process.env.TAG,target_commitish:process.env.BRANCH,name:'PDF 工作台 '+process.env.TAG,body:fs.existsSync('RELEASE_NOTES.md')?fs.readFileSync('RELEASE_NOTES.md','utf8'):'',draft:true}))")
-            ID=$(curl -fsS -X POST -H "$AUTH" -H "Content-Type: application/json" -d "$BODY" "$API/releases" | json 'j=>j.id')
+            # the request body goes through a UTF-8 file: on Windows a command-line argument would lose the Chinese text
+            node -e "const fs=require('fs');fs.writeFileSync('release.json',JSON.stringify({tag_name:process.env.TAG,target_commitish:process.env.BRANCH,name:'PDF \\u5de5\\u4f5c\\u53f0 '+process.env.TAG,body:fs.existsSync('RELEASE_NOTES.md')?fs.readFileSync('RELEASE_NOTES.md','utf8'):'',draft:true}))"
+            ID=$(curl -fsS -X POST -H "$AUTH" -H "Content-Type: application/json; charset=utf-8" --data-binary @release.json "$API/releases" | json 'j=>j.id')
           fi
           echo "Forgejo release id $ID"
           EXISTING=$(curl -fsS -H "$AUTH" "$API/releases/$ID/assets" | json "a=>a.map(x=>x.id+' '+x.name).join('\n')")
