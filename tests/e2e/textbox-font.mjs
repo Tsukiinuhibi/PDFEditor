@@ -1,6 +1,8 @@
 // 文字方塊選字型: the system fonts are listed (Chinese names read from the font files, cached), a text box run can
 // carry a font, and the font menu in the format bar picks one.
-import { launch, TMP } from './_env.mjs';
+import { launch, TMP, ROOT } from './_env.mjs';
+import fs from 'fs';
+import path from 'path';
 
 let failed = 0;
 const check = (name, ok, detail = '') => { console.log(`${ok ? '✔' : '✘'} ${name}${detail !== '' ? '  ' + (typeof detail === 'string' ? detail : JSON.stringify(detail)) : ''}`); if (!ok) { failed++; process.exitCode = 1; } };
@@ -193,6 +195,57 @@ await A(() => window.__pdfapp.setTheme('dark')); await clickAt(330, 640); await 
 await win.screenshot({path:TMP + '/font_menu_dark.png'});
 await win.keyboard.press('Escape'); await win.keyboard.press('Escape'); await A(() => window.__pdfapp.setTheme('system'));
 console.log('   screenshots in', TMP);
+
+// ---- part 4: what the branch review found --------------------------------------------------------
+// reading the font files: single .ttf files (not only collections), a collection whose PostScript name does not
+// match, the Chinese name before an English-only typographic name, and an unreadable file (no result, so not cached)
+const an = (family, ps, file) => A(a => window.__pdfapp.fontAnalyse(a), {family, ps, b64:fs.readFileSync(file).toString('base64')});
+let fr = await an('Noto Sans TC', 'NotoSansTC-Regular', path.join(ROOT, 'app/fonts/NotoSansTC-Regular.ttf'));
+check('single .ttf: a Chinese font is read', !!fr && fr.cjk === true && fr.name === 'Noto Sans TC', fr);
+fr = await an('DejaVu Serif', 'DejaVuSerif', '/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf');
+check('single .ttf: a Latin font is read', !!fr && fr.cjk === false && fr.name === 'DejaVu Serif', fr);
+fr = await an('WenQuanYi Zen Hei Mono', 'NoSuchPostScriptName', '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc');
+check('collection: the face is found by its family', !!fr && fr.name === '文泉驛等寬正黑' && fr.cjk === true, fr);
+fr = await an('PDFE Name Test', 'PDFENameTest-Regular', path.join(ROOT, 'tests/e2e/fixtures/name-order.ttf'));
+check('the Chinese family name wins over an English-only typographic name', !!fr && fr.name === '名稱測試黑體' && fr.cjk === true, fr);
+fr = await A(() => window.__pdfapp.fontAnalyse({family:'Broken', ps:'Broken', b64:btoa('this is not a font file')}));
+check('an unreadable file gives no result', fr === null, fr);
+// a default font must not rewrite an old box that is merely opened again
+await clickAt(60, 700); await win.keyboard.type('Old box'); await commit();
+await fmt('font', 'DejaVu Serif');
+await clickAt(66, 707); await win.waitForTimeout(300);
+check('(the old box is open)', /Old box/.test(await A(() => (window.__pdfapp.TBE() || {}).html || '')));
+await commit();
+check('re-opening an old box keeps its font', same(runs(await rtOf('Old box')), [['Old box', '']]), runs(await rtOf('Old box')));
+await fmt('font', '');
+// the same for bold: a bold default must not make an old box bold
+await clickAt(440, 612); await win.keyboard.type('Plain box'); await commit();
+await fmt('bold', true);
+await clickAt(446, 619); await win.waitForTimeout(300);
+check('(the plain box is open)', /Plain box/.test(await A(() => (window.__pdfapp.TBE() || {}).html || '')));
+await commit();
+const pb = await rtOf('Plain box');
+check('re-opening an old box keeps it not bold', !!pb && pb.lines.flat().every(r => !r.bold), pb && pb.lines);
+await fmt('bold', false);
+// while the fonts are still being read the open menu stays still and clicks land
+await A(() => window.__pdfapp.fontCatBusySim(5000));
+await win.click('#hint [data-tbfont]'); await win.waitForTimeout(300);
+const ib = await win.locator('#fontMenu .fm-it[data-f="DejaVu Serif"]').first().boundingBox();
+const steady = await A(({x, y}) => { const a = document.elementFromPoint(x, y); return new Promise(r => setTimeout(() => r(!!a && a === document.elementFromPoint(x, y)), 400)); }, {x:ib.x + ib.width / 2, y:ib.y + ib.height / 2});
+check('menu items stay put while fonts are read', steady);
+check('progress shown', /正在讀取字型/.test(await A(() => (document.querySelector('#fontMenu .fm-busy') || {}).textContent || '')));
+await win.mouse.move(ib.x + ib.width / 2, ib.y + ib.height / 2); await win.mouse.down(); await win.waitForTimeout(150); await win.mouse.up(); await win.waitForTimeout(300);
+check('a click during reading picks the font', !(await menu()) && await A(() => JSON.parse(localStorage.getItem('pdfeditor.textbox.v1')).font) === 'DejaVu Serif');
+await fmt('font', ''); await win.waitForTimeout(5000);
+// a failed font listing is tried again the next time
+const retry = await A(async () => {
+  const app = window.__pdfapp, orig = window.queryLocalFonts;
+  window.queryLocalFonts = () => Promise.reject(new Error('blocked'));
+  await app.fontCatReload(); const first = app.fontCat().ok;
+  window.queryLocalFonts = orig; await app.fontLoad(); const second = app.fontCat().ok;
+  return {first, second};
+});
+check('a failed font listing is tried again', retry.first === false && retry.second === true, retry);
 
 // ---- end --------------------------------------------------------------------------------------
 console.log(failed ? `${failed} check(s) failed` : 'all checks passed');

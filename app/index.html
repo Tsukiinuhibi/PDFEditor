@@ -3610,7 +3610,7 @@ async function deleteAnnot(i, id){
    Chinese font. Reading a font file can take a while (Chinese fonts are 10–30 MB), so it happens in the
    background, one file at a time, and the result is cached in localStorage.
    ==================================================================== */
-const FONTCAT = {ok:null, fams:[], busy:false, subs:new Set()};
+const FONTCAT = {ok:null, fams:[], busy:false, done:0, total:0, gen:0, subs:new Set()};   // gen: bumps when the list itself changes
 const FONTCAT_KEY = 'pdfeditor.fontcat.v1';
 const FONT_LANGS = ['zh-TW', 'zh-HK', 'zh-MO', 'zh', 'zh-SG', 'en'];
 let fontListing = null, fontAnalysing = Promise.resolve(), fontNotify = 0;
@@ -3619,22 +3619,25 @@ function fontChanged(){
   if (fontNotify) return;
   fontNotify = requestAnimationFrame(() => { fontNotify = 0; FONTCAT.subs.forEach(fn => { try { fn(); } catch (e) { console.error(e); } }); });
 }
-// the family name in the preferred language: typographic family (name ID 16) first, then the family (name ID 1)
+// the family name in the preferred language; in each language the typographic family (name ID 16) before the
+// family (name ID 1), so a Chinese name is never hidden behind an English-only typographic name
 function fontFileName(font, fallback){
   const rec = font.name && font.name.records || {};
-  for (const ids of [rec.preferredFamily, rec.fontFamily]) {
-    if (!ids) continue;
-    for (const l of FONT_LANGS) if (ids[l] && String(ids[l]).trim()) return String(ids[l]).trim();
+  for (const l of FONT_LANGS) for (const ids of [rec.preferredFamily, rec.fontFamily]) {
+    const v = ids && ids[l] && String(ids[l]).trim(); if (v) return v;
   }
   return fallback;
 }
+// read a face's file: a single font (.ttf/.otf), or in a collection (.ttc) the face with this PostScript name,
+// else one of this family; null when the file cannot be read (then nothing is cached and it is tried again)
 async function analyseFont(fam, face){
   try {
     const bytes = new Uint8Array(await (await face.blob()).arrayBuffer());
-    const font = fontkit.create(bytes, fam.ps || undefined);
-    if (!font || !font.name) throw new Error('not a single font');
+    let font = fontkit.create(bytes);
+    if (font && Array.isArray(font.fonts)) font = font.fonts.find(f => f.postscriptName === fam.ps) || font.fonts.find(f => f.familyName === fam.family) || font.fonts[0];
+    if (!font || !font.name) return null;
     return {name:fontFileName(font, fam.family), cjk:[...'中文字體'].every(ch => font.hasGlyphForCodePoint(ch.codePointAt(0)))};
-  } catch (_) { return {name:fam.family, cjk:false}; }
+  } catch (_) { return null; }
 }
 // list the fonts (resolves as soon as the list is known; the files are read afterwards)
 function loadFontCatalog(){
@@ -3644,7 +3647,7 @@ function loadFontCatalog(){
     try {
       if (typeof window.queryLocalFonts !== 'function') throw new Error('no queryLocalFonts');
       faces = await window.queryLocalFonts();
-    } catch (e) { FONTCAT.ok = false; FONTCAT.fams = []; fontChanged(); return; }
+    } catch (e) { FONTCAT.ok = false; FONTCAT.fams = []; FONTCAT.gen++; fontListing = null; fontChanged(); return; }   // tried again next time
     const byFam = new Map();
     for (const f of faces) {
       if (!f.family) continue;
@@ -3657,17 +3660,19 @@ function loadFontCatalog(){
       if (c) { fam.name = c.name || family; fam.cjk = !!c.cjk; } else todo.push([fam, face]);
       return fam;
     });
-    FONTCAT.ok = true; fontChanged();
+    FONTCAT.ok = true; FONTCAT.gen++; FONTCAT.done = 0; FONTCAT.total = todo.length; FONTCAT.busy = !!todo.length; fontChanged();
     if (todo.length) {
-      FONTCAT.busy = true;
       fontAnalysing = (async () => {
         for (const [fam, face] of todo) {
-          Object.assign(fam, await analyseFont(fam, face));
-          const c = fontCache(); c[fam.family + '|' + fam.ps] = {name:fam.name, cjk:fam.cjk};
-          try { localStorage.setItem(FONTCAT_KEY, JSON.stringify(c)); } catch (_) {}
-          fontChanged();
+          const r = await analyseFont(fam, face);
+          if (r) {
+            Object.assign(fam, r);
+            const c = fontCache(); c[fam.family + '|' + fam.ps] = r;
+            try { localStorage.setItem(FONTCAT_KEY, JSON.stringify(c)); } catch (_) {}
+          } else fam.cjk = false;   // unreadable this time: listed under 其他字型, not cached
+          FONTCAT.done++; fontChanged();
         }
-        FONTCAT.busy = false; fontChanged();
+        FONTCAT.busy = false; FONTCAT.gen++; fontChanged();
       })();
     }
   })();
@@ -3785,9 +3790,13 @@ function openTextEditor(i, x, y, {id = null, lines = null, box = null, veilBox =
   el.style.background = bx.boxBg || 'transparent'; el.style.outlineStyle = 'dashed';
   if (bx.border) el.style.boxShadow = '0 0 0 .8px rgba(0,0,0,.55) inset';
   const d = TB_STYLE;
-  el.style.fontSize = d.size + 'px'; el.style.color = d.color; el.style.fontWeight = d.bold ? 700 : 400; el.style.fontStyle = d.italic ? 'italic' : 'normal';
-  el.style.textDecoration = d.underline ? 'underline' : 'none';
-  if (d.font && !real) el.style.fontFamily = fontStack(d.font);
+  // the defaults for new text; an old box opened again keeps its own look (its runs only name what differs from plain)
+  el.style.fontSize = d.size + 'px'; el.style.color = d.color;
+  if (!lines) {
+    el.style.fontWeight = d.bold ? 700 : 400; el.style.fontStyle = d.italic ? 'italic' : 'normal';
+    el.style.textDecoration = d.underline ? 'underline' : 'none';
+    if (d.font && !real) el.style.fontFamily = fontStack(d.font);
+  }
   el.innerHTML = lines ? runsToHTML(lines) : '<div><br></div>';
   S.els[i].appendChild(el); S.els[i].style.zIndex = 6;
   let veil = null;
@@ -3879,7 +3888,7 @@ function fontButtonLabel(f){
 const tbReal = () => !!(TBE && TBE.el.classList.contains('real'));
 function textBarHTML(){
   const st = currentTBStyle();
-  loadFontCatalog();
+  if (FONTCAT.ok === null) loadFontCatalog();
   return `${tbReal() ? '' : `<span class="sb-h">字型</span><button class="fpick" data-tbfont style="font-family:${esc(fontStack(st.font))}" title="字型">${esc(fontButtonLabel(st.font))}</button>`}
     <label class="sb-l">字級<select data-tb="size">${TB_SIZES.map(v => `<option value="${v}"${+st.size === v ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
     <span class="sb-h">顏色</span><button class="cpick" data-tbc="color" style="--c:${st.color}"><i></i>▾</button>
@@ -3951,9 +3960,10 @@ function fontMenuList(){
   if (zh.length) h += sec('中文字型') + zh.map(f => item(f.family, f.name)).join('');
   if (other.length) h += sec('其他字型') + other.map(f => item(f.family, f.name)).join('');
   if (FONTCAT.ok === false) h += '<div class="fm-none">讀不到這台電腦的字型</div>';
-  else if (FONTCAT.busy || FONTCAT.ok === null) h += '<div class="fm-busy">正在讀取字型…</div>';
+  else if (FONTCAT.busy || FONTCAT.ok === null) h += `<div class="fm-busy">${fontBusyText()}</div>`;
   return h;
 }
+const fontBusyText = () => `正在讀取字型…${FONTCAT.busy && FONTCAT.total ? `（${FONTCAT.done}／${FONTCAT.total}）` : ''}`;
 // show only the fonts whose name (Chinese or English) contains the search text; a section goes when all its fonts do
 function filterFontMenu(){
   const m = $('#fontMenu'), q = m.querySelector('.fm-q').value.trim().toLowerCase();
@@ -3976,13 +3986,14 @@ function styleFontItems(list){
 function refreshFontMenu(){
   if (!FM) return;
   const list = $('#fontMenu .fm-list'), top = list.scrollTop;
+  FM.gen = FONTCAT.gen; FM.stale = false;
   list.innerHTML = fontMenuList(); filterFontMenu(); styleFontItems(list); list.scrollTop = top;
 }
 function openFontMenu(anchor, at){
   if (tbReal()) return;
   loadFontCatalog();
   const m = $('#fontMenu');
-  FM = {cur:currentTBStyle().font || ''};
+  FM = {cur:currentTBStyle().font || '', gen:FONTCAT.gen, down:false, stale:false};
   m.innerHTML = `<input class="fm-q" placeholder="搜尋字型（中文或英文名稱）" spellcheck="false"><div class="fm-list">${fontMenuList()}</div>`;
   m.style.display = 'block';
   const r = at || (anchor ? anchor.getBoundingClientRect() : {left:innerWidth / 2 - 150, bottom:120, top:120});
@@ -3999,17 +4010,20 @@ function openFontMenu(anchor, at){
     if (e.key === 'Escape') { e.preventDefault(); closeFontMenu(); restoreTBRange(); }
     if (e.key === 'Enter') { e.preventDefault(); const b = [...m.querySelectorAll('.fm-it')].find(b => !b.hidden); if (b) pickFont(b.dataset.f); }
   };
-  m.onpointerdown = e => { if (e.target.closest('button')) e.preventDefault(); };   // keep the text selection
+  m.onpointerdown = e => { FM.down = true; if (e.target.closest('button')) e.preventDefault(); };   // keep the text selection
   m.onclick = e => { const b = e.target.closest('.fm-it'); if (b) pickFont(b.dataset.f); };
   q.focus();
 }
 function pickFont(f){ closeFontMenu(); applyTextFormat('font', f); noteRecentFont(f); }
 function closeFontMenu(){ if (!FM) return; if (FM.io) FM.io.disconnect(); FM = null; const m = $('#fontMenu'); m.style.display = 'none'; m.innerHTML = ''; }
 document.addEventListener('pointerdown', e => { if (FM && !e.target.closest('#fontMenu,[data-tbfont]')) closeFontMenu(); }, true);
+document.addEventListener('pointerup', () => { if (FM && FM.down) { FM.down = false; if (FM.stale) refreshFontMenu(); } }, true);
 // the catalogue fills in: update the font button and an open menu
 FONTCAT.subs.add(() => {
   const b = $('#hint [data-tbfont]'); if (b) b.textContent = fontButtonLabel(currentTBStyle().font);
-  refreshFontMenu();
+  if (!FM) return;
+  if (FM.gen === FONTCAT.gen) { const p = $('#fontMenu .fm-busy'); if (p) p.textContent = fontBusyText(); return; }   // only progress: the list stays still
+  if (FM.down) FM.stale = true; else refreshFontMenu();   // not under a button that is being pressed
 });
 
 let tbSaving = Promise.resolve();
@@ -7999,7 +8013,10 @@ if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyThem
 paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box, tidyOcr, denoiseCanvas,
   fontCat:() => ({ok:FONTCAT.ok, fams:FONTCAT.fams.map(f => ({...f}))}), fontLoad:loadFontCatalog,
-  fontCatFake:(n, ok = true) => { FONTCAT.ok = ok; FONTCAT.busy = false; FONTCAT.fams = ok ? Array.from({length:n}, (_, k) => { const f = 'Fake Font ' + String(k).padStart(3, '0'); return {family:f, ps:'', name:f, cjk:k % 5 === 0}; }) : []; fontChanged(); },
+  fontCatFake:(n, ok = true) => { FONTCAT.ok = ok; FONTCAT.busy = false; FONTCAT.gen++; FONTCAT.fams = ok ? Array.from({length:n}, (_, k) => { const f = 'Fake Font ' + String(k).padStart(3, '0'); return {family:f, ps:'', name:f, cjk:k % 5 === 0}; }) : []; fontChanged(); },
+  fontAnalyse:({family, ps, b64}) => { const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0)); return analyseFont({family, ps}, {blob:async () => new Blob([bytes])}); },
+  fontCatBusySim:ms => { const end = performance.now() + ms; FONTCAT.busy = true; FONTCAT.done = 0; FONTCAT.total = 100;
+    const tick = () => { if (performance.now() < end) { FONTCAT.done = Math.min(99, FONTCAT.done + 1); fontChanged(); requestAnimationFrame(tick); } else { FONTCAT.busy = false; FONTCAT.gen++; fontChanged(); } }; tick(); },
   fontCatReload:() => { fontListing = null; FONTCAT.ok = null; FONTCAT.fams = []; return loadFontCatalog().then(fontAnalysisDone); },
   tbStyle:() => currentTBStyle(),
   tbRT:async i => { const doc = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false}), out = [];
