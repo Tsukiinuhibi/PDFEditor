@@ -1,0 +1,22 @@
+import { launch, TMP } from './_env.mjs';
+import fs from 'fs';
+const { app, pdf: PDF } = await launch('sv.pdf');
+const before = fs.readFileSync(PDF);
+const win = await app.firstWindow(); win.on('pageerror', e => console.log('PAGEERR', e.message));
+await win.waitForTimeout(3500);
+await app.evaluate(({dialog}, TMP) => {
+  let n = 0; global.__calls = [];
+  dialog.showSaveDialog = async (w, o) => { global.__calls.push(o.defaultPath); n++; return {canceled:false, filePath: n === 1 ? (TMP + '/sv.pdf') : (TMP + '/sv_new.pdf')}; };
+  dialog.showMessageBox = async (w, o) => { global.__calls.push('MSG:' + o.title); return {response:0}; };
+}, TMP);
+await win.click('[data-view="single"]'); await win.waitForTimeout(400);
+await win.evaluate(() => window.__pdfapp.setTool('rect')); await win.waitForTimeout(300);
+const box = await win.locator('.page').first().boundingBox();
+await win.mouse.move(box.x + 300, box.y + 300); await win.mouse.down(); await win.mouse.move(box.x + 450, box.y + 400, {steps:5}); await win.mouse.up(); await win.waitForTimeout(2500);
+console.log('original unchanged after edit:', Buffer.compare(before, fs.readFileSync((TMP + '/sv.pdf'))) === 0);
+console.log('status', await win.evaluate(() => document.querySelector('#stWrite').textContent), '| title', await win.title());
+await win.keyboard.press('Control+s'); await win.waitForTimeout(2500);
+console.log('calls', JSON.stringify(await app.evaluate(() => global.__calls)));
+console.log('original unchanged after save:', Buffer.compare(before, fs.readFileSync((TMP + '/sv.pdf'))) === 0, 'new exists', fs.existsSync((TMP + '/sv_new.pdf')), fs.existsSync((TMP + '/sv_new.pdf')) && fs.statSync((TMP + '/sv_new.pdf')).size);
+console.log('title', await win.title(), '| tab', await win.evaluate(() => document.querySelector('.tabbar .tab .nm, .tabs2 .nm')?.textContent));
+await app.close();

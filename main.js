@@ -23,6 +23,8 @@ protocol.registerSchemesAsPrivileged([{
 
 /* ---------------- single instance + open-with ---------------- */
 const pdfArgs = argv => argv.slice(1).filter(a => /\.pdf$/i.test(a) && !a.startsWith('-'));
+// a separate profile (used by the end-to-end tests so they never touch the installed app's data)
+if (process.env.PDFE_USER_DATA) app.setPath('userData', process.env.PDFE_USER_DATA);
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {

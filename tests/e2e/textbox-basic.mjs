@@ -1,0 +1,42 @@
+import { launch, TMP } from './_env.mjs';
+const { app, pdf: PDF } = await launch('tb.pdf');
+const win = await app.firstWindow(); win.on('console', m => { if (m.type() === 'error') console.log('ERR', m.text()); }); win.on('pageerror', e => console.log('PAGEERR', e.message));
+await win.waitForTimeout(3500);
+await win.click('[data-view="single"]'); await win.waitForTimeout(500);
+await win.click('[data-tool="textbox"]'); await win.waitForTimeout(300);
+const box = await win.locator('.page').first().boundingBox(); console.log('page', box);
+await win.mouse.click(box.x + 120, box.y + 120); await win.waitForTimeout(300);
+console.log('TBE', await win.evaluate(() => window.__pdfapp.TBE()));
+await win.keyboard.type('你好世界 Hello'); await win.waitForTimeout(200);
+for (let k = 0; k < 8; k++) await win.keyboard.press('Shift+ArrowLeft');   // select "世界 Hello"? -> last 8 chars
+await win.selectOption('#hint select[data-tb="size"]', '24'); await win.waitForTimeout(200);
+await win.click('#hint [data-tbc="color"]'); await win.waitForTimeout(200);
+await win.click('#cpMenu .cp-sw[data-v="#e03131"]'); await win.waitForTimeout(200);
+await win.click('#hint [data-tb="bold"]'); await win.waitForTimeout(200);
+await win.click('#hint [data-tbc="bg"]'); await win.waitForTimeout(200);
+await win.click('#cpMenu .cp-sw[data-v="#ffd43b"]'); await win.waitForTimeout(200);
+console.log('TBE2', await win.evaluate(() => window.__pdfapp.TBE()));
+await win.screenshot({path:TMP + '/tb_a.png'});
+await win.keyboard.press('Escape'); await win.waitForTimeout(2500);
+let anns = await win.evaluate(async () => (await window.__pdfapp.getAnns(0)).map(a => [a.subtype, a.contents, Math.round(a.x), Math.round(a.y), Math.round(a.w), Math.round(a.h)]));
+console.log('anns', JSON.stringify(anns));
+// right-click insert
+await win.mouse.click(box.x + 150, box.y + 300, {button:'right'}); await win.waitForTimeout(400);
+console.log('TBE3', await win.evaluate(() => window.__pdfapp.TBE()), await win.evaluate(() => getComputedStyle(document.querySelector('#ctx')).display));
+await win.keyboard.type('右鍵插入'); 
+await win.mouse.click(box.x + 400, box.y + 500); await win.waitForTimeout(2500);
+console.log('TBE after outside click', await win.evaluate(() => window.__pdfapp.TBE()));
+anns = await win.evaluate(async () => (await window.__pdfapp.getAnns(0)).map(a => [a.subtype, a.contents]));
+console.log('anns', JSON.stringify(anns));
+// re-edit first
+await win.mouse.click(box.x + 130, box.y + 122); await win.waitForTimeout(800);
+console.log('TBE reopen', await win.evaluate(() => window.__pdfapp.TBE()));
+await win.screenshot({path:TMP + '/tb_b.png'});
+await win.keyboard.press('End'); await win.keyboard.type('!');
+await win.keyboard.press('Escape'); await win.waitForTimeout(2500);
+anns = await win.evaluate(async () => (await window.__pdfapp.getAnns(0)).map(a => [a.subtype, a.contents]));
+console.log('anns', JSON.stringify(anns));
+await win.click('[data-tool="select"]').catch(() => {});
+await win.waitForTimeout(300);
+await win.screenshot({path:TMP + '/tb_c.png'});
+await app.evaluate(({app}) => app.exit(0)).catch(() => {});

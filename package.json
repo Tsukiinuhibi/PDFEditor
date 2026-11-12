@@ -18,7 +18,8 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win",
-    "release": "electron-builder --win --publish always"
+    "test:e2e": "node tests/e2e/run.mjs",
+    "check": "node scripts/check.mjs"
   },
   "dependencies": {
     "electron-updater": "6.8.11",
@@ -29,7 +30,8 @@
   },
   "devDependencies": {
     "electron": "45.2.3",
-    "electron-builder": "26.18.0"
+    "electron-builder": "26.18.0",
+    "playwright-core": "1.65.0"
   },
   "build": {
     "appId": "io.github.tsukiinuhibi.pdfeditor",
