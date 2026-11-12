@@ -669,7 +669,8 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
 #fontMenu{z-index:10050;width:300px;padding:8px}
 #fontMenu [hidden]{display:none!important}
 .fm-q{display:block;width:100%;box-sizing:border-box;font:inherit;font-size:13px;border:1px solid var(--line2);border-radius:7px;padding:6px 9px;background:var(--surface);color:var(--ink);margin-bottom:6px}
-.fm-list{max-height:min(420px,calc(100vh - 170px));overflow-y:auto}
+.fm-list{max-height:min(420px,calc(100vh - 170px));overflow-y:auto;overscroll-behavior:contain}
+::highlight(tb-sel){background-color:rgba(28,100,217,.28)}
 .fm-sec{font-size:11px;color:var(--ink3);padding:7px 8px 2px}
 #fontMenu .fm-it{display:block;font-size:15px;padding:5px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #fontMenu .fm-it.on{background:var(--seal-soft);color:var(--seal-ink)}
@@ -3749,28 +3750,48 @@ function htmlToRuns(root){
   return lines.map(l => l.reduce((acc, r) => { const p = acc[acc.length - 1]; if (p && ['size', 'color', 'bg', 'bold', 'italic', 'underline', 'font'].every(k => p[k] === r[k])) p.text += r.text; else acc.push({...r}); return acc; }, []));
 }
 const runFont = (r, K) => `${r.italic ? 'italic ' : ''}${r.bold ? 700 : 400} ${r.size * K}px ${fontStack(r.font)}`;
-function layoutRuns(lines, ctx){
+// lay the lines out the way the editor does (CSS line-height 1.3 on every run): each run's box comes from its own
+// font's ascent and descent, a line holds all of them plus the editor's own font (the strut, strut = {size, font, bold}),
+// and the runs of a line share one baseline
+const TB_LH = 1.3;
+function layoutRuns(lines, ctx, strut = {size:TB_STYLE.size, font:'', bold:false}){
+  const memo = new Map(), box = (font, size, bold) => {
+    const k = `${bold ? 7 : 4}|${size}|${font || ''}`;
+    if (!memo.has(k)) {
+      ctx.font = `${bold ? 700 : 400} ${size}px ${fontStack(font)}`;
+      const m = ctx.measureText('字Hg'), a = m.fontBoundingBoxAscent, d = m.fontBoundingBoxDescent, half = (size * TB_LH - (a + d)) / 2;
+      memo.set(k, {top:-(a + half), bottom:d + half, a, d});
+    }
+    return memo.get(k);
+  };
   const out = []; let y = TB_PAD, w = 0;
   lines.forEach(line => {
-    const fs = line.length ? Math.max(...line.map(r => r.size)) : TB_STYLE.size, lh = fs * 1.3;
-    let x = TB_PAD; const items = [];
-    line.forEach(r => { ctx.font = runFont(r, 1); const rw = ctx.measureText(r.text).width; items.push({r, x, w:rw}); x += rw; });
-    out.push({y, lh, fs, items}); y += lh; w = Math.max(w, x + TB_PAD);
+    const sb = box(strut.font, strut.size, strut.bold); let top = sb.top, bottom = sb.bottom, x = TB_PAD;
+    const items = line.map(r => {
+      const b = box(r.font, r.size, r.bold); top = Math.min(top, b.top); bottom = Math.max(bottom, b.bottom);
+      ctx.font = runFont(r, 1); const rw = ctx.measureText(r.text).width, it = {r, x, w:rw, a:b.a, d:b.d}; x += rw; return it;
+    });
+    out.push({y, lh:bottom - top, base:y - top, items}); y += bottom - top; w = Math.max(w, x + TB_PAD);
   });
   return {rows:out, w:Math.max(20, w), h:Math.max(14, y + TB_PAD)};
 }
-async function renderTextBox(lines, box){
+// wait for the fonts a text box uses; each settles on its own, so one that cannot load (e.g. offline) does not cut the wait short
+async function textFontsReady(lines, strut = null){
   const sample = lines.flat().map(r => r.text).join('').slice(0, 200) || '字', fams = new Set(lines.flat().map(r => r.font || ''));
-  try { await Promise.all([...fams].flatMap(f => [400, 700].map(w => document.fonts.load(`${w} 16px ${fontStack(f)}`, sample)))); } catch (_) {}
-  const m = document.createElement('canvas').getContext('2d'), L = layoutRuns(lines, m), K = 4;
+  if (strut) fams.add(strut.font || '');
+  await Promise.allSettled([...fams].flatMap(f => [400, 700].map(w => Promise.resolve().then(() => document.fonts.load(`${w} 16px ${fontStack(f)}`, sample)))));
+}
+async function renderTextBox(lines, box, strut){
+  await textFontsReady(lines, strut);
+  const m = document.createElement('canvas').getContext('2d'), L = layoutRuns(lines, m, strut), K = 4;
   const c = document.createElement('canvas'); c.width = Math.ceil(L.w * K); c.height = Math.ceil(L.h * K);
   const g = c.getContext('2d'); g.scale(K, K);
   if (box.boxBg) { g.fillStyle = box.boxBg; g.fillRect(0, 0, L.w, L.h); }
   if (box.border) { g.strokeStyle = 'rgba(0,0,0,.55)'; g.lineWidth = .8; g.strokeRect(.4, .4, L.w - .8, L.h - .8); }
   g.textBaseline = 'alphabetic';
-  L.rows.forEach(row => row.items.forEach(({r, x, w}) => {
-    const base = row.y + row.lh / 2 + r.size * .36;
-    if (r.bg) { g.fillStyle = r.bg; g.fillRect(x, row.y + (row.lh - r.size * 1.25) / 2, w, r.size * 1.25); }
+  L.rows.forEach(row => row.items.forEach(({r, x, w, a, d}) => {
+    const base = row.base;
+    if (r.bg) { g.fillStyle = r.bg; g.fillRect(x, base - a, w, a + d); }   // like CSS: the run's font's ascent to descent
     g.font = runFont(r, 1); g.fillStyle = r.color; g.fillText(r.text, x, base);
     if (r.underline) { g.fillRect(x, base + r.size * .12, w, Math.max(.6, r.size * .06)); }
   }));
@@ -3791,7 +3812,8 @@ function openTextEditor(i, x, y, {id = null, lines = null, box = null, veilBox =
   if (bx.border) el.style.boxShadow = '0 0 0 .8px rgba(0,0,0,.55) inset';
   const d = TB_STYLE;
   // the defaults for new text; an old box opened again keeps its own look (its runs only name what differs from plain)
-  el.style.fontSize = d.size + 'px'; el.style.color = d.color;
+  const sizes = lines ? lines.flat().map(r => +r.size).filter(v => v > 0) : [];
+  el.style.fontSize = (sizes.length ? Math.min(...sizes) : d.size) + 'px'; el.style.color = d.color;
   if (!lines) {
     el.style.fontWeight = d.bold ? 700 : 400; el.style.fontStyle = d.italic ? 'italic' : 'normal';
     el.style.textDecoration = d.underline ? 'underline' : 'none';
@@ -3905,7 +3927,7 @@ function syncTBBar(){
 $('#hint').addEventListener('pointerdown', e => { if (S.tool === 'textbox' && TBE && e.target.closest('button')) e.preventDefault(); });   // keep the text selection
 $('#hint').addEventListener('click', e => {
   if (S.tool !== 'textbox') return;
-  const fb = e.target.closest('[data-tbfont]'); if (fb) { if (FM) closeFontMenu(); else openFontMenu(fb); return; }
+  const fb = e.target.closest('[data-tbfont]'); if (fb) { if (FM) { closeFontMenu(); restoreTBRange(); } else openFontMenu(fb); return; }
   const b = e.target.closest('[data-tb]'); if (b && b.tagName === 'BUTTON') { const k = b.dataset.tb; applyTextFormat(k, !currentTBStyle()[k]); return; }
   const c = e.target.closest('[data-tbc]'); if (c) showTextColorMenu(c, c.dataset.tbc);
 });
@@ -3993,7 +4015,10 @@ function openFontMenu(anchor, at){
   if (tbReal()) return;
   loadFontCatalog();
   const m = $('#fontMenu');
+  if (TBE && document.activeElement === TBE.el) saveTBRange();
   FM = {cur:currentTBStyle().font || '', gen:FONTCAT.gen, down:false, stale:false};
+  // the search box takes the focus: keep the highlighted text visibly marked meanwhile
+  if (TBE && TBE.range && !TBE.range.collapsed && window.Highlight && window.CSS && CSS.highlights) CSS.highlights.set('tb-sel', new Highlight(TBE.range.cloneRange()));
   m.innerHTML = `<input class="fm-q" placeholder="搜尋字型（中文或英文名稱）" spellcheck="false"><div class="fm-list">${fontMenuList()}</div>`;
   m.style.display = 'block';
   const r = at || (anchor ? anchor.getBoundingClientRect() : {left:innerWidth / 2 - 150, bottom:120, top:120});
@@ -4008,14 +4033,18 @@ function openFontMenu(anchor, at){
   q.onkeydown = e => {
     e.stopPropagation();
     if (e.key === 'Escape') { e.preventDefault(); closeFontMenu(); restoreTBRange(); }
-    if (e.key === 'Enter') { e.preventDefault(); const b = [...m.querySelectorAll('.fm-it')].find(b => !b.hidden); if (b) pickFont(b.dataset.f); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (e.isComposing || e.keyCode === 229 || !q.value.trim()) return;   // confirming 注音 input, or nothing searched yet
+      const b = [...m.querySelectorAll('.fm-it')].find(b => !b.hidden); if (b) pickFont(b.dataset.f);
+    }
   };
   m.onpointerdown = e => { FM.down = true; if (e.target.closest('button')) e.preventDefault(); };   // keep the text selection
   m.onclick = e => { const b = e.target.closest('.fm-it'); if (b) pickFont(b.dataset.f); };
   q.focus();
 }
 function pickFont(f){ closeFontMenu(); applyTextFormat('font', f); noteRecentFont(f); }
-function closeFontMenu(){ if (!FM) return; if (FM.io) FM.io.disconnect(); FM = null; const m = $('#fontMenu'); m.style.display = 'none'; m.innerHTML = ''; }
+function closeFontMenu(){ if (!FM) return; if (FM.io) FM.io.disconnect(); FM = null; if (window.CSS && CSS.highlights) CSS.highlights.delete('tb-sel'); const m = $('#fontMenu'); m.style.display = 'none'; m.innerHTML = ''; }
 document.addEventListener('pointerdown', e => { if (FM && !e.target.closest('#fontMenu,[data-tbfont]')) closeFontMenu(); }, true);
 document.addEventListener('pointerup', () => { if (FM && FM.down) { FM.down = false; if (FM.stale) refreshFontMenu(); } }, true);
 // the catalogue fills in: update the font button and an open menu
@@ -4030,19 +4059,20 @@ let tbSaving = Promise.resolve();
 function commitTextEditor(){
   if (!TBE) return tbSaving;
   const {i, id, x, y, el, veil, orig, edit} = TBE;
-  const lines = htmlToRuns(el), box = {boxBg:el.dataset.boxbg || '', border:!!el.dataset.border};
+  const lines = htmlToRuns(el), box = {boxBg:el.dataset.boxbg || '', border:!!el.dataset.border}, ecs = getComputedStyle(el);
+  const strut = {size:parseFloat(ecs.fontSize) || TB_STYLE.size, font:el.classList.contains('real') ? '' : firstFamily(ecs.fontFamily), bold:+ecs.fontWeight >= 600};
   el.contentEditable = 'false'; el.classList.add('hold'); veil && veil.classList.add('hold');
   const drop = () => { el.remove(); veil && veil.remove(); };
   const settle = p => p.then(ok => { if (!ok) drop(); return ok; }, e => { drop(); throw e; });
   if (S.els[i]) S.els[i].style.zIndex = '';
   TBE = null; syncTBBar();
   const empty = !lines.some(l => l.some(r => r.text.trim()));
-  if (edit) return (tbSaving = settle(commitPageTextEdit(i, x, y, lines, box, edit, empty)));
+  if (edit) return (tbSaving = settle(commitPageTextEdit(i, x, y, lines, box, edit, empty, strut)));
   if (empty) { if (id) { veil && veil.classList.remove('hold'); tbSaving = settle(deleteAnnot(i, id)); el.remove(); } else drop(); return tbSaving; }
   const data = JSON.stringify({lines, box});
   if (id && orig && orig === JSON.stringify(lines) && !TBE) { /* unchanged text; box style may still differ */ }
   tbSaving = (async () => {
-    const r = await renderTextBox(lines, box);
+    const r = await renderTextBox(lines, box, strut);
     const plain = lines.map(l => l.map(x => x.text).join('')).join('\n');
     const b = {x, y, w:r.w, h:r.h};
     return mutate(id ? '已更新文字方塊' : '已新增文字方塊', async doc => {
@@ -4061,12 +4091,12 @@ function commitTextEditor(){
   return tbSaving;
 }
 // the PDF's own text was edited: take the original out of the page and put the new text in its place
-async function commitPageTextEdit(i, x, y, lines, box, edit, empty){
+async function commitPageTextEdit(i, x, y, lines, box, edit, empty, strut){
   if (JSON.stringify(lines) === edit.orig && (edit.block ? JSON.stringify(box) === edit.origBox : !box.boxBg && !box.border)) return false;   // nothing changed
   // written as real page text when the bundled font has every character; otherwise as before, a picture in a text box
   const real = !empty && await realTextOK(lines);
   if (!empty && !real && (edit.rot || edit.vert)) { toast('有字型裡沒有的字（例如表情符號），轉向或直書的文字無法這樣修改', 'err'); return false; }
-  let r = empty || real ? null : await renderTextBox(lines, box), removed = 0;
+  let r = empty || real ? null : await renderTextBox(lines, box, strut), removed = 0;
   return mutate(empty ? '已刪除文字' : '已修改文字', async doc => {
     if (edit.block) removed = cutPageBlock(doc, i, edit.block) ? 1 : 0;
     else {
@@ -4079,7 +4109,7 @@ async function commitPageTextEdit(i, x, y, lines, box, edit, empty){
     if (!removed) {   // the text sits where it cannot be taken out (e.g. inside a form object): cover it instead
       if (empty) { toast('這段文字無法直接刪除', 'err'); return false; }
       box = {...box, boxBg:box.boxBg || edit.bg};
-      if (!real) r = await renderTextBox(lines, box);
+      if (!real) r = await renderTextBox(lines, box, strut);
     }
     if (empty) return;
     if (real) { await writePageText(doc, i, x, y, lines, box, {rot:edit.rot || 0, vert:!!edit.vert}); return; }
@@ -8017,6 +8047,7 @@ window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageC
   fontAnalyse:({family, ps, b64}) => { const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0)); return analyseFont({family, ps}, {blob:async () => new Blob([bytes])}); },
   fontCatBusySim:ms => { const end = performance.now() + ms; FONTCAT.busy = true; FONTCAT.done = 0; FONTCAT.total = 100;
     const tick = () => { if (performance.now() < end) { FONTCAT.done = Math.min(99, FONTCAT.done + 1); fontChanged(); requestAnimationFrame(tick); } else { FONTCAT.busy = false; FONTCAT.gen++; fontChanged(); } }; tick(); },
+  runsToHTML, tbLayout:(lines, strut) => layoutRuns(lines, document.createElement('canvas').getContext('2d'), strut), tbFontsReady:textFontsReady,
   fontCatReload:() => { fontListing = null; FONTCAT.ok = null; FONTCAT.fams = []; return loadFontCatalog().then(fontAnalysisDone); },
   tbStyle:() => currentTBStyle(),
   tbRT:async i => { const doc = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false}), out = [];

@@ -247,6 +247,71 @@ const retry = await A(async () => {
 });
 check('a failed font listing is tried again', retry.first === false && retry.second === true, retry);
 
+// ---- part 5: the small issues left after the review ----------------------------------------------
+// Enter on an empty search, and Enter that only confirms an input method (注音), pick nothing
+await win.click('#hint [data-tbfont]'); await win.waitForTimeout(300);
+await win.keyboard.press('Enter'); await win.waitForTimeout(200);
+check('Enter on an empty search does nothing', !!(await menu()));
+await fmt('font', '');
+if (!(await menu())) { await win.click('#hint [data-tbfont]'); await win.waitForTimeout(300); }   // (so the next checks still run)
+await win.fill('#fontMenu .fm-q', 'dejavu');
+await A(() => document.querySelector('#fontMenu .fm-q').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', isComposing:true, bubbles:true, cancelable:true})));
+await win.waitForTimeout(200);
+check('Enter that confirms an input method does nothing', !!(await menu()) && await A(() => JSON.parse(localStorage.getItem('pdfeditor.textbox.v1')).font) === '');
+await fmt('font', '');
+if (!(await menu())) { await win.click('#hint [data-tbfont]'); await win.waitForTimeout(300); }
+check('the font list does not scroll the page behind it', await A(() => getComputedStyle(document.querySelector('#fontMenu .fm-list')).overscrollBehaviorY) === 'contain');
+await win.keyboard.press('Escape'); await win.waitForTimeout(200);
+// the highlighted text stays marked while the search box has the focus; the font button closes the menu and
+// gives the text its selection back
+await clickAt(330, 640); await win.keyboard.type('焦點 Focus');
+for (let k = 0; k < 5; k++) await win.keyboard.press('Shift+ArrowLeft');
+await win.click('#hint [data-tbfont]'); await win.waitForTimeout(300);
+const hl = await A(() => { const h = window.CSS && CSS.highlights && CSS.highlights.get('tb-sel'); return h ? [...h].map(r => r.toString()).join('') : null; });
+check('the highlight stays visible while the menu is open', hl === 'Focus', hl);
+await win.click('#hint [data-tbfont]'); await win.waitForTimeout(300);
+const back = await A(() => ({focus:!!document.activeElement && document.activeElement.classList.contains('tbed'), sel:getSelection().toString(), mark:!!(window.CSS && CSS.highlights && CSS.highlights.has('tb-sel'))}));
+check('closing with the button gives the selection back', back.focus && back.sel === 'Focus' && !back.mark, back);
+if (!back.focus && await A(() => !!window.__pdfapp.TBE())) await win.click('.tbed');   // (so the next checks still run)
+await commit();
+// the saved picture is laid out like the editor: one shared baseline per line, line heights from each font
+const lay = await A(async () => {
+  const app = window.__pdfapp, run = (text, size, font, bold = false) => ({text, size, color:'#000000', bg:'', bold, italic:false, underline:false, ...(font ? {font} : {})});
+  const lines = [[run('思源 ', 14), run('Serif ', 24, 'DejaVu Serif'), run('文泉', 18, 'WenQuanYi Zen Hei')], [run('small', 10, 'DejaVu Serif')], [], [run('粗體 Bold', 16, '', true)]];
+  const strut = {size:14, font:'', bold:false};
+  await app.tbFontsReady(lines, strut);
+  const ed = document.createElement('div'); ed.className = 'tbed'; ed.style.cssText = 'left:0;top:0;transform:none;visibility:hidden;font-size:14px';
+  ed.innerHTML = app.runsToHTML(lines); document.body.appendChild(ed);
+  const r0 = ed.getBoundingClientRect();
+  const dom = [...ed.children].map(div => { const mk = document.createElement('span'); mk.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline'; div.insertBefore(mk, div.firstChild);
+    const r = div.getBoundingClientRect(); return {top:r.top - r0.top, base:mk.getBoundingClientRect().top - r0.top}; });
+  const total = ed.getBoundingClientRect().height; ed.remove();
+  const L = app.tbLayout(lines, strut);
+  return {dom, total, rows:L.rows.map(r => ({top:r.y, base:r.base})), h:L.h};
+});
+const off = Math.max(...lay.dom.map((d, k) => Math.max(Math.abs(d.base - lay.rows[k].base), Math.abs(d.top - lay.rows[k].top))));
+check('the saved layout matches the editor (mixed fonts and sizes)', off < 1 && Math.abs(lay.total - lay.h) < 1.5,
+  {off:Number.isFinite(off) ? +off.toFixed(2) : String(off), editor:lay.dom.map(d => +d.base.toFixed(1)), saved:lay.rows.map(r => typeof r.base === 'number' ? +r.base.toFixed(1) : null), h:[+lay.total.toFixed(1), +lay.h.toFixed(1)]});
+// an old two-line box opened again while the default size is much bigger keeps its line spacing
+await clickAt(60, 735); await fmt('size', 12); await win.keyboard.type('Small one'); await win.keyboard.press('Enter'); await win.keyboard.type('line two'); await commit();
+const hOf = () => A(async () => { const a = (await window.__pdfapp.getAnns(0)).find(a => a.subtype === 'FreeText' && /Small one/.test(a.contents)); return a ? +a.h.toFixed(2) : null; });
+const h0 = await hOf();
+await fmt('size', 36);
+await clickAt(66, 741); await win.waitForTimeout(300);
+check('(the small box is open)', /Small one/.test(await A(() => (window.__pdfapp.TBE() || {}).html || '')));
+await commit();
+const h1 = await hOf();
+check('re-opening keeps the line spacing', h0 !== null && h1 !== null && Math.abs(h1 - h0) < .5, [h0, h1]);
+await fmt('size', 14);
+// drawing waits for every font even when one of them cannot be loaded (e.g. offline)
+const waited = await A(async () => {
+  const app = window.__pdfapp, real = document.fonts.load; let slowDone = false;
+  document.fonts.load = font => /Broken/.test(font) ? Promise.reject(new Error('offline')) : new Promise(r => setTimeout(() => { slowDone = true; r([]); }, 300));
+  try { await app.tbFontsReady([[{text:'字', size:14, font:'Broken Font'}], [{text:'字', size:14}]], {size:14, font:'', bold:false}); return slowDone; }
+  finally { document.fonts.load = real; }
+});
+check('drawing waits for every font even if one fails', waited === true, waited);
+
 // ---- end --------------------------------------------------------------------------------------
 console.log(failed ? `${failed} check(s) failed` : 'all checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
