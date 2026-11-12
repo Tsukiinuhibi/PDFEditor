@@ -37,7 +37,9 @@ const pt = (x, y) => A(({x, y}) => { const app = window.__pdfapp, vw = document.
 const clickAt = async (x, y) => { const p = await pt(x, y); await win.waitForTimeout(250); await win.mouse.click(p.x, p.y); await win.waitForTimeout(500); };
 const commit = async () => { await win.keyboard.press('Escape'); await win.waitForTimeout(2500); };
 const rts = () => A(() => window.__pdfapp.tbRT(0));
-const rtOf = async txt => { const r = (await rts()).find(x => x.rt.lines.flat().map(r => r.text).join('').includes(txt)); return r && r.rt; };
+// the saved rich text of the box holding `txt` (waits for the save to land)
+const rtOf = async txt => { const t0 = Date.now(); for (;;) { const r = (await rts()).find(x => x.rt.lines.flat().map(r => r.text).join('').includes(txt));
+  if (r) { if (Date.now() - t0 > 300) console.log(`   (box "${txt}" saved after ${Date.now() - t0} ms more)`); return r.rt; } if (Date.now() - t0 > 10000) return null; await win.waitForTimeout(250); } };
 const runs = rt => rt ? rt.lines.flat().map(r => [r.text, r.font || '']) : null;
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const fmt = (k, v) => A(([k, v]) => window.__pdfapp.applyTextFormat(k, v), [k, v]);
