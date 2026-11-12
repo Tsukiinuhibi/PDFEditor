@@ -423,6 +423,22 @@ svg.dsvg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;ov
 .ap-mark{position:absolute;top:8px;bottom:30px;width:4px;margin-left:-2px;background:var(--seal);border-radius:2px;display:none;pointer-events:none}
 .ap-mark::before{content:"放在這裡";position:absolute;top:-2px;left:8px;background:var(--seal);color:#fff;font-size:11px;padding:1px 6px;border-radius:4px;white-space:nowrap}
 .ap-sum b{color:var(--seal-ink)}
+/* 排列頁面: every page in a grid, dragged into a new order */
+.ar-top{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.ar-top .flab{flex:1;margin:0}
+.ar-grid{position:relative;display:flex;flex-wrap:wrap;gap:18px 14px;align-items:flex-end;align-content:flex-start;padding:18px 14px 14px;background:var(--panel);border-radius:9px;min-height:200px;max-height:calc(100vh - 270px);overflow-y:auto}
+.ar-pg{flex:none;display:flex;flex-direction:column;align-items:center;gap:6px;font-size:11.5px;color:var(--ink2);font-variant-numeric:tabular-nums;cursor:grab;touch-action:none;user-select:none;white-space:nowrap}
+.ar-pg .b{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.18);overflow:hidden}
+.ar-pg .b img{display:block;width:100%;height:100%}
+.ar-pg:hover .b{outline:2px solid var(--ink3);outline-offset:2px}
+.ar-pg.moved{color:var(--seal-ink);font-weight:500}
+.ar-pg.moved .b{outline:2px solid var(--seal);outline-offset:2px}
+.ar-pg.dragging{opacity:.3}
+.ar-ghost{position:fixed;z-index:95;pointer-events:none;opacity:.9;transform:translate(18px,-55%) rotate(-3deg);filter:drop-shadow(0 8px 16px rgba(0,0,0,.25));background:#fff}
+.ar-ghost img{display:block;width:100%;height:100%}
+.ar-mark{position:absolute;width:4px;margin-left:-2px;background:var(--seal);border-radius:2px;display:none;pointer-events:none}
+.ar-sum{margin-top:10px;font-size:13px}
+.ar-sum b{color:var(--seal-ink)}
 .page canvas.pc{position:absolute;inset:0;width:100%;height:100%;display:block}
 .page .ovl{position:absolute;inset:0}
 .page .ld{position:absolute;inset:0;display:grid;place-items:center;color:#c9c5bc;font-size:12px}
@@ -2983,6 +2999,112 @@ async function openAddPage(presetAt){
   }, {scrollToCurrent:true, highlight:{from:at, count, label:'新增的空白頁'}});
 }
 
+// 排列頁面: all pages in a grid; drag them into a new order, then apply it in one step (undo puts it back)
+async function openArrange(){
+  if (!S.pdf || S.pages.length < 2) return;
+  const n = S.pages.length, H = 120, ord = [...Array(n).keys()];   // ord[p] = the page (old index) now at place p
+  const body = document.createElement('div');
+  body.innerHTML = `<div class="ar-top"><div class="flab">🖱 用滑鼠<b>拖曳頁面</b>到想放的位置；底下會顯示新的頁碼和原本是第幾頁</div>
+      <button class="btn" id="arReset">還原原本順序</button></div>
+    <div class="ar-grid" id="arGrid"><div class="ar-mark" id="arMark"></div></div>
+    <div class="ar-sum" id="arSum"></div>`;
+  const grid = body.querySelector('#arGrid'), mark = body.querySelector('#arMark');
+  const cards = S.pages.map((pg, i) => {
+    const d = document.createElement('div'); d.className = 'ar-pg'; d.dataset.i = i;
+    d.innerHTML = `<div class="b" style="width:${Math.round(H * pg.w / pg.h)}px;height:${H}px"></div><span class="lb"></span>`;
+    grid.appendChild(d); return d;
+  });
+  const obs = new IntersectionObserver(ents => ents.forEach(en => {
+    if (!en.isIntersecting) return; obs.unobserve(en.target);
+    pageThumb(+en.target.dataset.i, H).then(u => { if (u) { const im = new Image(); im.src = u; im.draggable = false; en.target.querySelector('.b').appendChild(im); } });
+  }), {root:grid, rootMargin:'300px 0px'});
+  cards.forEach(c => obs.observe(c));
+  let okBtn = null;
+  const moved = () => ord.filter((i, p) => i !== p).length;
+  const update = () => {
+    ord.forEach((i, p) => {
+      const c = cards[i]; grid.appendChild(c);
+      c.classList.toggle('moved', i !== p);
+      c.querySelector('.lb').textContent = `第 ${p + 1} 頁${i !== p ? `（原 ${i + 1}）` : ''}`;
+    });
+    const m = moved();
+    body.querySelector('#arSum').innerHTML = m ? `已調整 <b>${m}</b> 頁的順序，按「套用新順序」完成。` : `文件共 <b>${n}</b> 頁，目前是原本的順序。`;
+    body.querySelector('#arReset').disabled = !m;
+    if (okBtn) okBtn.disabled = !m;
+  };
+  body.querySelector('#arReset').onclick = () => { ord.splice(0, n, ...[...Array(n).keys()]); update(); };
+  // where a drop at (x, y) goes: in the row under the pointer, before the first card whose middle is right of x
+  // (or after the row's last card); returns the place and that row's top
+  const rectAt = p => cards[ord[p]].getBoundingClientRect();
+  const gapAt = (x, y) => {
+    const rs = ord.map((_, p) => rectAt(p)), tops = [...new Set(rs.map(r => Math.round(r.top)))].sort((a, b) => a - b);
+    let row = tops[0]; for (const t of tops) if (y >= t - 9) row = t;
+    let last = -1;
+    for (let p = 0; p < rs.length; p++) {
+      if (Math.round(rs[p].top) !== row) continue;
+      if (x < rs[p].left + rs[p].width / 2) return {gap:p, row};
+      last = p;
+    }
+    return {gap:last + 1, row};
+  };
+  // the red line: left of the card that will follow, or right of the row's last card
+  const showMark = ({gap, row}) => {
+    const gr = grid.getBoundingClientRect(), next = gap < n ? rectAt(gap) : null, before = next && Math.round(next.top) === row;
+    const r = before ? next : rectAt(gap - 1), x = before ? r.left - 7 : r.right + 7;
+    mark.style.left = (x - gr.left + grid.scrollLeft) + 'px'; mark.style.top = (r.top - gr.top + grid.scrollTop) + 'px';
+    mark.style.height = r.height + 'px'; mark.style.display = 'block';
+  };
+  let drag = null;
+  grid.addEventListener('pointerdown', e => {
+    const c = e.target.closest('.ar-pg'); if (!c || e.button !== 0) return;
+    e.preventDefault(); grid.setPointerCapture(e.pointerId);
+    drag = {i:+c.dataset.i, card:c, x0:e.clientX, y0:e.clientY, x:e.clientX, y:e.clientY, on:false, at:null, ghost:null, raf:0};
+  });
+  grid.addEventListener('pointermove', e => {
+    if (!drag) return;
+    drag.x = e.clientX; drag.y = e.clientY;
+    if (!drag.on) {
+      if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 5) return;
+      drag.on = true; drag.card.classList.add('dragging');
+      const b = drag.card.querySelector('.b'); drag.ghost = b.cloneNode(true); drag.ghost.className = 'ar-ghost';
+      drag.ghost.style.width = b.style.width; drag.ghost.style.height = b.style.height; document.body.appendChild(drag.ghost);
+      const tick = () => {   // scroll near the top and bottom edges
+        if (!drag) return;
+        const r = grid.getBoundingClientRect();
+        if (drag.y < r.top + 50) grid.scrollTop -= 14; else if (drag.y > r.bottom - 50) grid.scrollTop += 14;
+        drag.at = gapAt(drag.x, drag.y); showMark(drag.at);
+        drag.raf = requestAnimationFrame(tick);
+      };
+      drag.raf = requestAnimationFrame(tick);
+    }
+    drag.ghost.style.left = e.clientX + 'px'; drag.ghost.style.top = e.clientY + 'px';
+    drag.at = gapAt(e.clientX, e.clientY); showMark(drag.at);
+  });
+  const endDrag = () => {
+    if (!drag) return;
+    const d = drag; drag = null;
+    cancelAnimationFrame(d.raf); d.ghost && d.ghost.remove(); d.card.classList.remove('dragging'); mark.style.display = 'none';
+    if (!d.on || !d.at) return;
+    const from = ord.indexOf(d.i); let to = d.at.gap; if (to > from) to--;
+    if (to === from) return;
+    ord.splice(from, 1); ord.splice(to, 0, d.i); update();
+  };
+  grid.addEventListener('pointerup', endDrag); grid.addEventListener('pointercancel', endDrag);
+  const res = await openModal({title:'排列頁面', body, width:Math.min(1180, innerWidth - 40), buttons:[
+    {label:'取消', value:null},
+    {label:'套用新順序', primary:true, id:'arOk', handler:() => [...ord]}],
+    onOpen:(mb, mf) => { okBtn = mf.querySelector('#arOk'); update(); }});
+  obs.disconnect();
+  if (!res || !res.some((i, p) => i !== p)) return;
+  const m = res.filter((i, p) => i !== p).length;
+  await mutate(`已調整頁面順序（${m} 頁換了位置）`, doc => {
+    const pages = doc.getPages();
+    for (let k = pages.length - 1; k >= 0; k--) doc.removePage(k);
+    res.forEach(i => doc.addPage(pages[i]));
+    S.current = Math.max(0, res.indexOf(S.current)); S.thumbSel = new Set([S.current]);
+  }, {scrollToCurrent:true});
+}
+
 function visToPdf(i, b){
   const pg = S.pages[i], vp = pg.vp1;
   const pts = [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]].map(p => vp.convertToPdfPoint(p[0], p[1]));
@@ -3309,6 +3431,8 @@ function showPageMenu(e, i){
   const sel = selectedPages(), k = sel.length, lbl = k > 1 ? `${k} 頁` : `第 ${i + 1} 頁`;
   const clip = PAGE_CLIP ? `${PAGE_CLIP.count} 頁` : '';
   ctx.innerHTML = `<div class="hd">${k > 1 ? `已選取第 ${esc(rangeText(sel))} 頁` : `第 ${i + 1} 頁`}</div>
+    <button data-c="arrange"${S.pages.length > 1 ? '' : ' disabled'}>${icon('gridI')}展開所有頁面（拖曳排序）…</button>
+    <hr>
     <button data-c="copy">${icon('copy')}複製 ${lbl}<kbd>Ctrl+C</kbd></button>
     <button data-c="cut"${k >= S.pages.length ? ' disabled' : ''}>${icon('cut')}剪下 ${lbl}<kbd>Ctrl+X</kbd></button>
     <button data-c="pasteBefore"${clip ? '' : ' disabled'}>${icon('paste')}貼上${clip ? ' ' + clip : ''}到第 ${i + 1} 頁之前</button>
@@ -3328,6 +3452,7 @@ function showPageMenu(e, i){
     const b = ev.target.closest('button'); if (!b || b.disabled) return;
     hideCtx();
     const c = b.dataset.c;
+    if (c === 'arrange') openArrange();
     if (c === 'copy') copySelected(false);
     if (c === 'cut') copySelected(true);
     if (c === 'pasteBefore') pasteClip(i);
