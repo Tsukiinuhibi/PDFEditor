@@ -1,6 +1,6 @@
 # PDF 工作台（PDFEditor）交接文件
 
-這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-12，最新發布版本是 **v1.0.27**。
+這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-12，最新發布版本是 **v1.0.28**。
 
 ---
 
@@ -27,12 +27,13 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 
 ## 2. 技術架構
 
-- **Electron 45**（`main.js` 主程序、`preload.js` 橋接），渲染端是**一個檔案**：`app/index.html`，約 6,800 行，裡面有 CSS 和一個 `<script type="module">`。沒有打包工具，也沒有框架。
+- **Electron 45**（`main.js` 主程序、`preload.js` 橋接），渲染端主要是**一個檔案**：`app/index.html`，約 9,000 行，裡面有 CSS 和一個 `<script type="module">`。另有 `app/fontid.js`（v1.0.28，一般 `<script>`，對外 `window.FontId`）：字型辨識的比對引擎與 Google Fonts 清單，只用 canvas 與數學、不碰文件。沒有打包工具，也沒有框架。
 - 函式庫都直接從 `node_modules` 載入：
   - `pdfjs-dist` 4.10.38：顯示、文字擷取、抓頁面上的圖片。含 cMaps 和標準字型，有啟用 worker，`isEvalSupported:false`。
   - `pdf-lib` 1.17.1：所有寫入，用全域 `PDFLib`。
   - `@pdf-lib/fontkit` 1.1.1（全域 `fontkit`）：嵌入字型子集，以及檢查字型有沒有某個字、量字寬。
   - `app/fonts/NotoSansTC-Regular.ttf`、`NotoSansTC-Bold.ttf`：思源黑體（Noto Sans TC，OFL 授權，`OFL.txt`），由 Google Fonts 的可變字型用 fontTools `varLib.instancer --static --update-name-table` 產生 400／700 兩個字重。**每個字形都補齊到 4 位元組（`glyf.padding = 4`）**：fontkit 做子集時會用短格式 `loca`（位移 ÷2），字形長度是奇數的話，子集裡後面的字形會壞掉。換字型時一定要再做一次。
+  - `app/fonts/blank.ttf`（「PDFE Blank」，616 bytes，`scripts/make-blank-font.py` 產生）：每個碼位都對到一個空字形。字型辨識畫字時字型清單寫成「候選字型, "PDFE Blank"」，候選字型沒有的字就畫成空白（量得到墨跡高度 0），不會被系統的替代字型冒充。
   - `node-forge` 1.4.3：數位簽章（PKCS#7 detached）。
   - `gifenc`：輸出 GIF。
   - `tesseract.js` 7（全域 `Tesseract`）＋ `tesseract.js-core`：文字辨識（OCR），只打包三個 LSTM 版的 `*-lstm.wasm.js`（其餘在 `build.files` 排除）。語言資料放在 `app/ocr/lang/`：`chi_tra`、`chi_tra_vert`、`eng` 的 best_int 版（取自 `@tesseract.js-data`，MIT）。
@@ -137,6 +138,14 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - Worker 從 `app://` 網址載入（`workerBlobURL:false`），所以 wasm 不受頁面 CSP 限制；辨識引擎第一次用時才載入，之後重複使用（`OCR.worker`）。
 - 結果視窗 `#ocrPanel`：可修改、「複製文字」、橫書／直書切換（會重新做影像辨識）、PDF 文字時可改用影像辨識；可以拖標題列移動；Esc（任何焦點）關閉但保留工具。
 
+### 3.9.1 字型辨識（v1.0.28）
+- 結果視窗多了「文字｜字型」頁籤（`FONTID.tab`，新視窗沿用上次的頁籤）。切到「字型」才比對（`fontIdStart`）；已經在「字型」頁時，框選新範圍就直接比對。
+- **PDF 本身的文字**：`pdfFontsIn(i, box)`（和 `pdfTextIn` 共用 `pickTextIn` 取框內的字）依 pdf.js 字型代號分組，字型資料從 `page.commonObjs` 拿（`name`、`missingFile`、`isType3Font`）。名稱去掉子集前綴與 pdf-lib 的數字尾巴；含 0x80 以上位元組的名稱（Word 在中文 Windows 用 Big5／GBK 寫的）用 `decodeFontName` 依序試 UTF-8、Big5、GBK、Shift_JIS。對本機字型用 `matchSystemFont`，再比對字型清單的中文名稱；PDF 標準字型用 `STD_FONT_ALIAS` 找同款（Helvetica → Arial／Liberation Sans／Arimo…）；都沒有就 `googleByName` 對 Google 清單。`GlyphLessFont`（OCR 軟體的隱形文字層）不列出，直接改做影像比對。〔用字形比對找相似字型〕對同一框做影像比對。
+- **掃描檔**：Tesseract 用 `blocks` 輸出取得每個字的框（`ocrPasses` 兩次辨識共用，`OCR.glyphs` 留下較好那次的圖與字框；PDF 文字的框要比對字形時另跑 `ocrGlyphsOnly`）。Tesseract 的字框只大概對：中文常偏窄、偏移（民 32 px 寬，實際 48 px），直書時字框是壞的（x0 = x1 = 0），但每個「詞」的框是對的，`ocrSymbols` 會改用詞框等分。所以 `FontId.glyphsFromImage` 不信單字框，而是**從墨跡切字**：每行（Tesseract 的行框）找出筆畫（8 連通），在兩字中點附近找沒有墨跡的縫切開；中文字最多 1.1 個行高寬，多出來的外側筆畫給隔壁字（氵 這類部首貼著前一個字）；同一位置讀兩次只算一次。
+- **比對**（`FontId.identify`，`app/fontid.js`）：每個字放進 48×48 格子；候選字型的同一個字畫成和掃描字一樣高（上限 64 px）、加一樣的模糊，再比形狀（chamfer 距離 `exp(-d/1.5)`）× √墨量比 × 寬高一致 × 字級一致（同一字型的字應該用同一個字級，x 高度比例不同的字型因此被拉開）。第一階段所有字型只比 6 個字（一般字重、不模糊），前 24 名再用全部的字、一般與粗體各比一次，模糊程度用第一名估計（σ 0～2.5）。第一階段前 24 名都比不像的字當成認錯，不算。缺字超過 30% 的字型不列。字形完全相同（48×48 二值化後雜湊相同）的字型合併成一列（文泉驛正黑／等寬正黑）。每約 12 ms 用 MessageChannel 讓出一次主執行緒（`scheduler.yield()` 會搶在畫面重繪之前，實測只剩 10 fps）。750 個候選約 1.1 秒。
+- **Google Fonts**：`FontId.GOOGLE`（`app/fontid.js` 的 `GOOGLE_LIST`，170 個：37 個中日文、133 個英文，`Noto Sans TC` 不列——它就是內建思源黑體）。`scripts/check-google-fonts.mjs`（會連網）檢查每個名稱與「有沒有粗體」都和 Google 一致，改清單後跑一次。`loadGoogle` 一次問 10 個家族（CSS2 API 的 `text=` 只下載要比對的字，去重複、依碼位排序，不送原文），整批回 400 就逐一重試；每個家族用自己的別名 `PDFE GF n` 載入（避免和本機同名字型混淆）；逾時 8 秒；同一批字這次執行快取。CSP 的 `connect-src` 因此加了 `https://fonts.googleapis.com`（字型檔走 `font-src`，原本就允許 `fonts.gstatic.com`）。「也比對 Google Fonts」可關掉（`pdfeditor.fontid.v1`）。
+- **結果**：每組（中文、英數字各一組，兩種都夠字才分組）最多 8 列：樣字、名稱、來源（本機／內建／Google Fonts、粗體）、相似度、〔套用〕或〔下載〕。〔套用〕＝文字方塊預設字型（`applyIdentifiedFont`）；字型選單在「預設」之後多一區「字型辨識結果」（`FONTID.recent`，最近一次找到的本機字型，PDF 本身的字型排前面、100%），編輯時反白文字就能一下套用。〔下載〕開 Google Fonts 的字型頁（`openFontPage`），並提示裝好後要重開程式（Chromium 的字型清單在程式啟動時建立）。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。
@@ -151,7 +160,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
   - 重新打開舊的文字方塊時，預設的字型、粗體、斜體、底線不會套到方塊本身（只給新方塊），否則按 Esc 就會把舊方塊整個改掉。
   - 目錄 v2（`pdfeditor.fontcat.v2`）多記 `embed`（OS/2 fsType：`ok`／`full`／`no`）、`vert`（`vhea`＋`vmtx`＋GSUB `vert`）、`bytes`，以及每個家族的所有字面 `faces`（`FONT_FACES` 存 `queryLocalFonts` 的原物件）。測試用 `registerTestFont` 把字型位元組當成已安裝字型（`TEST_FONTS`）。
   - 格式列與 `currentTBStyle` 讀游標旁邊那段文字的樣式（`caretStyleNode`）：游標在元素之間時（例如剛打開編輯器、游標在最後）取前一段文字。
-- localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, fontcat.v2, fonts.recent.v1, lastact.v1, lasttool.v1, pagecolor, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
+- localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, fontcat.v2, fontid.v1, fonts.recent.v1, lastact.v1, lasttool.v1, pagecolor, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
 - 測試用的鉤子：`window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars, getAnns, TBE, sel, …}`，端對端測試會用到，不要刪。
 
 ---
@@ -184,7 +193,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 ## 5. 測試
 
 ```bash
-npm run check                         # 語法檢查：main.js、preload.js、index.html 的 module script
+npm run check                         # 語法檢查：main.js、preload.js、app/fontid.js、index.html 的 module script
 npm run test:e2e                      # 執行 tests/e2e/ 下全部腳本
 node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 ```
@@ -204,6 +213,8 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | textbox-font | 字型目錄（.ttc 的繁中名稱、中文／其他分組、快取）、只改反白的字、外觀用該字型、再次編輯保留、怪字型名稱、游標處換字型、預設字型、修改原文不記字型、字型選單（分組、搜尋、最近用過只列已安裝、Esc、缺字型提示、右鍵「字型…」）、600 個字型的開啟與搜尋速度、讀不到系統字型 |
 | edit-page-text | 修改與刪除 PDF 原文、再次編輯 |
 | ocr | 文字辨識：PDF 文字一字不差、剪貼簿內容、乾淨掃描（橫書、直書）與低品質掃描的辨識率、強制影像辨識、Esc 關閉 |
+| font-identify-engine | 字型辨識引擎（不連網）：空白字型與缺字判斷（含 Type 1 字型）、取字（信心度、標點、`ilI1|`、只留一次、偏好字母、太小、白紙、鄰字筆畫、鬆的字框、直書粗略字框）、比對排名（DejaVu Serif、Liberation Sans 粗體、文泉驛正黑與等寬版合併、內建思源黑體、超大字、沒有字型有這些字、stop）、本機與 Google 同字形合併、750 個候選的時間與畫面不卡、Google 載入（分批、`text=`、粗體字重、快取、錯名逐一重試、沒網路、逾時）、Google 清單 |
+| font-identify | 「字型」頁（假的 Google 來源）：各種掃描（英文、粗體、中文、內建思源黑體、中英混排分組、直書、不是字）、Google 字型排第一與〔下載〕、關掉 Google、連不上 Google、比對中換框、長名稱不擋來源標籤；PDF 記錄的字型（已內嵌 DejaVu Serif、Big5 名稱、Helvetica 用同款代替、Google 名稱、沒有名稱、隱形文字層）、〔用字形比對找相似字型〕；〔套用〕、〔下載〕開的網址、字型選單「字型辨識結果」 |
 | viewbar-narrow | 1500／1100／900 px 的檢視列沒有按鈕被壓扁或重疊、窄時只留圖示、900 px 不出現捲軸、只剩圖示的按鈕可用、更窄時滾輪捲動 |
 | arrange-pages | 24 頁的格狀排列（多排）、拖曳後的「第 N 頁（原 M）」、跨排拖曳、還原原本順序、取消不改文件、套用後頁面順序與註解跟著頁面、縮圖重新編號、復原 |
 | toolbar-settings | 工具列各區寬度、旋轉 ▾（記住上次）、加頁 ▾／簽署 ▾ 選單、小的復原／重做、設定視窗四頁（主題、頁面色彩、只顯示圖示、按鍵立即儲存、軟體更新）、狀態列版本號開啟更新頁、窄視窗用滾輪捲動工具列 |
@@ -246,6 +257,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | 1.0.25 | 檢視列在窄視窗不再擠成一團（逐步只留圖示，最後才捲動）；縮圖右鍵「展開所有頁面（拖曳排序）」 |
 | 1.0.26 | 文字方塊選字型：讀取系統字型（中文名稱、分組、搜尋、最近用過）；文字方塊預設改用內建思源黑體 |
 | 1.0.27 | 修改原文也能選系統字型（子集嵌入、粗體字面或假粗體、直書）；授權禁止嵌入的灰掉、整個嵌入先提醒、缺字先提醒；原文字型已安裝就自動用它 |
+| 1.0.28 | 字型辨識：文字辨識視窗多「字型」頁，PDF 文字列出檔案記錄的字型（100%），掃描檔逐字比對本機字型、內建思源黑體與 Google Fonts，列相似度 %；〔套用〕設為文字方塊預設字型、字型選單多「字型辨識結果」，〔下載〕開 Google Fonts 字型頁 |
 
 ---
 
@@ -258,6 +270,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 - 文字方塊（FreeText）還不能旋轉。旋轉過的矩形、橢圓是靠外觀串流呈現，如果其他軟體重新產生外觀（例如在 Acrobat 裡改它的樣式），會變回不旋轉的樣子。
 - pdf.js 解析文字方塊的 `RC` 時，會印出「XFA rich text」警告。不影響顯示，但 RC 的 XHTML 格式可以再調整。
 - 還不能在程式裡「建立」新的圖層群組（只能使用 PDF 原本就有的群組，或把圖層拖進有子圖層的圖層裡）。
+- 字型辨識：新安裝的字型要重開程式才讀得到。幾乎一樣的字型（Arial 與 Helvetica 系、新細明體與細明體）分數會非常接近，排序可能互換。Google 清單會過時（改名、下架的家族請求失敗會跳過，`scripts/check-google-fonts.mjs` 找得出來）。送到 Google 的是要比對的那幾個字（去重複、依碼位排序），不是原文。比對只用測試機上的字型與合成掃描驗證過，Windows 上幾百個字型的速度要實測；很緊的英文排版、離本字很遠的部首仍可能切錯（那個字會比不像而被排除）。
 - 文字辨識：一次只用一種書寫方向；整頁混有直書時，直書部分要另外框選並切到「直書」。直書的辨識率比橫書低一些（測試範例 9 個字錯 1 個）。
 - 安裝檔沒有程式碼簽章，Windows 會顯示 SmartScreen 警告。**使用者已決定不做程式碼簽章**（2026-11-12，看過 SignPath、Certum 開源憑證、Microsoft Store、商業 OV 憑證的比較後），不用再提。
 - `app/index.html` 是單一大檔。如果要拆成多個模組，app:// 協定和 CSP 已經支援 ES module。
@@ -269,13 +282,12 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 使用者說「簡單的先提前做」：小修正和簡單的功能可以插隊先做（v1.0.25 就是檢視列修正＋排列頁面）。
 
 0. **修正：從其他 PDF 插入頁面**：使用者的「承攬商施工前必備檢核資料.pdf」在插入對話框只讀到 1 頁、預覽全白（一般 PDF 正常）。懷疑是 PDF 包（Portfolio：`/Collection` ＋內嵌的 PDF）或 XFA 表單。已請使用者提供檔案或回報左側「附件」分頁內容，確認原因後再修。
-1. **v1.0.28 字型辨識**：併入「文字辨識」，結果視窗分「文字｜字型」兩頁，列出可能的字型與相似度 %。PDF 本身的文字直接讀 PDF 記錄的字型名稱（100%）；圖片用逐字字形比對系統字型＋Google Fonts（`fonts.googleapis.com/css2?family=…&text=…` 只抓用到的字）。使用者選了這個做法；WhatTheFont 等網站沒有公開 API，不要去抓它們的網頁。
-2. **→ 便利貼功能增強**：可刪除；右鍵已放置的便利貼可編輯／複製／刪除；可編輯作者名字；設定裡有預設人員名單（可新增／刪除）。
-3. **→ 右鍵預設功能更變**：空白處右鍵不再出現頁面選單（複製／剪下／貼上頁、加空白頁、旋轉、轉圖片、刪除頁）；插入／新增物件或文字（含框選類工具）後，右鍵點空白處自動切回選取；選到物件時工具列自動換成該物件的編輯功能。
-4. **→ 擷取圖片：點選圖片後可刪除或更換**：「擷取圖片」工具點選某張圖片後，除了擷取，還能刪除檔案中的這張圖片，或「更換圖片」換成另一張。
-5. **→ 列印功能**（程式目前完全沒有列印）：使用者要求「非常完善的設定去配合印表機」，答覆如下——印到辦公室多功能事務機（A4／A3、雙面、紙匣、裝訂）、家用噴墨／雷射、也會印成 PDF（Microsoft Print to PDF）。要有：印表機、份數與自動分頁、頁面範圍、紙張、直橫向、縮放、彩色／黑白、是否印註解，加上雙面（長邊／短邊翻頁）、多頁印在一張（2／4／6／9／16）、手冊列印、大圖分割列印（海報）。介面選「程式內建列印視窗」：即時預覽每張紙、記住每台印表機上次的設定；紙匣、裝訂等驅動程式專屬設定一鍵轉到 Windows 列印對話框。Electron 可用 `webContents.getPrintersAsync()`、`webContents.print({deviceName, copies, collate, duplexMode, color, pageSize, landscape, margins, dpi, pageRanges, silent})`；版面（多頁合一、手冊、海報）由程式自己把頁面畫成紙張再送印。輪到時走完整設計流程（有不確定的細節使用者說可以問）。
-6. **→ 尋找與取代**（程式目前沒有）：Ctrl+F 尋找列，全部符合處標示、顯示「第 N／M 筆」、Enter／Shift+Enter 上下筆；左側加「搜尋」分頁列出頁碼與前後文；選項：區分大小寫、全字相符、全形半形視為相同。使用者要「也搜尋掃描頁」：沒有文字的頁先用文字辨識讀一次（記住結果），掃描頁只能找、不能取代。取代：逐筆確認或全部取代，用修改原文的機制（`removePageText`＋`writePageText`），取代後是真正的文字、可復原；字型沿用 v1.0.27（修改原文選字型）的能力。兩個一起做，排在列印之後。
-7. **→ Claude 增益集（排在最後）**：使用者想在 Claude 裡用自己的帳號下指令，由 Claude 用 PDF 工作台的功能修改 PDF。選了做法 A：Claude 桌面版擴充功能（`.mcpb`，MCP Bundle；Claude 桌面版內建 Node，使用者雙擊安裝或「設定 → 擴充功能 → 進階設定 → 安裝擴充功能…」）。PDF 工作台在設定裡開一個只限本機的連線埠＋配對碼，擴充功能（stdio MCP server）把工具呼叫轉給它；工具全部走 `mutate()`，可復原、不覆蓋原檔。第三方程式不能用 Claude 訂閱帳號登入（Anthropic 2026 年起禁止），所以「程式內建對話面板」（做法 B）只能用 API 金鑰，使用者暫時不要。做好後要給使用者一步一步的安裝說明。
+1. **→ 便利貼功能增強**：可刪除；右鍵已放置的便利貼可編輯／複製／刪除；可編輯作者名字；設定裡有預設人員名單（可新增／刪除）。
+2. **→ 右鍵預設功能更變**：空白處右鍵不再出現頁面選單（複製／剪下／貼上頁、加空白頁、旋轉、轉圖片、刪除頁）；插入／新增物件或文字（含框選類工具）後，右鍵點空白處自動切回選取；選到物件時工具列自動換成該物件的編輯功能。
+3. **→ 擷取圖片：點選圖片後可刪除或更換**：「擷取圖片」工具點選某張圖片後，除了擷取，還能刪除檔案中的這張圖片，或「更換圖片」換成另一張。
+4. **→ 列印功能**（程式目前完全沒有列印）：使用者要求「非常完善的設定去配合印表機」，答覆如下——印到辦公室多功能事務機（A4／A3、雙面、紙匣、裝訂）、家用噴墨／雷射、也會印成 PDF（Microsoft Print to PDF）。要有：印表機、份數與自動分頁、頁面範圍、紙張、直橫向、縮放、彩色／黑白、是否印註解，加上雙面（長邊／短邊翻頁）、多頁印在一張（2／4／6／9／16）、手冊列印、大圖分割列印（海報）。介面選「程式內建列印視窗」：即時預覽每張紙、記住每台印表機上次的設定；紙匣、裝訂等驅動程式專屬設定一鍵轉到 Windows 列印對話框。Electron 可用 `webContents.getPrintersAsync()`、`webContents.print({deviceName, copies, collate, duplexMode, color, pageSize, landscape, margins, dpi, pageRanges, silent})`；版面（多頁合一、手冊、海報）由程式自己把頁面畫成紙張再送印。輪到時走完整設計流程（有不確定的細節使用者說可以問）。
+5. **→ 尋找與取代**（程式目前沒有）：Ctrl+F 尋找列，全部符合處標示、顯示「第 N／M 筆」、Enter／Shift+Enter 上下筆；左側加「搜尋」分頁列出頁碼與前後文；選項：區分大小寫、全字相符、全形半形視為相同。使用者要「也搜尋掃描頁」：沒有文字的頁先用文字辨識讀一次（記住結果），掃描頁只能找、不能取代。取代：逐筆確認或全部取代，用修改原文的機制（`removePageText`＋`writePageText`），取代後是真正的文字、可復原；字型沿用 v1.0.27（修改原文選字型）的能力。兩個一起做，排在列印之後。
+6. **→ Claude 增益集（排在最後）**：使用者想在 Claude 裡用自己的帳號下指令，由 Claude 用 PDF 工作台的功能修改 PDF。選了做法 A：Claude 桌面版擴充功能（`.mcpb`，MCP Bundle；Claude 桌面版內建 Node，使用者雙擊安裝或「設定 → 擴充功能 → 進階設定 → 安裝擴充功能…」）。PDF 工作台在設定裡開一個只限本機的連線埠＋配對碼，擴充功能（stdio MCP server）把工具呼叫轉給它；工具全部走 `mutate()`，可復原、不覆蓋原檔。第三方程式不能用 Claude 訂閱帳號登入（Anthropic 2026 年起禁止），所以「程式內建對話面板」（做法 B）只能用 API 金鑰，使用者暫時不要。做好後要給使用者一步一步的安裝說明。
 
 ---
 
