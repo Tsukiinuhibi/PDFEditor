@@ -1,6 +1,6 @@
 # PDF 工作台（PDFEditor）交接文件
 
-這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-12，最新發布版本是 **v1.0.25**。
+這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-12，最新發布版本是 **v1.0.26**。
 
 ---
 
@@ -136,7 +136,12 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 工具：`setTool(t)`，搭配 `HINTS[t]`（上方提示列）。繪圖工具的設定在 `DRAW_TOOLS`、`STYLES`（存 localStorage）、`PRESETS`。新增工具時，這些都要補上，ribbon 也要加按鈕。
 - 圖示：`ICONS` 物件（SVG path）。所有工具列按鈕都是彩色，滑鼠移上去會變黃色，這是使用者的明確要求。
 - 顏色選擇一律用 `openColorPicker({anchor, value, none, title, onPick})`；對話框裡的按鈕用 `bindColorButton`。
-- localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, lastact.v1, lasttool.v1, pagecolor, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
+- 字型（v1.0.26）：
+  - `FONTCAT`／`loadFontCatalog()`：`queryLocalFonts()` 取得系統字型，每個家族挑一個代表字面，在背景一次讀一個字型檔（fontkit；.ttc 用 postscriptName 取出），得到顯示名稱（`zh-TW` 優先）和是不是中文字型（「中文字體」四個字都有），結果快取在 `pdfeditor.fontcat.v1`。
+  - 文字方塊的 run 可以有 `font`（CSS 家族名，空的就是預設）。預設字型堆疊是 `TB_FONT`，最前面是內建的 `PDFE Sans`（思源黑體），所以有沒有網路都一樣。編輯器裡的 span 用 `fontStack(f)`（指定字型後面接預設堆疊），這台電腦沒有那個字型時自動退回思源黑體，但字型名稱照樣保留。
+  - 字型選單 `openFontMenu()`（`#fontMenu`）：搜尋框、預設／最近用過（`pdfeditor.fonts.recent.v1`，只列這台電腦有的）／中文字型／其他字型。名稱捲到看得到時才套用它自己的字型（一次套用幾百個字型很慢）。
+  - 修改原文（`.tbed.real`）時沒有字型按鈕，`htmlToRuns` 也不記 `font`；那是 v1.0.27 要做的（嵌入字型）。
+- localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, fontcat.v1, fonts.recent.v1, lastact.v1, lasttool.v1, pagecolor, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
 - 測試用的鉤子：`window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars, getAnns, TBE, sel, …}`，端對端測試會用到，不要刪。
 
 ---
@@ -186,6 +191,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | 腳本 | 涵蓋內容 |
 |---|---|
 | textbox-basic / textbox-image-drop | 文字方塊、格式化、右鍵選單、拖入圖片 |
+| textbox-font | 字型目錄（.ttc 的繁中名稱、中文／其他分組、快取）、只改反白的字、外觀用該字型、再次編輯保留、怪字型名稱、游標處換字型、預設字型、修改原文不記字型、字型選單（分組、搜尋、最近用過只列已安裝、Esc、缺字型提示、右鍵「字型…」）、600 個字型的開啟與搜尋速度、讀不到系統字型 |
 | edit-page-text | 修改與刪除 PDF 原文、再次編輯 |
 | ocr | 文字辨識：PDF 文字一字不差、剪貼簿內容、乾淨掃描（橫書、直書）與低品質掃描的辨識率、強制影像辨識、Esc 關閉 |
 | viewbar-narrow | 1500／1100／900 px 的檢視列沒有按鈕被壓扁或重疊、窄時只留圖示、900 px 不出現捲軸、只剩圖示的按鈕可用、更窄時滾輪捲動 |
@@ -227,6 +233,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | 1.0.23 | 工具列精簡：顯示模式／按鍵設定／檢查更新合併成「設定」視窗；加頁 ▾、旋轉 ▾、簽署 ▾；復原／重做改小按鈕；「只顯示圖示」選項；滾輪左右捲動工具列 |
 | 1.0.24 | 文字辨識加強：原圖與去雜點（3×3 中值濾波）各辨識一次，取信心度高的；雜點多的掃描從 46% 提升到 97% |
 | 1.0.25 | 檢視列在窄視窗不再擠成一團（逐步只留圖示，最後才捲動）；縮圖右鍵「展開所有頁面（拖曳排序）」 |
+| 1.0.26 | 文字方塊選字型：讀取系統字型（中文名稱、分組、搜尋、最近用過）；文字方塊預設改用內建思源黑體 |
 
 ---
 
@@ -249,11 +256,10 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 使用者說「簡單的先提前做」：小修正和簡單的功能可以插隊先做（v1.0.25 就是檢視列修正＋排列頁面）。
 
 0. **修正：從其他 PDF 插入頁面**：使用者的「承攬商施工前必備檢核資料.pdf」在插入對話框只讀到 1 頁、預覽全白（一般 PDF 正常）。懷疑是 PDF 包（Portfolio：`/Collection` ＋內嵌的 PDF）或 XFA 表單。已請使用者提供檔案或回報左側「附件」分頁內容，確認原因後再修。
-1. **v1.0.26 文字方塊選字型**：讀取系統字型（`queryLocalFonts`），格式列加「字型 ▾」。規格 `docs/superpowers/specs/2026-11-12-font-picker-design.md`，計畫 `docs/superpowers/plans/2026-11-12-font-picker.md`（文件裡寫的是 v1.0.25，版號順延），工作分支 `wip/fonts`：計畫的 Task 1、2 已完成並通過測試（字型目錄、run 的 `font`），接著做 Task 3（字型選單 UI）與 Task 4。執行紀錄在 `.superpowers/sdd/2026-11-12-font-picker/progress.md`（git 不追蹤，只在原本的工作環境裡）。
-2. **v1.0.27 修改原文也能選系統字型**：存檔時嵌入 PDF。要處理：OS/2 `fsType` 禁止嵌入、.ttc 拆出單一字型、fontkit 子集化的短 `loca` 問題（見 2. 技術架構的字型說明）、字型度量、粗體字面、直書 `vmtx`。
-3. **v1.0.28 字型辨識**：併入「文字辨識」，結果視窗分「文字｜字型」兩頁，列出可能的字型與相似度 %。PDF 本身的文字直接讀 PDF 記錄的字型名稱（100%）；圖片用逐字字形比對系統字型＋Google Fonts（`fonts.googleapis.com/css2?family=…&text=…` 只抓用到的字）。使用者選了這個做法；WhatTheFont 等網站沒有公開 API，不要去抓它們的網頁。
-4. **→ 便利貼功能增強**：可刪除；右鍵已放置的便利貼可編輯／複製／刪除；可編輯作者名字；設定裡有預設人員名單（可新增／刪除）。
-5. **→ 右鍵預設功能更變**：空白處右鍵不再出現頁面選單（複製／剪下／貼上頁、加空白頁、旋轉、轉圖片、刪除頁）；插入／新增物件或文字（含框選類工具）後，右鍵點空白處自動切回選取；選到物件時工具列自動換成該物件的編輯功能。
+1. **v1.0.27 修改原文也能選系統字型**：存檔時嵌入 PDF。要處理：OS/2 `fsType` 禁止嵌入、.ttc 拆出單一字型、fontkit 子集化的短 `loca` 問題（見 2. 技術架構的字型說明）、字型度量、粗體字面、直書 `vmtx`。
+2. **v1.0.28 字型辨識**：併入「文字辨識」，結果視窗分「文字｜字型」兩頁，列出可能的字型與相似度 %。PDF 本身的文字直接讀 PDF 記錄的字型名稱（100%）；圖片用逐字字形比對系統字型＋Google Fonts（`fonts.googleapis.com/css2?family=…&text=…` 只抓用到的字）。使用者選了這個做法；WhatTheFont 等網站沒有公開 API，不要去抓它們的網頁。
+3. **→ 便利貼功能增強**：可刪除；右鍵已放置的便利貼可編輯／複製／刪除；可編輯作者名字；設定裡有預設人員名單（可新增／刪除）。
+4. **→ 右鍵預設功能更變**：空白處右鍵不再出現頁面選單（複製／剪下／貼上頁、加空白頁、旋轉、轉圖片、刪除頁）；插入／新增物件或文字（含框選類工具）後，右鍵點空白處自動切回選取；選到物件時工具列自動換成該物件的編輯功能。
 
 ---
 
