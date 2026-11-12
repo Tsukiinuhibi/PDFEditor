@@ -3612,7 +3612,9 @@ async function deleteAnnot(i, id){
    background, one file at a time, and the result is cached in localStorage.
    ==================================================================== */
 const FONTCAT = {ok:null, fams:[], busy:false, done:0, total:0, gen:0, subs:new Set()};   // gen: bumps when the list itself changes
-const FONTCAT_KEY = 'pdfeditor.fontcat.v1';
+const FONTCAT_KEY = 'pdfeditor.fontcat.v2';   // v2 adds embed / vert / bytes
+const FONT_FACES = new Map();   // family → its FontData faces from queryLocalFonts (to read a face's file later)
+const TEST_FONTS = new Map();   // (tests) fonts given as bytes: 'family|Regular' / 'family|Bold' → Uint8Array
 const FONT_LANGS = ['zh-TW', 'zh-HK', 'zh-MO', 'zh', 'zh-SG', 'en'];
 let fontListing = null, fontAnalysing = Promise.resolve(), fontNotify = 0;
 const fontCache = () => { try { return JSON.parse(localStorage.getItem(FONTCAT_KEY)) || {}; } catch (_) { return {}; } };
@@ -3630,15 +3632,36 @@ function fontFileName(font, fallback){
   return fallback;
 }
 // read a face's file: a single font (.ttf/.otf), or in a collection (.ttc) the face with this PostScript name,
-// else one of this family; null when the file cannot be read (then nothing is cached and it is tried again)
+// else one of this family; null when the file cannot be read (then nothing is cached and it is tried again).
+// embed: what the font's licence (OS/2 fsType) allows in a PDF: 'ok', 'full' (no subsetting: the whole font goes
+// in) or 'no' (restricted, or bitmaps only); vert: it has vertical metrics and vertical forms (vhea, vmtx, GSUB vert);
+// bytes: how much the font adds when embedded whole
 async function analyseFont(fam, face){
   try {
     const bytes = new Uint8Array(await (await face.blob()).arrayBuffer());
-    let font = fontkit.create(bytes);
-    if (font && Array.isArray(font.fonts)) font = font.fonts.find(f => f.postscriptName === fam.ps) || font.fonts.find(f => f.familyName === fam.family) || font.fonts[0];
+    let font = fontkit.create(bytes), size = bytes.length;
+    if (font && Array.isArray(font.fonts)) {
+      font = font.fonts.find(f => f.postscriptName === fam.ps) || font.fonts.find(f => f.familyName === fam.family) || font.fonts[0];
+      size = font ? Object.values(font.directory.tables).reduce((t, x) => t + (x.length || 0), 0) : 0;
+    }
     if (!font || !font.name) return null;
-    return {name:fontFileName(font, fam.family), cjk:[...'中文字體'].every(ch => font.hasGlyphForCodePoint(ch.codePointAt(0)))};
+    const fsType = (font['OS/2'] && font['OS/2'].fsType) || {}, tb = font.directory.tables;
+    let vertForms = false; try { vertForms = !!(font.GSUB && font.GSUB.featureList.some(f => f.tag === 'vert')); } catch (_) {}
+    return {name:fontFileName(font, fam.family), cjk:[...'中文字體'].every(ch => font.hasGlyphForCodePoint(ch.codePointAt(0))),
+      embed:fsType.noEmbedding || fsType.bitmapOnly ? 'no' : fsType.noSubsetting ? 'full' : 'ok', vert:!!(tb.vhea && tb.vmtx) && vertForms, bytes:size};
   } catch (_) { return null; }
+}
+// (tests) a font given as bytes behaves like an installed one: the page can draw it, the catalogue lists it, and
+// systemFontBytes hands out its bytes
+async function registerTestFont({family, b64, style = 'Regular'}){
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0)), bold = /bold/i.test(style);
+  const ff = new FontFace(family, bytes, {weight:bold ? '700' : '400'}); await ff.load(); document.fonts.add(ff);
+  TEST_FONTS.set(family + '|' + (bold ? 'Bold' : 'Regular'), bytes);
+  let fam = FONTCAT.fams.find(f => f.family === family);
+  if (!fam) { fam = {family, ps:'', name:family, cjk:false, embed:null, vert:null, bytes:0, faces:[]}; FONTCAT.fams.push(fam); FONTCAT.fams.sort((a, b) => a.family.localeCompare(b.family)); }
+  if (!bold) { const r = await analyseFont({family, ps:''}, {blob:async () => new Blob([bytes])}); if (r) Object.assign(fam, r); }
+  fam.faces.push({ps:'', style, full:family + ' ' + style});
+  FONTCAT.gen++; fontChanged();
 }
 // list the fonts (resolves as soon as the list is known; the files are read afterwards)
 function loadFontCatalog(){
@@ -3649,16 +3672,19 @@ function loadFontCatalog(){
       if (typeof window.queryLocalFonts !== 'function') throw new Error('no queryLocalFonts');
       faces = await window.queryLocalFonts();
     } catch (e) { FONTCAT.ok = false; FONTCAT.fams = []; FONTCAT.gen++; fontListing = null; fontChanged(); return; }   // tried again next time
-    const byFam = new Map();
+    const byFam = new Map(); FONT_FACES.clear();
     for (const f of faces) {
       if (!f.family) continue;
+      if (!FONT_FACES.has(f.family)) FONT_FACES.set(f.family, []);
+      FONT_FACES.get(f.family).push(f);
       const cur = byFam.get(f.family), regular = /^(regular|normal|book|roman)$/i.test(f.style || '');
       if (!cur || (regular && !cur.regular)) byFam.set(f.family, {face:f, regular});
     }
     const cache = fontCache(), todo = [];
     FONTCAT.fams = [...byFam.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([family, {face}]) => {
-      const fam = {family, ps:face.postscriptName || '', name:family, cjk:null}, c = cache[family + '|' + fam.ps];
-      if (c) { fam.name = c.name || family; fam.cjk = !!c.cjk; } else todo.push([fam, face]);
+      const fam = {family, ps:face.postscriptName || '', name:family, cjk:null, embed:null, vert:null, bytes:0,
+        faces:FONT_FACES.get(family).map(x => ({ps:x.postscriptName || '', style:x.style || '', full:x.fullName || ''}))}, c = cache[family + '|' + fam.ps];
+      if (c) Object.assign(fam, {name:c.name || family, cjk:!!c.cjk, embed:c.embed || 'ok', vert:!!c.vert, bytes:c.bytes || 0}); else todo.push([fam, face]);
       return fam;
     });
     FONTCAT.ok = true; FONTCAT.gen++; FONTCAT.done = 0; FONTCAT.total = todo.length; FONTCAT.busy = !!todo.length; fontChanged();
@@ -8043,6 +8069,7 @@ if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyThem
 paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box, tidyOcr, denoiseCanvas,
   fontCat:() => ({ok:FONTCAT.ok, fams:FONTCAT.fams.map(f => ({...f}))}), fontLoad:loadFontCatalog,
+  registerTestFont,
   fontCatFake:(n, ok = true) => { FONTCAT.ok = ok; FONTCAT.busy = false; FONTCAT.gen++; FONTCAT.fams = ok ? Array.from({length:n}, (_, k) => { const f = 'Fake Font ' + String(k).padStart(3, '0'); return {family:f, ps:'', name:f, cjk:k % 5 === 0}; }) : []; fontChanged(); },
   fontAnalyse:({family, ps, b64}) => { const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0)); return analyseFont({family, ps}, {blob:async () => new Blob([bytes])}); },
   fontCatBusySim:ms => { const end = performance.now() + ms; FONTCAT.busy = true; FONTCAT.done = 0; FONTCAT.total = 100;
