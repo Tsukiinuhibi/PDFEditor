@@ -18,7 +18,10 @@ export function fixture(name){
   return p;
 }
 export async function launch(pdfName){
-  const pdf = fixture(pdfName);
+  return launchPath(fixture(pdfName));
+}
+// open a PDF the script made itself (it must live in TMP)
+export async function launchPath(pdf){
   const app = await electron.launch({
     executablePath: ELECTRON,
     args: [...(process.platform === 'linux' ? ['--no-sandbox'] : []), ROOT, pdf],

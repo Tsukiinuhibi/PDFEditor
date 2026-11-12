@@ -659,7 +659,11 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
 .ly-row.drop-a{box-shadow:inset 0 2px 0 #1c64d9}
 .ly-row.drop-b{box-shadow:inset 0 -2px 0 #1c64d9}
 .ly-row.drop-in{background:rgba(28,100,217,.18);border-color:#1c64d9}
-.ly-objs{margin:0 0 4px 16px;border-left:1px solid var(--line);padding-left:4px}
+.ly-objs{margin:0 0 4px calc(16px + var(--d,0) * 14px);border-left:1px solid var(--line);padding-left:4px}
+.ly-row{padding-left:calc(var(--d,0) * 14px)}
+.ly-row.ly-grp .ly-name{font-weight:600}
+.ly-gi{display:flex;align-items:center;color:#e8a317;margin-left:2px}
+.ly-gi svg{width:15px;height:15px;fill:rgba(232,163,23,.18);stroke:currentColor;stroke-width:1.8;stroke-linejoin:round}
 .ly-obj{display:flex;align-items:center;gap:4px;height:24px;font-size:11.5px;color:var(--ink2);border-radius:4px;cursor:pointer;padding-right:4px}
 .ly-obj:hover{background:var(--hover)}
 .ly-obj.hid .ly-on{opacity:.45;text-decoration:line-through}
@@ -6196,22 +6200,62 @@ function ocpOf(doc, create){
 }
 const hasRef = (a, r) => { if (!a) return false; for (let k = 0; k < a.size(); k++) { const v = a.get(k); if (v instanceof PDFRef && refId(v) === refId(r)) return true; } return false; };
 const dropRef = (a, r) => { if (!a) return; for (let k = a.size() - 1; k >= 0; k--) { const v = a.get(k); if (v instanceof PDFRef && refId(v) === refId(r)) a.remove(k); } };
-// layers top-first, as listed by /D /Order (nested groups are flattened)
+/* /D /Order as a tree. In /Order a layer is followed by an array of its child layers, and an array that starts
+   with a text string is a named group. Nodes: {ref, id, kids} for a layer, {group:true, label, kids, id} for a group
+   (group ids are their position, e.g. "g:2" or "g:0.1", taken from the same file the panel shows). */
+function readOrderTree(doc){
+  const o = ocpOf(doc, false); if (!o) return [];
+  const ctx = doc.context, valid = new Set(), all = [], seen = new Set();
+  for (let k = 0; k < o.ocgs.size(); k++) { const r = o.ocgs.get(k); if (r instanceof PDFRef && ctx.lookupMaybe(r, PDFDict)) { valid.add(refId(r)); all.push(r); } }
+  const conv = (a, from = 0) => {
+    const out = [];
+    for (let k = from; k < a.size(); k++) {
+      const v = a.get(k);
+      if (v instanceof PDFRef && valid.has(refId(v))) { if (!seen.has(refId(v))) { seen.add(refId(v)); out.push({ref:v, id:refId(v), kids:[]}); } continue; }
+      const sub = v instanceof PDFArray ? v : v instanceof PDFRef ? ctx.lookup(v) : null; if (!(sub instanceof PDFArray)) continue;
+      const first = sub.size() ? sub.get(0) : null;
+      if (first instanceof PDFString || first instanceof PDFHexString) out.push({group:true, label:first.decodeText(), kids:conv(sub, 1)});
+      else { const kids = conv(sub), prev = out[out.length - 1]; if (prev && !prev.group) prev.kids.push(...kids); else out.push(...kids); }
+    }
+    return out;
+  };
+  const ord = o.d.lookupMaybe(N_('Order'), PDFArray), tree = ord ? conv(ord) : [];
+  all.forEach(r => { if (!seen.has(refId(r))) { seen.add(refId(r)); tree.push({ref:r, id:refId(r), kids:[]}); } });
+  const name = (nodes, path) => nodes.forEach((n, k) => { const p = path ? path + '.' + k : String(k); if (n.group) n.id = 'g:' + p; name(n.kids, p); });
+  name(tree, '');
+  return tree;
+}
+function writeOrderTree(doc, tree){
+  const lit = nodes => { const out = [];
+    nodes.forEach(n => {
+      if (n.group) { if (n.kids.length) out.push([PDFHexString.fromText(n.label), ...lit(n.kids)]); return; }   // an empty group disappears
+      out.push(n.ref); if (n.kids.length) out.push(lit(n.kids));
+    });
+    return out; };
+  ocpOf(doc, true).d.set(N_('Order'), doc.context.obj(lit(tree)));
+}
+const treeLayers = nodes => nodes.flatMap(n => n.group ? treeLayers(n.kids) : [n, ...treeLayers(n.kids)]);   // top-first, children right under their parent
+function findBy(nodes, pred, parent = null){
+  for (const n of nodes) {
+    if (pred(n)) return {node:n, list:nodes, parent};
+    const f = findBy(n.kids, pred, n); if (f) return f;
+  }
+  return null;
+}
+const findNode = (tree, id) => findBy(tree, n => n.id === id);
+const famOf = (tree, id) => { const f = findNode(tree, id); return f ? treeLayers([f.node]).map(n => n.id) : [id]; };   // a layer and every layer under it
+const inTree = (n, m) => n === m || n.kids.some(k => inTree(k, m));
+// layers top-first, as listed by /D /Order; each knows how deep it sits
 function readLayers(doc){
   const o = ocpOf(doc, false); if (!o) return [];
-  const ctx = doc.context, all = [];
-  for (let k = 0; k < o.ocgs.size(); k++) { const r = o.ocgs.get(k); if (r instanceof PDFRef && ctx.lookupMaybe(r, PDFDict)) all.push(r); }
-  const ids = new Set(all.map(refId)), order = [], seen = new Set();
-  const flat = a => { for (let k = 0; k < a.size(); k++) { const v = a.get(k);
-    if (v instanceof PDFRef && ids.has(refId(v))) { if (!seen.has(refId(v))) { seen.add(refId(v)); order.push(v); } }
-    else { const sub = v instanceof PDFArray ? v : v instanceof PDFRef ? ctx.lookup(v) : null; if (sub instanceof PDFArray) flat(sub); } } };
-  const ord = o.d.lookupMaybe(N_('Order'), PDFArray); if (ord) flat(ord);
-  all.forEach(r => { if (!seen.has(refId(r))) { seen.add(refId(r)); order.push(r); } });
+  const ctx = doc.context, depth = new Map();
+  const walk = (nodes, d) => nodes.forEach(n => { if (!n.group) depth.set(n.id, d); walk(n.kids, d + 1); });
+  const tree = readOrderTree(doc); walk(tree, 0);
   const base = o.d.lookupMaybe(N_('BaseState'), PDFName), baseOff = !!base && base.asString() === '/OFF';
   const on = o.d.lookupMaybe(N_('ON'), PDFArray), off = o.d.lookupMaybe(N_('OFF'), PDFArray);
-  return order.map(r => {
+  return treeLayers(tree).map(({ref:r}) => {
     const dict = ctx.lookup(r, PDFDict);
-    return {ref:r, id:refId(r), name:txt(dict.lookupMaybe(N_('Name'), PDFString, PDFHexString)) || '未命名圖層',
+    return {ref:r, id:refId(r), name:txt(dict.lookupMaybe(N_('Name'), PDFString, PDFHexString)) || '未命名圖層', depth:depth.get(refId(r)) || 0,
       visible:baseOff ? hasRef(on, r) : !hasRef(off, r), locked:String(dict.get(N_('PDFE_Lock'))) === 'true', app:String(dict.get(N_('PDFE_Layer'))) === 'true'};
   });
 }
@@ -6235,9 +6279,9 @@ function layerModel(){
   if (LM.bytes === S.bytes && LM.p) return LM.p;
   const bytes = S.bytes;
   LM = {bytes, p:(async () => {
-    if (!bytes) return {layers:[], objs:[], byId:new Map()};
+    if (!bytes) return {layers:[], tree:[], objs:[], byId:new Map()};
     const doc = await PDFDocument.load(bytes, {ignoreEncryption:true, updateMetadata:false});
-    const layers = readLayers(doc), ids = new Set(layers.map(l => l.id)), objs = [], byId = new Map();
+    const layers = readLayers(doc), tree = readOrderTree(doc), ids = new Set(layers.map(l => l.id)), objs = [], byId = new Map();
     eachAnnot(doc, (d, r, i, k) => {
       if (!layerable(d)) return;
       const sub = subOf(d), f = d.lookupMaybe(N_('F'), PDFNumber), subj = txt(d.lookupMaybe(N_('Subj'), PDFString, PDFHexString));
@@ -6245,8 +6289,8 @@ function layerModel(){
         label:subj || ANN_LABEL[sub] || sub, contents:txt(d.lookupMaybe(N_('Contents'), PDFString, PDFHexString))};
       objs.push(o); byId.set(o.id, o);
     });
-    return {layers, objs, byId};
-  })().catch(e => { console.error(e); return {layers:[], objs:[], byId:new Map()}; })};
+    return {layers, tree, objs, byId};
+  })().catch(e => { console.error(e); return {layers:[], tree:[], objs:[], byId:new Map()}; })};
   return LM.p;
 }
 // only documents that actually have layers pay for parsing them
@@ -6288,13 +6332,14 @@ function restack(doc){
     page.node.set(N_('Annots'), doc.context.obj(sorted.map(it => it.r)));
   });
 }
+// a new layer goes right above layer `after` (in the same group), else on top (or at the bottom)
 function createLayer(doc, name, {top = true, after = null} = {}){
-  const before = readLayers(doc).map(l => l.ref);
+  const tree = readOrderTree(doc);
   const o = ocpOf(doc, true), ref = doc.context.register(doc.context.obj({Type:'OCG', Name:PDFHexString.fromText(name), PDFE_Layer:true}));
   o.ocgs.push(ref);
-  let order = top ? [ref, ...before] : [...before, ref];
-  if (after) { const k = before.findIndex(r => refId(r) === after); if (k >= 0) order = [...before.slice(0, k), ref, ...before.slice(k)]; }
-  o.d.set(N_('Order'), doc.context.obj(order));
+  const node = {ref, id:refId(ref), kids:[]}, f = after && findNode(tree, after);
+  if (f) f.list.splice(f.list.indexOf(f.node), 0, node); else if (top) tree.unshift(node); else tree.push(node);
+  writeOrderTree(doc, tree);
   dropRef(o.arr('OFF'), ref); o.arr('ON').push(ref);
   return ref;
 }
@@ -6308,15 +6353,15 @@ function materialize(doc){
 const layerById = (doc, id) => readLayers(doc).find(l => l.id === id);
 function setLayerVisible(doc, l, vis){ const o = ocpOf(doc, true); dropRef(o.arr('ON'), l.ref); dropRef(o.arr('OFF'), l.ref); o.arr(vis ? 'ON' : 'OFF').push(l.ref); }
 function removeLayer(doc, l, {deleteObjects = false, moveTo = null} = {}){
-  const o = ocpOf(doc, true), ids = new Set([l.id]);
+  const o = ocpOf(doc, true), ids = new Set([l.id]), tree = readOrderTree(doc), f = findNode(tree, l.id);
+  if (f) f.list.splice(f.list.indexOf(f.node), 1, ...f.node.kids);   // its child layers take its place
   doc.getPages().forEach((page, i) => {
     const doomed = [];
     eachAnnotOnPage(doc, page, (d, r) => { if (ocOfDict(doc, d, ids)) { if (deleteObjects) doomed.push(r); else if (moveTo) d.set(N_('OC'), moveTo); else d.delete(N_('OC')); } });
     doomed.forEach(r => removeAnnotRefs(doc, i, r));
   });
   dropRef(o.ocgs, l.ref); ['ON', 'OFF', 'Locked', 'RBGroups'].forEach(k => dropRef(o.d.lookupMaybe(N_(k), PDFArray), l.ref));
-  const rest = readLayers(doc).map(x => x.ref).filter(r => refId(r) !== l.id);
-  o.d.set(N_('Order'), doc.context.obj(rest));
+  writeOrderTree(doc, tree);
   if (!readLayers(doc).length) doc.catalog.delete(N_('OCProperties'));
 }
 function eachAnnotOnPage(doc, page, cb){
@@ -6344,37 +6389,61 @@ async function addLayer(){
   });
   if (newId) { S.activeLayer = newId; buildLayersPanel(); }
 }
+// show / hide a layer (with the layers under it) or a whole group; solo = show only that
 async function toggleLayerVisible(id, solo){
   await layerEdit(null, doc => {
-    const ref = lyRef(doc, id); if (!ref) return false;
-    const L = readLayers(doc), me = L.find(l => l.id === refId(ref));
+    const grp = id.startsWith('g:'), ref = grp ? null : lyRef(doc, id); if (!grp && !ref) return false;
+    const L = readLayers(doc), fam = new Set(famOf(readOrderTree(doc), grp ? id : refId(ref)));
+    const mine = L.filter(l => fam.has(l.id)); if (!mine.length) return false;
     if (solo) {
-      const alone = L.every(l => l.id === me.id ? l.visible : !l.visible);
-      L.forEach(l => setLayerVisible(doc, l, alone ? true : l.id === me.id));
-    } else setLayerVisible(doc, me, !me.visible);
+      const alone = L.every(l => fam.has(l.id) ? l.visible : !l.visible);
+      L.forEach(l => setLayerVisible(doc, l, alone ? true : fam.has(l.id)));
+    } else {
+      const v = grp ? !mine.some(l => l.visible) : !mine[0].visible;
+      mine.forEach(l => setLayerVisible(doc, l, v));
+    }
   });
 }
 async function toggleLayerLock(id){
   await layerEdit(null, doc => {
-    const ref = lyRef(doc, id); if (!ref) return false;
-    const d = doc.context.lookup(ref, PDFDict);
-    if (String(d.get(N_('PDFE_Lock'))) === 'true') d.delete(N_('PDFE_Lock')); else d.set(N_('PDFE_Lock'), doc.context.obj(true));
+    const grp = id.startsWith('g:'), ref = grp ? null : lyRef(doc, id); if (!grp && !ref) return false;
+    const fam = new Set(famOf(readOrderTree(doc), grp ? id : refId(ref))), mine = readLayers(doc).filter(l => fam.has(l.id)); if (!mine.length) return false;
+    const lock = grp ? !mine.every(l => l.locked) : !mine[0].locked;
+    mine.forEach(l => { const d = doc.context.lookup(l.ref, PDFDict); if (lock) d.set(N_('PDFE_Lock'), doc.context.obj(true)); else d.delete(N_('PDFE_Lock')); });
   });
+}
+async function renameGroup(id, name){
+  name = (name || '').trim(); if (!name) return;
+  await layerEdit('已重新命名群組', doc => { const tree = readOrderTree(doc), f = findNode(tree, id); if (!f) return false; f.node.label = name; writeOrderTree(doc, tree); });
+}
+async function ungroup(id){
+  await layerEdit('已解散群組', doc => { const tree = readOrderTree(doc), f = findNode(tree, id); if (!f) return false; f.list.splice(f.list.indexOf(f.node), 1, ...f.node.kids); writeOrderTree(doc, tree); });
 }
 async function renameLayer(id, name){
   name = (name || '').trim(); if (!name) return;
   await layerEdit('已重新命名圖層', doc => { const ref = lyRef(doc, id); if (!ref) return false; doc.context.lookup(ref, PDFDict).set(N_('Name'), PDFHexString.fromText(name)); });
 }
-async function moveLayer(id, target, after){   // place layer `id` before (or after) layer `target`; target null = by one step (after: +1 down / -1 up)
+// move layer or group `id`: target null = one step (where: -1 up / +1 down; past the end of a group it steps out of it);
+// otherwise before (where false) or after (true) `target`, or 'into' the group or layer `target` (on top of its contents)
+async function moveLayer(id, target, where){
   await layerEdit('已調整圖層順序', doc => {
-    const L = readLayers(doc).map(l => l.ref), k = L.findIndex(r => refId(r) === id); if (k < 0) return false;
-    const [me] = L.splice(k, 1);
-    let at;
-    if (target == null) at = clamp(k + after, 0, L.length);
-    else { at = L.findIndex(r => refId(r) === target); if (at < 0) return false; if (after) at++; }
-    if (at === k) return false;
-    L.splice(at, 0, me);
-    ocpOf(doc, true).d.set(N_('Order'), doc.context.obj(L));
+    const tree = readOrderTree(doc), f = findNode(tree, id); if (!f) return false;
+    const me = f.node, k = f.list.indexOf(me);
+    if (target == null) {
+      const j = k + where;
+      if (j >= 0 && j < f.list.length) { f.list.splice(k, 1); f.list.splice(j, 0, me); }
+      else {
+        if (!f.parent) return false;
+        const up = findBy(tree, n => n === f.parent);
+        f.list.splice(k, 1); up.list.splice(up.list.indexOf(f.parent) + (where < 0 ? 0 : 1), 0, me);
+      }
+    } else {
+      const t = findNode(tree, target); if (!t || inTree(me, t.node)) return false;
+      f.list.splice(k, 1);
+      if (where === 'into') t.node.kids.unshift(me);
+      else t.list.splice(t.list.indexOf(t.node) + (where ? 1 : 0), 0, me);
+    }
+    writeOrderTree(doc, tree);
   });
 }
 async function mergeDown(id){
@@ -6435,7 +6504,10 @@ const LY_ICON = {
   eyeOff:'<svg viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6C3.9 8.4 2 12 2 12s3.6 7 10 7a9.6 9.6 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>',
   lock:'<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
   unlock:'<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.8-1.2"/></svg>',
+  folder:'<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
 };
+const LY_SHUT = new Set();   // collapsed groups (by name and place)
+const grpKey = n => n.id + '|' + n.label;
 async function buildLayersPanel(){
   const panel = $('#p-layers'); if (!panel || !panel.classList.contains('on')) return;
   if (!S.pdf) { panel.innerHTML = '<div class="empty-note">尚未開啟檔案</div>'; return; }
@@ -6447,27 +6519,44 @@ async function buildLayersPanel(){
   const objRow = o => `<div class="ly-obj${o.hidden ? ' hid' : ''}" data-oid="${o.id}" draggable="true" title="點一下前往並選取；拖曳到其他圖層可移動">
       <button class="ly-oeye" title="${o.hidden ? '顯示' : '隱藏'}這個物件">${o.hidden ? LY_ICON.eyeOff : LY_ICON.eye}</button>
       <span class="ly-on">${esc(o.label)}${o.contents && o.sub !== 'Stamp' ? '：' + esc(o.contents.slice(0, 18)) : ''}</span><span class="ly-op">P${o.i + 1}</span></div>`;
-  const row = l => {
+  const row = (l, d = 0) => {
     const list = objsOf(l.id), open = LY_OPEN.has(l.id);
-    return `<div class="ly-row${l.id === act ? ' act' : ''}${l.visible ? '' : ' off'}${l.locked ? ' lk' : ''}" data-id="${l.id}" draggable="${l.virtual ? 'false' : 'true'}">
+    return `<div class="ly-row${l.id === act ? ' act' : ''}${l.visible ? '' : ' off'}${l.locked ? ' lk' : ''}"${d ? ` style="--d:${d}"` : ''} data-id="${l.id}" draggable="${l.virtual ? 'false' : 'true'}">
       <button class="ly-car${open ? ' open' : ''}" title="展開／收合物件">${list.length ? '▸' : ''}</button>
       <button class="ly-eye" title="顯示／隱藏（Alt+點：只顯示這個圖層）">${l.visible ? LY_ICON.eye : LY_ICON.eyeOff}</button>
       <button class="ly-lock${l.locked ? ' on' : ''}" title="${l.locked ? '解除鎖定' : '鎖定（不能選取、移動或擦除）'}">${l.locked ? LY_ICON.lock : LY_ICON.unlock}</button>
       <span class="ly-name" title="雙擊重新命名">${esc(l.name)}</span>${l.app ? '' : '<span class="ly-tag" title="文件原有的圖層">文件</span>'}<span class="ly-n">${list.length}</span></div>
-      ${open && list.length ? `<div class="ly-objs">${list.map(objRow).join('')}</div>` : ''}`;
+      ${open && list.length ? `<div class="ly-objs"${d ? ` style="--d:${d}"` : ''}>${list.map(objRow).join('')}</div>` : ''}`;
   };
+  // a named group from the file: shows / hides and locks everything in it; layers can be dragged in and out
+  const byId = new Map(rows.map(l => [l.id, l]));
+  const grpRow = (n, d) => {
+    const fam = treeLayers(n.kids).map(x => byId.get(x.id)).filter(Boolean), shut = LY_SHUT.has(grpKey(n));
+    const vis = fam.some(l => l.visible), lk = fam.length > 0 && fam.every(l => l.locked);
+    return `<div class="ly-row ly-grp${vis ? '' : ' off'}${lk ? ' lk' : ''}"${d ? ` style="--d:${d}"` : ''} data-id="${n.id}" data-shut="${shut ? 1 : ''}" draggable="true">
+      <button class="ly-car${shut ? '' : ' open'}" title="展開／收合群組">▸</button>
+      <button class="ly-eye" title="顯示／隱藏整個群組（Alt+點：只顯示這個群組）">${vis ? LY_ICON.eye : LY_ICON.eyeOff}</button>
+      <button class="ly-lock${lk ? ' on' : ''}" title="${lk ? '解除鎖定整個群組' : '鎖定整個群組'}">${lk ? LY_ICON.lock : LY_ICON.unlock}</button>
+      <span class="ly-gi">${LY_ICON.folder}</span><span class="ly-name" title="雙擊重新命名">${esc(n.label)}</span><span class="ly-n" title="群組裡的圖層數">${fam.length}</span></div>`;
+  };
+  const tree = virtual ? rows.map(l => ({id:l.id, kids:[]})) : lm.tree, html = [];
+  const walk = (nodes, d) => nodes.forEach(n => {
+    if (n.group) { html.push(grpRow(n, d)); if (!LY_SHUT.has(grpKey(n))) walk(n.kids, d + 1); }
+    else { const l = byId.get(n.id); if (l) html.push(row(l, d)); walk(n.kids, d + 1); }
+  });
+  walk(tree, 0);
   panel.innerHTML = `<div class="ly-tools">
       <button data-ly="add" title="新增圖層（放在目前圖層上方）">＋ 新增</button>
       <span class="sp"></span>
       <button data-ly="up" title="上移目前圖層">▲</button><button data-ly="down" title="下移目前圖層">▼</button>
       <button data-ly="merge" title="把目前圖層合併到下方圖層">⤓</button><button data-ly="del" title="刪除目前圖層">🗑</button></div>
-    <div class="ly-list">${rows.map(row).join('')}
+    <div class="ly-list">${html.join('')}
       ${loose.length ? `<div class="ly-row loose" data-id="__loose"><button class="ly-car${LY_OPEN.has('__loose') ? ' open' : ''}">▸</button><span class="ly-name">未分層的物件</span><span class="ly-n">${loose.length}</span></div>
         ${LY_OPEN.has('__loose') ? `<div class="ly-objs">${loose.map(objRow).join('')}</div>` : ''}
         <button class="ly-adopt" data-ly="adopt">把未分層的物件放進目前圖層</button>` : ''}
       <div class="ly-row base" title="PDF 原本的頁面內容永遠在最底層"><span class="ly-car"></span><span class="ly-pg">📄</span><span class="ly-name">頁面內容</span></div>
     </div>
-    <div class="ly-note">${virtual ? '目前所有註解都在「圖層 1」。按「＋ 新增圖層」建立更多圖層，新畫的註解會放進選取（反白）的圖層。' : '反白的是目前圖層，新畫的註解會放在這裡。拖曳圖層調整上下順序，拖曳物件可換圖層；右鍵有更多選項。'}</div>`;
+    <div class="ly-note">${virtual ? '目前所有註解都在「圖層 1」。按「＋ 新增圖層」建立更多圖層，新畫的註解會放進選取（反白）的圖層。' : '反白的是目前圖層，新畫的註解會放在這裡。拖曳圖層調整上下順序，拖曳物件可換圖層；右鍵有更多選項。' + (lm.tree.some(n => n.group || n.kids.length) ? '拖到群組（或有子圖層的圖層）中間可以放進去；群組的眼睛和鎖會套用到整組。' : '')}</div>`;
 }
 const lyPanel = () => $('#p-layers');
 function wireLayersPanel(){
@@ -6489,6 +6578,12 @@ function wireLayersPanel(){
     if (ob) { if (t.closest('.ly-oeye')) toggleObjHidden(ob.dataset.oid); else gotoObj(ob.dataset.oid); return; }
     const r = t.closest('.ly-row'); if (!r || r.classList.contains('base')) return;
     const id = r.dataset.id;
+    if (r.classList.contains('ly-grp')) {
+      if (t.closest('.ly-car')) { const key = id + '|' + r.querySelector('.ly-name').textContent; LY_SHUT.has(key) ? LY_SHUT.delete(key) : LY_SHUT.add(key); buildLayersPanel(); return; }
+      if (t.closest('.ly-eye')) return toggleLayerVisible(id, e.altKey);
+      if (t.closest('.ly-lock')) return toggleLayerLock(id);
+      return;
+    }
     if (t.closest('.ly-car')) { LY_OPEN.has(id) ? LY_OPEN.delete(id) : LY_OPEN.add(id); buildLayersPanel(); return; }
     if (id === '__loose') return;
     if (t.closest('.ly-eye')) return toggleLayerVisible(id, e.altKey);
@@ -6502,7 +6597,7 @@ function wireLayersPanel(){
     const id = nm.closest('.ly-row').dataset.id, inp = document.createElement('input');
     inp.className = 'ly-ren'; inp.value = nm.textContent; nm.replaceWith(inp); inp.focus(); inp.select();
     let done = false;
-    const fin = ok => { if (done) return; done = true; if (ok && inp.value.trim() && inp.value.trim() !== nm.textContent) renameLayer(id, inp.value); else buildLayersPanel(); };
+    const fin = ok => { if (done) return; done = true; if (ok && inp.value.trim() && inp.value.trim() !== nm.textContent) (id.startsWith('g:') ? renameGroup : renameLayer)(id, inp.value); else buildLayersPanel(); };
     inp.onkeydown = ev => { ev.stopPropagation(); if (ev.key === 'Enter') fin(true); if (ev.key === 'Escape') fin(false); };
     inp.onblur = () => fin(true);
   });
@@ -6521,6 +6616,20 @@ function wireLayersPanel(){
       return;
     }
     const id = r.dataset.id; if (id === '__loose') return;
+    if (r.classList.contains('ly-grp')) {
+      const vis = !r.classList.contains('off'), lk = r.classList.contains('lk');
+      showLyMenu(e, `<div class="hd">群組：${esc(r.querySelector('.ly-name').textContent)}</div><button data-m="ren">重新命名</button>
+        <button data-m="vis">${vis ? '隱藏' : '顯示'}整個群組</button><button data-m="solo">只顯示這個群組</button><button data-m="lock">${lk ? '解除鎖定' : '鎖定'}整個群組</button>
+        <hr><button data-m="ungroup">解散群組（保留裡面的圖層）</button>`,
+        m => {
+          if (m === 'ren') { const nm = lyPanel().querySelector(`.ly-row[data-id="${id}"] .ly-name`); nm && nm.dispatchEvent(new MouseEvent('dblclick', {bubbles:true})); }
+          if (m === 'vis') toggleLayerVisible(id, false);
+          if (m === 'solo') toggleLayerVisible(id, true);
+          if (m === 'lock') toggleLayerLock(id);
+          if (m === 'ungroup') ungroup(id);
+        });
+      return;
+    }
     const l = id === '__v' ? {name:'圖層 1', visible:true, locked:false} : lm.layers.find(x => x.id === id); if (!l) return;
     const k = lm.layers.findIndex(x => x.id === id), n = lm.objs.filter(o => id === '__v' || o.layer === id).length;
     showLyMenu(e, `<div class="hd">${esc(l.name)}</div><button data-m="active">設為目前圖層</button><button data-m="ren">重新命名</button>
@@ -6550,20 +6659,26 @@ function wireLayersPanel(){
     if (ob) drag = {obj:ob.dataset.oid}; else if (r && r.draggable) drag = {layer:r.dataset.id}; else return;
     e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'pdfe-layer');
   });
-  const target = e => { const r = e.target.closest && e.target.closest('.ly-row'); return r && !r.classList.contains('base') && (drag && drag.obj ? true : !r.classList.contains('loose')) ? r : null; };
+  const target = e => { const r = e.target.closest && e.target.closest('.ly-row'); return r && !r.classList.contains('base') && (drag && drag.obj ? !r.classList.contains('ly-grp') : !r.classList.contains('loose')) ? r : null; };
   const clear = () => p.querySelectorAll('.drop-a,.drop-b,.drop-in').forEach(x => x.classList.remove('drop-a', 'drop-b', 'drop-in'));
+  // where a dragged layer lands on row r: above it, inside it (an open group, or a layer that has layers under it), or below it
+  const zone = (r, y) => {
+    const b = r.getBoundingClientRect(), f = (y - b.top) / b.height, holder = r.classList.contains('ly-grp') || +(r.nextElementSibling && r.nextElementSibling.style.getPropertyValue('--d') || 0) > +(r.style.getPropertyValue('--d') || 0);
+    if (!holder) return f < .5 ? 'before' : 'after';
+    return f < .3 ? 'before' : (r.dataset.shut && f > .7) ? 'after' : 'into';
+  };
   p.addEventListener('dragover', e => {
     if (!drag) return; const r = target(e); clear(); if (!r) return;
     e.preventDefault(); e.stopPropagation();
     if (drag.obj) r.classList.add('drop-in');
-    else if (r.dataset.id !== drag.layer && r.dataset.id !== '__v') { const b = r.getBoundingClientRect(); r.classList.add(e.clientY < b.top + b.height / 2 ? 'drop-a' : 'drop-b'); }
+    else if (r.dataset.id !== drag.layer && r.dataset.id !== '__v') r.classList.add({before:'drop-a', after:'drop-b', into:'drop-in'}[zone(r, e.clientY)]);
   });
   p.addEventListener('dragleave', e => { if (!p.contains(e.relatedTarget)) clear(); });
   p.addEventListener('drop', e => {
     if (!drag) return; e.preventDefault(); e.stopPropagation();
     const r = target(e), d = drag; clear(); drag = null; if (!r) return;
     if (d.obj) moveObjToLayer([d.obj], r.dataset.id);
-    else if (r.dataset.id !== d.layer && r.dataset.id !== '__v') { const b = r.getBoundingClientRect(); moveLayer(d.layer, r.dataset.id, e.clientY >= b.top + b.height / 2); }
+    else if (r.dataset.id !== d.layer && r.dataset.id !== '__v') { const z = zone(r, e.clientY); moveLayer(d.layer, r.dataset.id, z === 'into' ? 'into' : z === 'after'); }
   });
   p.addEventListener('dragend', () => { drag = null; clear(); });
 }
