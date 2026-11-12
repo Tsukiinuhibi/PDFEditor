@@ -120,7 +120,10 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - fontkit 子集化的短 `loca` 問題現在在程式裡修好了（`patchFontkitSubset` 把奇數長度的字形補一個位元組），系統字型不用預先處理；內建思源黑體照舊已補齊。
 - 存檔前（`commitTextEditor`，編輯器還開著）：`resolveRealFonts` 把讀不到的字型換成思源黑體並 toast；`realTextCheck` 找出「指定字型沒有、思源黑體有」的字 → 跳「字型裡沒有這些字」，選「回去修改」編輯器維持開著，選「這些字改用思源黑體」就 `missingToDefault` 拆 run；連思源黑體都沒有的字照舊退回 FreeText 圖片做法。
 - 版面：`layoutReal(lines, strut)` 的字寬用各字型 fontkit 的前進寬（PDF 就是這樣畫），行高與基線用 `fontBoxMeasurer`（canvas 量的 ascent／descent，和編輯器的 CSS 一樣）加上編輯器本身的字型（`realStrut`：思源黑體、最小字級）。直書 `layoutRealV` 用各字型的直書前進量，系統字型另外寫 `W2`（`verticalW2`：前進量、原點 x 取一半寬、原點 y 依 HarfBuzz：VORG 或 topSideBearing＋字形頂）。
-- 打開原文時，`matchSystemFont` 把 PDF 的字型名（去掉 `ABCDEF+` 與 pdf-lib 的 `-1234`）對到已安裝、授權 `ok`（直書還要有直書資料）的家族，編輯器就用那個字型。
+- 打開原文時，一行裡的每一段（pdf.js 的每個 item，一段一個字型）各自用 `matchSystemFont` 把 PDF 的字型名（去掉 `ABCDEF+` 與 pdf-lib 的 `-1234`）對到已安裝、授權 `ok`、讀得到（直書還要有直書資料）的家族；對不到的那段用思源黑體（`joinRowPieces`、`mergeRuns`）。打開後沒改就按 Esc，不會跳缺字提醒（和 `edit.orig` 相同就不檢查）。
+- 存檔前每個系統字型先試嵌入一次（`trialEmbedFonts`，在動文件之前）：失敗的改用思源黑體並 toast，打的字不會不見。授權（fsType）和「不能子集」從實際要嵌入的字型檔讀，不看目錄。可變字型（有 `fvar`）只能嵌入檔案的預設粗細：預設是一般粗細時，粗體用假粗體；預設不是一般粗細的，修改原文時灰掉（「可變字型，無法嵌入」）。
+- 刪掉或重寫區塊時（`cutPageBlock`），沒有其他頁面在用的字型與 ExtGState 物件會整串刪掉（`dropObjectGraph`），重複修改不會讓檔案變大；假粗體和一般體共用同一份嵌入。
+- `commitTextEditor` 選了「回去修改」時編輯器維持開著：換工具、換分頁、存檔、匯出圖片、打開別的編輯器都會停下來（`settleEdits` 回傳 false）。
 - 字型選單在修改原文時也有：`fontBlockReason` 灰掉「授權不允許嵌入」（直書另外灰掉「沒有直書資料」）；`embed:'full'` 的字型選之前跳「整個字型會放進檔案」。
 - 這種文字是頁面本身的一部分：不能用選取工具移動，不屬於圖層。
 - 方向（v1.0.21）：`pageTextItems` 替每段文字算出它在畫面上的方向 `rot`（0／90／180／270，順時針）和是否直書 `vert`（直書字型，或 `findStackedText` 找到的「一字一行」的假直書），並換算到「閱讀座標」（把畫面轉回 `rot`）：`base` 是基線（直書是欄的中線），`a0..a1` 是沿閱讀方向的範圍，`u` 是 PDF 座標的範圍（給 `removePageText`）。`lineOf`／`groupLines` 都在閱讀座標裡分行（直書的欄從右到左）。
