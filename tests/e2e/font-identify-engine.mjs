@@ -15,14 +15,14 @@ const open = async name => {
 
 // a line of text as a scanner would see it: blurred, with fixed-seed speckle; the symbols are Tesseract-like boxes
 // (each character's ink box from a clean drawing), confidence 95
-const SCAN_JS = `window.__scan = function ({css, text, px, blur = .8, noise = 20, seed = 1, weight = 400, vert = false}) {
+const SCAN_JS = `window.__scan = function ({css, text, px, blur = .8, noise = 20, seed = 1, weight = 400, vert = false, invert = false}) {
   if (vert) return __scanColumn({css, text, px, blur, noise, seed, weight});
   const chars = [...text], f = weight + ' ' + px + 'px ' + css;
   const m = document.createElement('canvas').getContext('2d'); m.font = f; m.fontKerning = 'none';
   const W = Math.ceil(m.measureText(text).width + px * 2), H = Math.ceil(px * 2.2), x0 = px / 2, base = px * 1.4;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
-  const g = c.getContext('2d', {willReadFrequently:true}); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
-  g.filter = blur > 0 ? 'blur(' + blur + 'px)' : 'none'; g.fillStyle = '#111'; g.font = f; g.fontKerning = 'none'; g.fillText(text, x0, base); g.filter = 'none';
+  const g = c.getContext('2d', {willReadFrequently:true}); g.fillStyle = invert ? '#141414' : '#fff'; g.fillRect(0, 0, W, H);
+  g.filter = blur > 0 ? 'blur(' + blur + 'px)' : 'none'; g.fillStyle = invert ? '#eee' : '#111'; g.font = f; g.fontKerning = 'none'; g.fillText(text, x0, base); g.filter = 'none';
   const im = g.getImageData(0, 0, W, H); let s = seed;
   const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
   for (let o = 0; o < im.data.length; o += 4) { const n = (rnd() - .5) * 2 * noise; for (let q = 0; q < 3; q++) im.data[o + q] = Math.max(0, Math.min(255, im.data[o + q] + n)); }
@@ -133,6 +133,8 @@ r = await top({css:'"PDFE Sans"', text:CJ, px:42, blur:.8, noise:20, seed:5}, C)
 check('bundled 思源黑體 first', r[0].k === 'builtin', r.slice(0, 3));
 r = await top({css:'"DejaVu Serif"', text:L, px:150, blur:1.5, noise:20, seed:6}, C);
 check('very large glyphs', r[0].k === 'DejaVu Serif', r.slice(0, 3));
+r = await top({css:'"DejaVu Serif"', text:L, px:42, blur:.8, noise:20, seed:14, invert:true}, C);
+check('light text on a dark background', r.length > 0 && r[0].k === 'DejaVu Serif', r.slice(0, 3));
 r = await top({css:'"WenQuanYi Zen Hei"', text:CJ, px:42, seed:7}, C.filter(c => c.key === 'DejaVu Serif'));
 check('no candidate has the glyphs: no results', Array.isArray(r) && r.length === 0, r);
 r = await A(async c => { const sc = __scan({css:'"DejaVu Serif"', text:'Quick brown fox Rag 2025', px:42, seed:8}), set = FontId.glyphsFromImage(sc.canvas, sc.symbols);
@@ -167,6 +169,7 @@ await A(fonts => {
     __gf.urls.push(url);
     if (__gf.mode === 'throw') throw new TypeError('Failed to fetch');
     if (__gf.mode === 'hang') return new Promise(() => {});
+    if (__gf.mode === 'first' && __gf.urls.length > 1) return new Promise(() => {});   // only the first request is answered
     const fams = new URL(url).searchParams.getAll('family').map(f => f.split(':')[0]);
     if (fams.includes('Bad Family')) return {ok:false, status:400, text:async () => ''};
     const css = fams.map(f => (__gf.fonts[f] || __gf.fonts.Arimo).map(([w, b64]) =>
@@ -191,6 +194,12 @@ r = await A(async ents => { __gf.mode = 'throw'; const res = await FontId.loadGo
 check('no network: offline', r.offline && r.n === 0, r);
 r = await A(async ents => { __gf.mode = 'hang'; const t0 = performance.now(); const res = await FontId.loadGoogle(ents, 'DRag', {fetchCss:__gfFetch, timeout:300}); __gf.mode = 'ok'; return {offline:res.offline, n:res.cands.length, ms:Math.round(performance.now() - t0)}; }, [E('Tinos', true), E('Arimo')]);
 check('a request that never answers: offline after the timeout', r.offline && r.n === 0 && r.ms < 2000, r);
+r = await A(async ents => { __gf.urls = []; __gf.mode = 'hang'; const t0 = performance.now(); const res = await FontId.loadGoogle(ents, 'ERag', {fetchCss:__gfFetch, timeout:300}); __gf.mode = 'ok';
+  return {asked:__gf.urls.length, ms:Math.round(performance.now() - t0), offline:res.offline}; }, Array.from({length:140}, (_, k) => E('Fake Latin ' + k)));
+check('no answer at all: no more batches asked, quick', r.offline && r.asked <= 6 && r.ms < 700, r);
+r = await A(async ents => { __gf.urls = []; __gf.mode = 'first'; const t0 = performance.now(); const res = await FontId.loadGoogle(ents, 'FRag', {fetchCss:__gfFetch, timeout:5000, deadline:600}); __gf.mode = 'ok';
+  return {ms:Math.round(performance.now() - t0), n:res.cands.length, offline:res.offline}; }, [E('Tinos', true), ...Array.from({length:30}, (_, k) => E('Fake Latin ' + k))]);
+check('an overall deadline: what answered is kept', r.ms < 1500 && r.n >= 1 && !r.offline, r);
 check('request characters: unique, in code point order', (await A(() => FontId.requestChars([...'RagRag2025'].map(ch => ({ch}))))) === '025Rag');
 check('specimen page', (await A(() => FontId.specimenUrl('Noto Serif TC'))) === 'https://fonts.google.com/specimen/Noto+Serif+TC');
 r = await A(async ents => { const sc = __scan({css:'"Liberation Serif"', text:'Quick brown fox Rag 2025', px:42, seed:11}), set = FontId.glyphsFromImage(sc.canvas, sc.symbols);

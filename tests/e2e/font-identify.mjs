@@ -37,6 +37,8 @@ const pics = await win.evaluate(async ({gf, CJ, LT}) => {
   };
   const column = (css, text, px = 48) => { const ch = [...text], {c, g} = canvas(px * 1.8, ch.length * px * 1.25 + px);
     g.font = `${px}px ${css}`; ch.forEach((t, k) => g.fillText(t, px * .4, px * 1.2 + k * px * 1.25)); return finish(g, c); };
+  const columns = (css, texts, px = 48) => { const n = Math.max(...texts.map(t => [...t].length)), {c, g} = canvas(texts.length * px * 1.8, n * px * 1.25 + px);
+    g.font = `${px}px ${css}`; texts.forEach((t, j) => [...t].forEach((ch, k) => g.fillText(ch, px * .4 + j * px * 1.8, px * 1.2 + k * px * 1.25))); return finish(g, c); };
   const shapes = () => { const {c, g} = canvas(700, 90); g.lineWidth = 4; g.strokeStyle = '#1a1a1a';
     for (let k = 0; k < 6; k++) { g.beginPath(); g.moveTo(20 + k * 110, 80); g.lineTo(90 + k * 110, 10); g.stroke(); }
     g.beginPath(); g.moveTo(10, 45); for (let x = 10; x < 690; x += 6) g.lineTo(x, 45 + 18 * Math.sin(x / 23)); g.stroke(); return finish(g, c); };
@@ -44,6 +46,7 @@ const pics = await win.evaluate(async ({gf, CJ, LT}) => {
     dejavu:line([['"DejaVu Serif"', LT]]), libbold:line([['"Liberation Sans"', LT]], {weight:700}), wqy:line([['"WenQuanYi Zen Hei"', CJ]]),
     noto:line([['"PDFE Sans"', CJ]]), mixed:line([['"WenQuanYi Zen Hei"', '中華民國臺灣字型 '], ['"DejaVu Serif"', 'Quick Rag 2025']]),
     gf:line([['"PDFE GF Test"', LT]]), shapes:shapes(), vert:column('"WenQuanYi Zen Hei"', '中華民國臺灣字型辨識'),
+    cols:columns('"WenQuanYi Zen Hei"', ['範例文字比對', '字型辨識測試', '中華民國臺灣']),
   };
 }, {gf:GF, CJ, LT});
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
@@ -53,7 +56,7 @@ const PPT = 2.98;   // image pixels per point: about 215 dpi, as a scanner might
 const place = async (name, x, top) => { const p = pics[name], img = await doc.embedPng(Buffer.from(p.b64, 'base64')), w = p.w / PPT, h = p.h / PPT;
   page.drawImage(img, {x, y:top - h, width:w, height:h}); BOX[name] = {x0:x - 4, y0:top - h - 4, x1:x + w + 4, y1:top + 4}; };
 await place('dejavu', 30, 815); await place('libbold', 30, 760); await place('wqy', 30, 705); await place('noto', 30, 650);
-await place('mixed', 30, 595); await place('gf', 30, 540); await place('shapes', 30, 470); await place('vert', 480, 440);
+await place('mixed', 30, 595); await place('gf', 30, 540); await place('shapes', 30, 470); await place('vert', 480, 440); await place('cols', 300, 430);
 const file = path.join(TMP, 'fid-scans.pdf'); fs.writeFileSync(file, await doc.save());
 
 // ---- part 1: the 字型 tab on scans -------------------------------------------------------------------------
@@ -66,9 +69,11 @@ await win.click('[data-tool="ocr"]'); await win.waitForTimeout(500);
 // a fake Google Fonts: it knows only "Gelasio", which it serves as the condensed test font
 await A(gf => {
   window.__gf = {urls:[], mode:'ok'};
-  window.__pdfapp.fontIdGoogle(async url => {
+  window.__pdfapp.fontIdGoogle(window.__gfFn = async url => {
     __gf.urls.push(url);
     if (__gf.mode === 'throw') throw new TypeError('Failed to fetch');
+    if (__gf.mode === 'hang') return new Promise(() => {});
+    if (__gf.mode === 'slow') await new Promise(r => setTimeout(r, 1500));
     const fams = new URL(url).searchParams.getAll('family').map(f => f.split(':')[0]);
     const css = fams.filter(f => f === 'Gelasio').map(f => `@font-face {\n  font-family: '${f}';\n  font-weight: 400;\n  src: url(data:font/ttf;base64,${gf}) format('truetype');\n}\n`).join('');
     return {ok:true, status:200, text:async () => css};
@@ -118,6 +123,8 @@ check('a long name leaves its source tag in view', await A(() => [...document.qu
 check('the full name on hover', await A(() => { const l = document.querySelector('#ocrPanel .fi-row .fi-label'); return !!l && l.title.split('／').length >= 3; }));
 await dragPdfBox(BOX.vert); s = await settled();
 check('vertical column', /文泉驛正黑/.test(first(s).label), s.groups[0] ? s.groups[0].rows.slice(0, 3) : s);
+await dragPdfBox(BOX.cols); s = await settled();
+check('vertical columns in a wide box', /文泉驛正黑/.test(first(s).label), s.groups[0] ? s.groups[0].rows.slice(0, 3) : s);
 await dragPdfBox(BOX.shapes); s = await settled();
 check('not text: too few glyphs', s.msg === '這個範圍能比對的字太少，請框大一點或框清楚的字' && !s.groups.length, s);
 await dragPdfBox(BOX.gf); s = await settled();
@@ -135,6 +142,21 @@ check('offline, already downloaded: listed, not called unreachable', first(s).la
 await dragPdfBox(BOX.mixed); s = await settled();
 check('Google unreachable: said so, installed fonts listed', s.msg === '連不上 Google Fonts，只比對了這台電腦的字型' && s.groups.length === 2 && s.groups.every(g => g.rows.length && !g.rows.some(x => x.src.includes('Google'))), {msg:s.msg, rows:s.groups.map(g => g.rows.slice(0, 1))});
 await A(() => { __gf.mode = 'ok'; });
+// Google hanging: the installed fonts of both groups are listed first, and the wait ends
+await A(() => { __gf.mode = 'hang'; window.__pdfapp.fontIdGoogle(window.__gfFn, {timeout:60000, deadline:2500}); });
+await dragPdfBox(BOX.mixed);
+{ let both = null; const t0 = Date.now();
+  while (Date.now() - t0 < 30000) { const st = await state(); if (st && st.busy && st.groups.length === 2 && st.groups.every(g => g.rows.length)) { both = st; break; } if (st && !st.busy && st.groups.length) break; await win.waitForTimeout(150); }
+  check('Google hanging: both groups\' installed fonts listed meanwhile', !!both, both ? both.groups.map(g => g.title) : 'not seen');
+  s = await settled(); check('Google hanging: ends, says so', s.msg === '連不上 Google Fonts，只比對了這台電腦的字型' && s.groups.length === 2, {msg:s.msg, ms:s.ms}); }
+await A(() => { __gf.mode = 'ok'; window.__pdfapp.fontIdGoogle(window.__gfFn); });
+// 重新比對 while a run is still going: one run's result, not two mixed
+await A(() => { __gf.mode = 'slow'; });
+await dragPdfBox(BOX.mixed);
+{ const t0 = Date.now(); while (Date.now() - t0 < 30000) { const st = await state(); if (st && st.groups.length && st.groups[0].rows.length) break; await win.waitForTimeout(150); } }
+await win.click('#ocrPanel [data-o="refont"]'); s = await settled();
+check('重新比對 during a run: two groups, not more', JSON.stringify(s.groups.map(g => g.title)) === '["中文","英數字"]' && s.groups.every(g => g.rows.length), s.groups.map(g => g.title));
+await A(() => { __gf.mode = 'ok'; });
 // a new box while matching: only the new box's result
 await dragPdfBox(BOX.wqy); await win.waitForTimeout(600); await dragPdfBox(BOX.dejavu); s = await settled();
 check('new box while matching: its own result only', first(s).label === 'DejaVu Serif' && s.groups.length === 1, s.groups.map(g => g.rows[0]));
@@ -147,6 +169,7 @@ const DJV = fs.readFileSync('/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf');
 const d2 = await PDFDocument.create(); d2.registerFontkit(fontkit);
 const p2 = d2.addPage([595, 842]), LINE = {};
 const big5 = String.fromCharCode(0xB7, 0x73, 0xB2, 0xD3, 0xA9, 0xFA, 0xC5, 0xE9);   // 新細明體 in Big5
+const wqy5 = String.fromCharCode(0xA4, 0xE5, 0xAC, 0x75, 0xC5, 0xE6, 0xA5, 0xBF, 0xB6, 0xC2);   // 文泉驛正黑 in Big5
 const named = customName => d2.embedFont(DJV, {subset:true, customName});
 const line = async (key, y, text, font) => { p2.drawText(text, {x:60, y, size:16, font}); LINE[key] = {x0:50, y0:y - 7, x1:340, y1:y + 19}; };
 await line('dejavu', 780, 'Real DejaVu text 2026', await d2.embedFont(DJV, {subset:true}));
@@ -154,6 +177,9 @@ await line('big5', 740, 'Big5 named font', await named(big5));
 await line('helv', 700, 'Helvetica line', await d2.embedFont(StandardFonts.Helvetica));
 await line('google', 660, 'Google named font', await named('ABCDEF+LXGWWenKaiTC-Regular'));
 await line('generic', 620, 'Generic named font', await named('F1'));
+// Word on a Chinese Windows: the font's Chinese name in Big5, and ',Bold' for its bold text
+await line('wqyR', 590, 'Word regular', await named(wqy5)); await line('wqyB', 572, 'Word bold', await named(wqy5 + ',Bold'));
+LINE.wqy = {x0:50, y0:565, x1:340, y1:609};
 // a scan with an OCR text layer over it: invisible text (render mode 3) in "GlyphLessFont"
 { const img = await d2.embedPng(Buffer.from(pics.dejavu.b64, 'base64')), w = pics.dejavu.w / PPT, h = pics.dejavu.h / PPT, ghost = await named('GlyphLessFont');
   p2.drawImage(img, {x:40, y:520, width:w, height:h});
@@ -181,6 +207,15 @@ await dragPdfBox(LINE.google); s = await settled();
 check('a Google family: 下載', s.pdf.length === 1 && s.pdf[0].action === 'download', s.pdf);
 await dragPdfBox(LINE.generic); s = await settled();
 check('no usable name', s.pdf.length === 1 && s.pdf[0].name === 'PDF 沒有記錄字型名稱' && s.pdf[0].pct == null && s.pdf[0].action === '', s.pdf);
+await dragPdfBox(LINE.wqy); s = await settled();
+check('Word bold name: the installed font, one row', s.pdf.length === 1 && s.pdf[0].name.includes('文泉驛正黑') && s.pdf[0].action === 'apply', s.pdf);
+// the Chinese names are still being read (first start): matched as soon as they are known
+await A2(() => { window.__pdfapp.fontCatPatch('WenQuanYi Zen Hei', {name:'WenQuanYi Zen Hei'}); window.__pdfapp.fontCatBusySim(3000); });
+await win.click('#ocrPanel [data-o="refont"]'); s = await settled();
+check('font names not read yet: not found yet', s.pdf.length === 1 && s.pdf[0].action === '', s.pdf);
+await A2(() => window.__pdfapp.fontCatPatch('WenQuanYi Zen Hei', {name:'文泉驛正黑'}));
+await win.waitForTimeout(4500); s = await state();
+check('font names read: found then', s.pdf.length === 1 && s.pdf[0].name.includes('文泉驛正黑') && s.pdf[0].action === 'apply', s.pdf);
 await dragPdfBox(LINE.ghost); s = await settled();
 check('hidden OCR layer: not listed, the picture compared', !s.pdf.length && first(s).label === 'DejaVu Serif', {pdf:s.pdf, first:first(s)});
 check('no page errors (part 2)', pageErrors === 0, pageErrors);
