@@ -334,6 +334,9 @@ svg.dsvg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;ov
 .asel .h[data-d=nw],.asel .h[data-d=se]{cursor:nwse-resize}
 .asel .h[data-d=ne],.asel .h[data-d=sw]{cursor:nesw-resize}
 .aghost{position:absolute;inset:0;width:100%;height:100%;opacity:.9;pointer-events:none}
+.asel.geo-wait .h{visibility:hidden}
+.aturn{position:absolute;pointer-events:none;z-index:4}
+.aturn canvas{position:absolute;inset:0;width:100%;height:100%;opacity:.9}
 .aveil{position:absolute;background:rgba(255,255,255,.72);pointer-events:none;z-index:3;outline:1px dashed #adb5bd}
 .abar .hintk{color:#9aa2ab;font-size:11px}
 .abar button[data-x=del]{background:var(--seal)}
@@ -4506,16 +4509,13 @@ async function recolorShape(i, a, color){
     const ctx = doc.context, dict = ctx.lookup(ref, PDFDict), N = k => PDFName.of(k), sub = String(dict.get(N('Subtype'))).slice(1);
     dict.set(N('IC'), ctx.obj(hexColor(color))); dict.set(N('M'), nowStr());
     if (!dict.get(N('PDFE'))) { dict.delete(N('AP')); return; }   // other apps' shapes: let the viewer redraw from /IC
-    const st = readAnnStyle(dict), box = {x:a.x, y:a.y, w:a.w, h:a.h};
-    let geom;
-    if (sub === 'Polygon') geom = geomPoly(flatPts(i, numArr(dict.lookup(N('Vertices'), PDFArray))), st, true);
-    else {
-      const cloud = !!dict.lookupMaybe(N('BE'), PDFDict), pad = st.width + (cloud ? Math.max(9, st.width * 6) * .62 : 0);
-      geom = geomBox({x:box.x + pad, y:box.y + pad, w:Math.max(2, box.w - 2 * pad), h:Math.max(2, box.h - 2 * pad)}, st, sub === 'Circle' ? 'ellipse' : cloud ? 'cloud' : 'rect');
-    }
-    const g = visToPdf(i, geom.b);
+    const st = readAnnStyle(dict), turned = ROT_BOX.has(sub) && boxTurn(dict);
+    const box = turned ? vRect(i, turned.baseRect) : {x:a.x, y:a.y, w:a.w, h:a.h};   // a turned shape is redrawn upright, then turned again
+    const geom = sub === 'Polygon' ? geomPoly(flatPts(i, numArr(dict.lookup(N('Vertices'), PDFArray))), st, true) : shapeGeom(dict, st, box);
+    const g = visToPdf(i, geom.b), ap = formAP(doc, geom.ops, geom.b.w, geom.b.h, S.pages[i].rot, gsRes(st));
+    if (turned) { setTurn(doc, dict, ap, g.rect, turned.deg); return; }
     dict.set(N('Rect'), ctx.obj(g.rect));
-    dict.set(N('AP'), ctx.obj({N:formAP(doc, geom.ops, geom.b.w, geom.b.h, S.pages[i].rot, gsRes(st))}));
+    dict.set(N('AP'), ctx.obj({N:ap}));
   });
 }
 function fillStyle(){ const st = STYLES.fill; return {color:st.color, fill:st.color, width:.5, opacity:st.opacity ?? 1, dash:false}; }
@@ -5246,7 +5246,7 @@ function selectAnnot(i, a){
   deselectAnnot();
   const pg = S.pages[i], ovl = S.els[i].querySelector('.ovl');
   const movable = !NO_MOVE.has(a.subtype), resizable = movable && a.subtype !== 'Text' && a.subtype !== 'FreeText';
-  const el = document.createElement('div'); el.className = 'asel' + (movable ? '' : ' fixed');
+  const el = document.createElement('div'); el.className = 'asel' + (movable ? '' : ' fixed') + (movable && ROT_BOX.has(a.subtype) ? ' geo-wait' : '');   // handles wait until its angle is known
   if (resizable) el.innerHTML = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].map(d => `<div class="h" data-d="${d}"></div>`).join('');
   const bar = document.createElement('div'); bar.className = 'xbar abar';
   const snip = a.contents && a.subtype !== 'Stamp' ? `：${esc(a.contents.slice(0, 24))}${a.contents.length > 24 ? '…' : ''}` : '';
@@ -5272,9 +5272,10 @@ function drawASel(){
   const {i, box} = AS, pg = S.pages[i];
   const pos = {left:box.x / pg.w * 100 + '%', top:box.y / pg.h * 100 + '%', width:box.w / pg.w * 100 + '%', height:box.h / pg.h * 100 + '%'};
   Object.assign(AS.el.style, pos);
-  const below = (box.y + box.h) / pg.h < .9;
-  AS.bar.style.left = box.x / pg.w * 100 + '%';
-  AS.bar.style.top = (below ? box.y + box.h : box.y) / pg.h * 100 + '%';
+  AS.el.style.transform = AS.rot ? `rotate(${AS.rot}deg)` : '';   // a turned object: the frame turns with it
+  const f = turnedFrame(box, AS.rot), below = (f.y + f.h) / pg.h < .9;
+  AS.bar.style.left = f.x / pg.w * 100 + '%';
+  AS.bar.style.top = (below ? f.y + f.h : f.y) / pg.h * 100 + '%';
   AS.bar.style.transform = below ? 'translateY(8px)' : 'translateY(calc(-100% - 8px))';
 }
 async function deleteSelected(){
@@ -5285,6 +5286,7 @@ async function deleteSelected(){
 // drag the selection: move (snapping its edges) or resize from a handle; Shift keeps / frees the aspect ratio
 function dragAnnot(e, d, onDone){
   const {i} = AS, pg = S.pages[i], s0 = {...AS.box}, MIN = 4;
+  const rot = AS.rot || 0, c0 = {x:s0.x + s0.w / 2, y:s0.y + s0.h / 2};   // a turned object is resized along its own axes
   let ptr = {x:e.clientX, y:e.clientY}, moved = false, shift = e.shiftKey;
   const p0 = pagePointXY(i, ptr.x, ptr.y);
   const upd = () => {
@@ -5292,13 +5294,15 @@ function dragAnnot(e, d, onDone){
     const p = pagePointXY(i, ptr.x, ptr.y), b = {...s0};
     let hx = null, hy = null;
     if (d === 'move') {
-      let nx = clamp(s0.x + p.x - p0.x, -s0.w * .5, pg.w - s0.w * .5), ny = clamp(s0.y + p.y - p0.y, -s0.h * .5, pg.h - s0.h * .5);
-      const L = snapAxis(i, 'x', nx), R = snapAxis(i, 'x', nx + s0.w), T = snapAxis(i, 'y', ny), B = snapAxis(i, 'y', ny + s0.h);
-      if (L.hit != null) { nx = L.v; hx = L.hit; } else if (R.hit != null) { nx = R.v - s0.w; hx = R.hit; }
-      if (T.hit != null) { ny = T.v; hy = T.hit; } else if (B.hit != null) { ny = B.v - s0.h; hy = B.hit; }
-      b.x = nx; b.y = ny;
+      const f0 = turnedFrame(s0, rot);   // the edges to line up are those of the frame round the (turned) object
+      let nx = clamp(f0.x + p.x - p0.x, -f0.w * .5, pg.w - f0.w * .5), ny = clamp(f0.y + p.y - p0.y, -f0.h * .5, pg.h - f0.h * .5);
+      const L = snapAxis(i, 'x', nx), R = snapAxis(i, 'x', nx + f0.w), T = snapAxis(i, 'y', ny), B = snapAxis(i, 'y', ny + f0.h);
+      if (L.hit != null) { nx = L.v; hx = L.hit; } else if (R.hit != null) { nx = R.v - f0.w; hx = R.hit; }
+      if (T.hit != null) { ny = T.v; hy = T.hit; } else if (B.hit != null) { ny = B.v - f0.h; hy = B.hit; }
+      b.x = s0.x + nx - f0.x; b.y = s0.y + ny - f0.y;
     } else {
-      const sx = snapAxis(i, 'x', p.x), sy = snapAxis(i, 'y', p.y);
+      const q = rot ? turnPt(p, c0, -rot) : p;   // the pointer in the object's upright frame
+      const sx = rot ? {v:q.x, hit:null} : snapAxis(i, 'x', q.x), sy = rot ? {v:q.y, hit:null} : snapAxis(i, 'y', q.y);
       if (d.includes('w')) { const x = Math.min(sx.v, s0.x + s0.w - MIN); b.x = x; b.w = s0.x + s0.w - x; hx = sx.hit; }
       if (d.includes('e')) { b.w = Math.max(MIN, sx.v - s0.x); hx = sx.hit; }
       if (d.includes('n')) { const y = Math.min(sy.v, s0.y + s0.h - MIN); b.y = y; b.h = s0.y + s0.h - y; hy = sy.hit; }
@@ -5310,15 +5314,16 @@ function dragAnnot(e, d, onDone){
         if (d.includes('w')) b.x = s0.x + s0.w - b.w;
         if (d.includes('n')) b.y = s0.y + s0.h - b.h;
       }
+      if (rot) { const c = turnPt({x:b.x + b.w / 2, y:b.y + b.h / 2}, c0, rot); b.x = c.x - b.w / 2; b.y = c.y - b.h / 2; }   // keep the opposite edge where it is on the page
     }
     AS.box = b; markSnap(i, [hx], [hy]); drawASel();
   };
   const begin = () => {
-    moved = true;
-    AS.ghost = snapshot(i, s0);
+    moved = true; AS.dragging = true;
+    AS.ghost = rot ? snapshotTurned(i, s0, rot) : snapshot(i, s0);
     if (AS.ghost) { AS.ghost.className = 'aghost'; AS.el.appendChild(AS.ghost); }
     const v = document.createElement('div'); v.className = 'aveil';
-    Object.assign(v.style, {left:s0.x / pg.w * 100 + '%', top:s0.y / pg.h * 100 + '%', width:s0.w / pg.w * 100 + '%', height:s0.h / pg.h * 100 + '%'});
+    Object.assign(v.style, {left:s0.x / pg.w * 100 + '%', top:s0.y / pg.h * 100 + '%', width:s0.w / pg.w * 100 + '%', height:s0.h / pg.h * 100 + '%', transform:rot ? `rotate(${rot}deg)` : ''});
     S.els[i].querySelector('.ovl').insertBefore(v, AS.el); AS.veil = v;
   };
   let stop = () => {};
@@ -5330,7 +5335,7 @@ function dragAnnot(e, d, onDone){
   const up = async () => {
     stop(); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); clearSnapMarks();
     if (!moved || !AS) { onDone && onDone(false); return; }
-    const {a, box} = AS;
+    const {a, box} = AS; AS.dragging = false;
     if (Math.abs(box.x - s0.x) < .05 && Math.abs(box.y - s0.y) < .05 && Math.abs(box.w - s0.w) < .05 && Math.abs(box.h - s0.h) < .05) { selectAnnot(i, a); return; }
     await commitAnnotBox(i, a, s0, box);
     onDone && onDone(true);
@@ -5355,9 +5360,18 @@ async function commitAnnotBox(i, a, ob, nb){
     const ref = findAnnotRef(doc, i, id); if (!ref) { toast('找不到此註解', 'err'); return false; }
     const ctx = doc.context, dict = ctx.lookup(ref, PDFDict), N = k => PDFName.of(k);
     const sub = String(dict.get(N('Subtype'))).slice(1);
-    const oR = visToPdf(i, ob).rect, nR = visToPdf(i, nb).rect;
+    const oR = visToPdf(i, ob).rect, nR = visToPdf(i, nb).rect, turned = ROT_BOX.has(sub) && boxTurn(dict);
+    if (turned) {   // a turned object: move or resize its upright box, then turn it again by the same angle
+      let base = turned.base, br = turned.baseRect;
+      if (isMove) { const dx = nR[0] - oR[0], dy = nR[1] - oR[1]; br = [br[0] + dx, br[1] + dy, br[2] + dx, br[3] + dy]; }
+      else if (REGEN.has(sub) && dict.get(N('PDFE'))) {
+        const st = readAnnStyle(dict), geom = shapeGeom(dict, st, nb);
+        base = formAP(doc, geom.ops, geom.b.w, geom.b.h, S.pages[i].rot, gsRes(st)); br = visToPdf(i, geom.b).rect;
+      } else br = nR;
+      setTurn(doc, dict, base, br, turned.deg);
+    }
     // our own shapes and pen strokes are redrawn from their geometry, so lines stay crisp at the new size
-    if (REGEN.has(sub) && dict.get(N('PDFE'))) {
+    else if (REGEN.has(sub) && dict.get(N('PDFE'))) {
       const st = readAnnStyle(dict), rot = S.pages[i].rot;
       let geom = null;
       if (sub === 'Line') {
@@ -5426,7 +5440,98 @@ async function annGeom(i, id){
   } catch (_) {}
   return null;
 }
+/* ---------------- turned boxes: rectangles, ellipses, stamps and pictures ----------------
+   PDF cannot turn these, so the upright appearance is kept (PDFE_Base, filling PDFE_BaseRect) and /AP
+   shows it turned by PDFE_Rot degrees (clockwise on screen) about its centre; /Rect is the frame round it.
+   Every reader shows the turned picture; this app keeps working with the upright box and the angle. */
+const ROT_BOX = new Set(['Square', 'Circle', 'Stamp']);
+const normDeg = d => { d = ((d % 360) + 360) % 360; return d > 180 ? d - 360 : d; };
+const turnPt = (p, c, deg) => rotPts([[p]], c, deg)[0][0];
+const boxCorners = (b, deg) => { const c = {x:b.x + b.w / 2, y:b.y + b.h / 2}; return [{x:b.x, y:b.y}, {x:b.x + b.w, y:b.y}, {x:b.x + b.w, y:b.y + b.h}, {x:b.x, y:b.y + b.h}].map(p => deg ? turnPt(p, c, deg) : p); };
+const turnedFrame = (b, deg) => deg ? bboxOf(boxCorners(b, deg), 0) : b;
+const vRect = (i, r) => { const v = S.pages[i].vp1.convertToViewportRectangle(r); return {x:Math.min(v[0], v[2]), y:Math.min(v[1], v[3]), w:Math.abs(v[2] - v[0]), h:Math.abs(v[3] - v[1])}; };
+function boxTurn(dict){
+  const n = dict.get(N_('PDFE_Rot')), deg = n && n.asNumber ? n.asNumber() : 0;
+  const br = dict.lookupMaybe(N_('PDFE_BaseRect'), PDFArray), base = dict.get(N_('PDFE_Base'));
+  return deg && br && base instanceof PDFRef ? {deg, baseRect:numArr(br), base} : null;
+}
+// the area a form XObject paints, after its own /Matrix
+function formFrame(doc, ref){
+  const s = doc.context.lookup(ref), d = s && s.dict, bb = d && d.lookupMaybe(N_('BBox'), PDFArray); if (!bb) return null;
+  const [a0, b0, a1, b1] = numArr(bb), m = d.lookupMaybe(N_('Matrix'), PDFArray), M = m ? numArr(m) : [1, 0, 0, 1, 0, 0];
+  const p = [[a0, b0], [a1, b0], [a0, b1], [a1, b1]].map(q => MPT(M, q[0], q[1])), xs = p.map(q => q[0]), ys = p.map(q => q[1]);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+// show the upright appearance `base` (which fills baseRect) turned by deg; 0° makes it an ordinary upright object again
+function setTurn(doc, dict, base, baseRect, deg){
+  const ctx = doc.context;
+  deg = normDeg(deg);
+  ['PDFE_Rot', 'PDFE_Base', 'PDFE_BaseRect'].forEach(k => dict.delete(N_(k)));
+  if (Math.abs(deg) < .05) { dict.set(N_('Rect'), ctx.obj(baseRect)); dict.set(N_('AP'), ctx.obj({N:base})); return; }
+  const [x0, y0, x1, y1] = baseRect, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, f = -deg * Math.PI / 180, co = Math.cos(f), si = Math.sin(f);
+  const R = [co, si, -si, co, cx - co * cx + si * cy, cy - si * cx - co * cy];   // turn about the centre (PDF y points up)
+  const q = [[x0, y0], [x1, y0], [x0, y1], [x1, y1]].map(p => MPT(R, p[0], p[1])), xs = q.map(p => p[0]), ys = q.map(p => p[1]);
+  const r = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  const fb = formFrame(doc, base) || [0, 0, x1 - x0, y1 - y0];
+  const sx = (x1 - x0) / ((fb[2] - fb[0]) || 1), sy = (y1 - y0) / ((fb[3] - fb[1]) || 1);
+  const M = MUL(MUL([sx, 0, 0, sy, x0 - sx * fb[0], y0 - sy * fb[1]], R), [1, 0, 0, 1, -r[0], -r[1]]);
+  const ap = ctx.register(ctx.stream(`q ${M.map(v => +v.toFixed(5)).join(' ')} cm /B Do Q`, {Type:'XObject', Subtype:'Form', BBox:[0, 0, r[2] - r[0], r[3] - r[1]], Resources:{XObject:{B:base}}}));
+  dict.set(N_('Rect'), ctx.obj(r)); dict.set(N_('AP'), ctx.obj({N:ap}));
+  dict.set(N_('PDFE_Rot'), ctx.obj(+deg.toFixed(3))); dict.set(N_('PDFE_Base'), base); dict.set(N_('PDFE_BaseRect'), ctx.obj(baseRect));
+}
+// our own rectangles / ellipses / clouds drawn upright in box b (b includes the line width, like their /Rect)
+function shapeGeom(dict, st, b){
+  const sub = subOf(dict), cloud = !!dict.lookupMaybe(N_('BE'), PDFDict), pad = st.width + (cloud ? Math.max(9, st.width * 6) * .62 : 0);
+  return geomBox({x:b.x + pad, y:b.y + pad, w:Math.max(2, b.w - 2 * pad), h:Math.max(2, b.h - 2 * pad)}, st, sub === 'Circle' ? 'ellipse' : cloud ? 'cloud' : 'rect');
+}
+// what the selection needs: the upright box and the angle
+async function annRot(i, id){
+  try {
+    const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); if (!ref) return null;
+    const d = doc.context.lookup(ref, PDFDict); if (!ROT_BOX.has(subOf(d))) return null;
+    const t = boxTurn(d), ap = d.lookupMaybe(N_('AP'), PDFDict);
+    return {deg:t ? t.deg : 0, rotated:!!t, canTurn:!!t || !!(ap && ap.get(N_('N')) instanceof PDFRef), box:vRect(i, t ? t.baseRect : numArr(d.lookup(N_('Rect'), PDFArray)))};
+  } catch (_) { return null; }
+}
+// the canvas picture of a turned object, turned back upright (to drag around while moving or resizing it)
+function snapshotTurned(i, box, deg){
+  const src = S.els[i] && S.els[i].querySelector('canvas.pc'); if (!src) return null;
+  const k = src.width / S.pages[i].w, c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(box.w * k)); c.height = Math.max(1, Math.round(box.h * k));
+  const g = c.getContext('2d'); g.translate(c.width / 2, c.height / 2); g.rotate(-deg * Math.PI / 180);
+  try { g.drawImage(src, -(box.x + box.w / 2) * k, -(box.y + box.h / 2) * k); } catch (_) { return null; }
+  return c;
+}
+async function addTurnHandle(i, a){
+  const t = await annRot(i, a.id);
+  if (!AS || AS.a !== a || AS.dragging) return;   // a drag already started: the selection is made again afterwards
+  AS.el.classList.remove('geo-wait');
+  if (!t || !t.canTurn) return;
+  if (t.rotated) { AS.box = {...t.box}; AS.rot = t.deg; drawASel(); }
+  const r = document.createElement('div'); r.className = 'rh'; r.title = '拖曳旋轉（Shift：每 15°）';
+  r.innerHTML = '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg>';
+  AS.el.appendChild(r);
+  const hint = AS.bar.querySelector('.hintk'); if (hint) hint.textContent = AS.resizable ? '拖曳移動・把手調整大小・↻ 旋轉' : '拖曳移動・↻ 旋轉';
+}
+async function commitTurn(i, a, deg){
+  const id = a.id;
+  deselectAnnot();
+  const ok = await mutate('已旋轉', doc => {
+    const ref = findAnnotRef(doc, i, id); if (!ref) { toast('找不到此註解', 'err'); return false; }
+    const dict = doc.context.lookup(ref, PDFDict), t = boxTurn(dict);
+    if (t) setTurn(doc, dict, t.base, t.baseRect, deg);
+    else {
+      const ap = dict.lookupMaybe(N_('AP'), PDFDict), n = ap && ap.get(N_('N'));
+      if (!(n instanceof PDFRef)) return false;
+      setTurn(doc, dict, n, numArr(dict.lookup(N_('Rect'), PDFArray)), deg);
+    }
+    dict.set(N_('M'), nowStr());
+  });
+  if (!ok) clearHolds(i);
+  if (ok && S.tool === 'select') { const a2 = (await getAnns(i)).find(x => x.id === id); if (a2 && S.els[i]) selectAnnot(i, a2); }
+}
 async function addGeomHandles(i, a){
+  if (ROT_BOX.has(a.subtype)) return addTurnHandle(i, a);
   if (!ROT_SUBS.has(a.subtype)) return;
   const geo = await annGeom(i, a.id);
   if (!AS || AS.a !== a || !geo || !geo.flat().length) return;
@@ -5446,12 +5551,16 @@ const centerOf = pts => { const xs = pts.map(p => p.x), ys = pts.map(p => p.y); 
 const rotPts = (strokes, c, deg) => { const r = deg * Math.PI / 180, co = Math.cos(r), si = Math.sin(r);
   return strokes.map(s => s.map(p => ({x:c.x + (p.x - c.x) * co - (p.y - c.y) * si, y:c.y + (p.x - c.x) * si + (p.y - c.y) * co}))); };
 function geomDrag(e, mode, k){
-  const {i, a} = AS, pg = S.pages[i], s0 = {...AS.box}, g0 = AS.geo, c = centerOf(g0.flat());
+  const {i, a} = AS, pg = S.pages[i], s0 = {...AS.box}, isBox = ROT_BOX.has(a.subtype), rot0 = AS.rot || 0;
+  const g0 = isBox ? [[...boxCorners(s0, rot0), boxCorners(s0, rot0)[0]]] : AS.geo, c = centerOf(g0.flat());
   const p0 = pagePointXY(i, e.clientX, e.clientY), ang0 = Math.atan2(p0.y - c.y, p0.x - c.x);
   let cur = g0, deg = 0, moved = false;
   const ovl = S.els[i].querySelector('.ovl');
   const veil = document.createElement('div'); veil.className = 'aveil';
-  Object.assign(veil.style, {left:s0.x / pg.w * 100 + '%', top:s0.y / pg.h * 100 + '%', width:s0.w / pg.w * 100 + '%', height:s0.h / pg.h * 100 + '%'});
+  const at = {left:s0.x / pg.w * 100 + '%', top:s0.y / pg.h * 100 + '%', width:s0.w / pg.w * 100 + '%', height:s0.h / pg.h * 100 + '%'};
+  Object.assign(veil.style, at, {transform:rot0 ? `rotate(${rot0}deg)` : ''});
+  let gh = null;   // a box turns as a picture of itself
+  if (isBox) { const cv = snapshotTurned(i, s0, rot0); if (cv) { gh = document.createElement('div'); gh.className = 'aturn'; Object.assign(gh.style, at, {transform:`rotate(${rot0}deg)`}); gh.appendChild(cv); } }
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('class', 'geoprev'); svg.setAttribute('viewBox', `0 0 ${pg.w} ${pg.h}`); svg.setAttribute('preserveAspectRatio', 'none');
   const lab = document.createElement('div'); lab.className = 'rlabel';
   const draw = () => {
@@ -5461,11 +5570,12 @@ function geomDrag(e, mode, k){
       (mode === 'rot' ? `<circle cx="${c.x}" cy="${c.y}" r="${3 * u}" fill="#1c64d9"/>` : '');
     const q = cur.flat(), top = Math.min(...q.map(p => p.y)), mid = centerOf(q);
     lab.style.left = mid.x / pg.w * 100 + '%'; lab.style.top = top / pg.h * 100 + '%';
-    if (mode === 'rot') lab.textContent = Math.round(deg) + '°';
+    if (mode === 'rot') lab.textContent = Math.round(isBox ? normDeg(rot0 + deg) : deg) + '°';
+    if (gh) gh.style.transform = `rotate(${rot0 + deg}deg)`;
     else { const [A, B] = cur[0]; lab.textContent = `${Math.round((Math.atan2(-(B.y - A.y), B.x - A.x) * 180 / Math.PI + 360) % 360)}°・${(Math.hypot(B.x - A.x, B.y - A.y) / MM).toFixed(1)} mm`; }
   };
   const move = ev => {
-    if (!moved) { if (Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return; moved = true; ovl.appendChild(veil); ovl.appendChild(svg); ovl.appendChild(lab); AS.el.style.visibility = 'hidden'; AS.bar.style.visibility = 'hidden'; }
+    if (!moved) { if (Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return; moved = true; ovl.appendChild(veil); gh && ovl.appendChild(gh); ovl.appendChild(svg); ovl.appendChild(lab); AS.el.style.visibility = 'hidden'; AS.bar.style.visibility = 'hidden'; }
     const p = pagePointXY(i, ev.clientX, ev.clientY);
     if (mode === 'rot') {
       deg = (Math.atan2(p.y - c.y, p.x - c.x) - ang0) * 180 / Math.PI;
@@ -5483,9 +5593,10 @@ function geomDrag(e, mode, k){
     if (moved) move(ev);   // the release point decides
     window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
     lab.remove(); clearSnapMarks();
-    if (!AS || !moved || (mode === 'rot' && Math.abs(deg) < .2)) { veil.remove(); svg.remove(); if (AS) { AS.el.style.visibility = ''; AS.bar.style.visibility = ''; } return; }
-    veil.classList.add('hold'); svg.classList.add('hold');
-    await commitGeom(i, a, cur, mode === 'rot' ? '已旋轉' : '已調整線條');
+    if (!AS || !moved || (mode === 'rot' && Math.abs(deg) < .2)) { veil.remove(); svg.remove(); gh && gh.remove(); if (AS) { AS.el.style.visibility = ''; AS.bar.style.visibility = ''; } return; }
+    veil.classList.add('hold'); svg.classList.add('hold'); gh && gh.classList.add('hold');
+    if (isBox) await commitTurn(i, a, rot0 + deg);
+    else await commitGeom(i, a, cur, mode === 'rot' ? '已旋轉' : '已調整線條');
   };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
 }
@@ -6843,7 +6954,7 @@ function showThemeMenu(){
 document.addEventListener('pointerdown', e => { const m = $('#themeMenu'); if (m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('#bTheme')) m.style.display = 'none'; }, true);
 if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyTheme();
 paintSplitButtons();
-window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box}};
+window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape};
 </script>
 </body>
 </html>

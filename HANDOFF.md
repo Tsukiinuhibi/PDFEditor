@@ -1,6 +1,6 @@
 # PDF 工作台（PDFEditor）交接文件
 
-這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-12，最新發布版本是 **v1.0.17**。
+這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-12，最新發布版本是 **v1.0.18**。
 
 ---
 
@@ -85,6 +85,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 新增註解一律用 `addAnnot(doc, i, dict)`，它會自動加上目前圖層的 `/OC`，並依圖層順序重排 `/Annots`。
 - 文字方塊是 FreeText，外觀是 PNG 圖片（用 canvas 畫，支援中文）。`PDFE_RT` 存的是可再編輯的格式化文字（JSON），`RC` 是 XHTML，`Contents` 是純文字。
 - 插入的圖片是 Stamp（`Subj` 為「圖片」）；填色區塊是 Stamp（`Contents` 為「填色區塊」）或 Square／Polygon（`Subj` 為「填色」）。
+- 旋轉的矩形、橢圓、戳記、圖片（v1.0.18，`ROT_BOX`）：PDF 沒有這些註解的旋轉屬性，所以把不旋轉的外觀存在 `PDFE_Base`（它填滿 `PDFE_BaseRect`），`/AP` 是一個包住它、繞中心轉 `PDFE_Rot` 度（畫面上順時針）的 Form，`/Rect` 是轉完後的外框。一律用 `setTurn(doc, dict, base, baseRect, deg)` 寫入，0° 會還原成一般註解。選取時 `annRot` 讀出不旋轉的方框和角度：`AS.box` 是不旋轉的方框、`AS.rot` 是角度，選取框用 CSS 旋轉；`dragAnnot` 把指標轉回物件自己的座標來調整大小。改樣式或大小時先重畫不旋轉的外觀（`shapeGeom`），再用同一個角度 `setTurn`。
 - `getAllAnns(i)` 會回傳所有註解。**`getAnns(i)` 會排除隱藏中、或位在隱藏／鎖定圖層的註解**，所有可以點選、編輯的地方都要用 `getAnns`。
 
 ### 3.5 圖層（v1.0.12）
@@ -161,6 +162,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | textbox-basic / textbox-image-drop | 文字方塊、格式化、右鍵選單、拖入圖片 |
 | edit-page-text | 修改與刪除 PDF 原文、再次編輯 |
 | select-move / rotate-arrow | 選取、移動、旋轉、端點 |
+| rotate-box | 矩形與圖片旋轉、沿旋轉後的方向調整大小、移動、填色、復原、旋轉頁面後角度不變 |
 | fill-nodes | 填色（節點模式） |
 | notes / multi-tab | 便利貼、多分頁 |
 | layers / layers-drag-undo | 圖層所有操作、拖曳、復原 |
@@ -184,6 +186,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | 1.0.15 | 轉存圖片與擷取圖片會包含新增的物件 |
 | 1.0.16 | 更新來源改為 Forgejo（交接版本） |
 | 1.0.17 | 新增、刪除、旋轉頁面時不閃爍 |
+| 1.0.18 | 矩形、橢圓、雲形、戳記、圖片可以旋轉 |
 
 ---
 
@@ -191,7 +194,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 
 - 修改原文時，新文字是 FreeText 註解，外觀是圖片，所以**用其他軟體搜尋不到新文字**。如果要做成真正的頁面文字，需要嵌入中文字型（例如 Noto Sans TC 子集，搭配 fontkit）。
 - 修改原文只支援橫書；旋轉 90°、直書的文字還不能改。Form XObject 裡的文字只能用底色蓋住。
-- 矩形、橢圓、戳記、圖片還不能旋轉，目前只有線條、箭頭、多邊形、畫筆可以旋轉。
+- 文字方塊（FreeText）還不能旋轉。旋轉過的矩形、橢圓是靠外觀串流呈現，如果其他軟體重新產生外觀（例如在 Acrobat 裡改它的樣式），會變回不旋轉的樣子。
 - pdf.js 解析文字方塊的 `RC` 時，會印出「XFA rich text」警告。不影響顯示，但 RC 的 XHTML 格式可以再調整。
 - 外部匯入的 PDF 如果有巢狀的圖層分組，會被攤平成單層清單。
 - 安裝檔沒有程式碼簽章，Windows 會顯示 SmartScreen 警告。
