@@ -648,7 +648,7 @@ body.autoscrolling[data-autodir=e],body.autoscrolling[data-autodir=e] *{cursor:e
 
 /* inline text box editor */
 .tbed{position:absolute;z-index:30;transform-origin:0 0;min-width:24px;padding:4px;outline:1.2px dashed #1c64d9;outline-offset:0;white-space:pre;line-height:1.3;
-  font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;cursor:text;user-select:text;-webkit-user-select:text;color:#1f2328}
+  font-family:"PDFE Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;cursor:text;user-select:text;-webkit-user-select:text;color:#1f2328}
 .tbed div{min-height:1em}
 /* editing the PDF's own text: the editor uses the font the text is written with, so what you see is what is saved */
 @font-face{font-family:"PDFE Sans";src:url(fonts/NotoSansTC-Regular.ttf) format("truetype");font-weight:100 600;font-display:block}
@@ -3667,7 +3667,18 @@ const fontInstalled = family => !!family && FONTCAT.fams.some(x => x.family === 
 /* ====================================================================
    Inline rich-text boxes (文字方塊) and image insertion (插入圖片)
    ==================================================================== */
-const TB_DEF = {size:14, color:'#1f2328', bg:'', bold:false, italic:false, underline:false, boxBg:'', border:false};
+const TB_DEF = {size:14, color:'#1f2328', bg:'', bold:false, italic:false, underline:false, boxBg:'', border:false, font:''};
+// text boxes use the bundled Noto Sans TC (思源黑體) unless a run names another font (run.font: a system font family)
+const TB_FONT = '"PDFE Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif';
+const cssFamily = f => '"' + String(f).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+const fontStack = f => f ? cssFamily(f) + ',' + TB_FONT : TB_FONT;
+// the first family of a CSS font-family list ("PDFE Sans", i.e. the default, gives '')
+function firstFamily(list){
+  const s = String(list || '').trim(); let out = '';
+  if (s[0] === '"' || s[0] === "'") { for (let k = 1; k < s.length; k++) { const c = s[k]; if (c === '\\') { out += s[++k] || ''; continue; } if (c === s[0]) break; out += c; } }
+  else out = s.split(',')[0].trim().replace(/\s+/g, ' ');
+  return out === 'PDFE Sans' ? '' : out;
+}
 const TB_STYLE = (() => { try { return {...TB_DEF, ...(JSON.parse(localStorage.getItem('pdfeditor.textbox.v1')) || {})}; } catch (_) { return {...TB_DEF}; } })();
 const saveTB = () => { try { localStorage.setItem('pdfeditor.textbox.v1', JSON.stringify(TB_STYLE)); } catch (_) {} };
 const TB_PAD = 4;
@@ -3684,13 +3695,13 @@ function placeTBE(){
 }
 function runsToHTML(lines){
   return lines.map(line => `<div>${line.length ? line.map(r => {
-    const st = [`font-size:${r.size}px`, `color:${r.color}`, r.bg ? `background-color:${r.bg}` : '', r.bold ? 'font-weight:700' : '', r.italic ? 'font-style:italic' : '', r.underline ? 'text-decoration:underline' : ''].filter(Boolean).join(';');
-    return `<span style="${st}">${esc(r.text)}</span>`;
+    const st = [`font-size:${r.size}px`, `color:${r.color}`, r.bg ? `background-color:${r.bg}` : '', r.bold ? 'font-weight:700' : '', r.italic ? 'font-style:italic' : '', r.underline ? 'text-decoration:underline' : '', r.font ? `font-family:${fontStack(r.font)}` : ''].filter(Boolean).join(';');
+    return `<span style="${esc(st)}">${esc(r.text)}</span>`;
   }).join('') : '<br>'}</div>`).join('');
 }
 function htmlToRuns(root){
   // walk the editable DOM: block elements and <br> end a line; every text node becomes a styled run
-  const lines = [[]];
+  const lines = [[]], real = root.classList && root.classList.contains('real');
   const styleOf = node => {
     const el = node.parentElement, cs = getComputedStyle(el);
     let bg = '', underline = false;
@@ -3701,7 +3712,10 @@ function htmlToRuns(root){
       if (e === root) break;
     }
     const rgb2hex = v => { const m = v.match(/\d+(\.\d+)?/g); return m ? '#' + m.slice(0, 3).map(n => pad2((+n).toString(16))).join('') : v; };
-    return {size:Math.round(parseFloat(cs.fontSize) * 10) / 10, color:rgb2hex(cs.color), bg:bg ? rgb2hex(bg) : '', bold:+cs.fontWeight >= 600, italic:cs.fontStyle === 'italic', underline};
+    const st = {size:Math.round(parseFloat(cs.fontSize) * 10) / 10, color:rgb2hex(cs.color), bg:bg ? rgb2hex(bg) : '', bold:+cs.fontWeight >= 600, italic:cs.fontStyle === 'italic', underline};
+    const font = real ? '' : firstFamily(cs.fontFamily);
+    if (font) st.font = font;
+    return st;
   };
   const walk = n => {
     if (n.nodeType === 3) { const txt = n.nodeValue.replace(/[\u00a0]/g, ' ').replace(/\u200b/g, ''); if (txt) { const st = styleOf(n), parts = txt.split('\n'); parts.forEach((p, k) => { if (k) lines.push([]); if (p) lines[lines.length - 1].push({text:p, ...st}); }); } return; }
@@ -3714,9 +3728,9 @@ function htmlToRuns(root){
   walk(root);
   while (lines.length > 1 && !lines[lines.length - 1].length) lines.pop();
   // merge neighbouring runs with identical style
-  return lines.map(l => l.reduce((acc, r) => { const p = acc[acc.length - 1]; if (p && ['size', 'color', 'bg', 'bold', 'italic', 'underline'].every(k => p[k] === r[k])) p.text += r.text; else acc.push({...r}); return acc; }, []));
+  return lines.map(l => l.reduce((acc, r) => { const p = acc[acc.length - 1]; if (p && ['size', 'color', 'bg', 'bold', 'italic', 'underline', 'font'].every(k => p[k] === r[k])) p.text += r.text; else acc.push({...r}); return acc; }, []));
 }
-const runFont = (r, K) => `${r.italic ? 'italic ' : ''}${r.bold ? 700 : 400} ${r.size * K}px ${FONT}`;
+const runFont = (r, K) => `${r.italic ? 'italic ' : ''}${r.bold ? 700 : 400} ${r.size * K}px ${fontStack(r.font)}`;
 function layoutRuns(lines, ctx){
   const out = []; let y = TB_PAD, w = 0;
   lines.forEach(line => {
@@ -3728,7 +3742,8 @@ function layoutRuns(lines, ctx){
   return {rows:out, w:Math.max(20, w), h:Math.max(14, y + TB_PAD)};
 }
 async function renderTextBox(lines, box){
-  try { await document.fonts.load(`400 16px "Noto Sans TC"`, lines.flat().map(r => r.text).join('').slice(0, 200) || '字'); } catch (_) {}
+  const sample = lines.flat().map(r => r.text).join('').slice(0, 200) || '字', fams = new Set(lines.flat().map(r => r.font || ''));
+  try { await Promise.all([...fams].flatMap(f => [400, 700].map(w => document.fonts.load(`${w} 16px ${fontStack(f)}`, sample)))); } catch (_) {}
   const m = document.createElement('canvas').getContext('2d'), L = layoutRuns(lines, m), K = 4;
   const c = document.createElement('canvas'); c.width = Math.ceil(L.w * K); c.height = Math.ceil(L.h * K);
   const g = c.getContext('2d'); g.scale(K, K);
@@ -3745,7 +3760,7 @@ async function renderTextBox(lines, box){
   return {png, w:L.w, h:L.h};
 }
 function richTextXHTML(lines){
-  const sp = r => `<span style="font-size:${r.size}pt;color:${r.color}${r.bold ? ';font-weight:bold' : ''}${r.italic ? ';font-style:italic' : ''}${r.underline ? ';text-decoration:underline' : ''}${r.bg ? ';background-color:' + r.bg : ''}">${esc(r.text)}</span>`;
+  const sp = r => `<span style="${esc(`font-size:${r.size}pt;color:${r.color}${r.bold ? ';font-weight:bold' : ''}${r.italic ? ';font-style:italic' : ''}${r.underline ? ';text-decoration:underline' : ''}${r.bg ? ';background-color:' + r.bg : ''}${r.font ? ';font-family:' + cssFamily(r.font) : ''}`)}">${esc(r.text)}</span>`;
   return `<?xml version="1.0"?><body xmlns="http://www.w3.org/1999/xhtml" xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/" xfa:APIVersion="Acrobat:11.0.0" xfa:spec="2.0.2">${lines.map(l => `<p>${l.map(sp).join('') || ' '}</p>`).join('')}</body>`;
 }
 function openTextEditor(i, x, y, {id = null, lines = null, box = null, veilBox = null, veilColor = null, edit = null, selectAll = false, real = false, rot = 0, vert = false} = {}){
@@ -3759,6 +3774,7 @@ function openTextEditor(i, x, y, {id = null, lines = null, box = null, veilBox =
   const d = TB_STYLE;
   el.style.fontSize = d.size + 'px'; el.style.color = d.color; el.style.fontWeight = d.bold ? 700 : 400; el.style.fontStyle = d.italic ? 'italic' : 'normal';
   el.style.textDecoration = d.underline ? 'underline' : 'none';
+  if (d.font && !real) el.style.fontFamily = fontStack(d.font);
   el.innerHTML = lines ? runsToHTML(lines) : '<div><br></div>';
   S.els[i].appendChild(el); S.els[i].style.zIndex = 6;
   let veil = null;
@@ -3800,6 +3816,8 @@ function restoreTBRange(){
 }
 // apply a format: to the highlighted text while editing, and as the default for new text boxes
 function applyTextFormat(k, v){
+  if (k === 'font' && TBE && TBE.el.classList.contains('real')) return;   // the PDF's own text is written with the bundled font
+  if (TBE && document.activeElement === TBE.el) saveTBRange();   // selectionchange arrives later: take the selection as it is now
   // with text highlighted only that text changes; with nothing highlighted it also becomes the default for new text
   const hasSel = TBE && TBE.range && !TBE.range.collapsed;
   if (k in TB_STYLE && !['boxBg', 'border'].includes(k) && !hasSel) { TB_STYLE[k] = v; saveTB(); }
@@ -3812,15 +3830,17 @@ function applyTextFormat(k, v){
     const st = TBE.el.style;
     if (k === 'size') st.fontSize = v + 'px'; if (k === 'color') st.color = v; if (k === 'bold') st.fontWeight = v ? 700 : 400;
     if (k === 'italic') st.fontStyle = v ? 'italic' : 'normal'; if (k === 'underline') st.textDecoration = v ? 'underline' : 'none';
+    if (k === 'font') st.fontFamily = v ? fontStack(v) : '';
     if (k === 'bg' && v) document.execCommand('hiliteColor', false, v);
-  } else if (k === 'size' && collapsed) {   // caret only: start a run with the new size at the caret
-    const sp = document.createElement('span'); sp.style.fontSize = v + 'px'; sp.textContent = '\u200b';
+  } else if ((k === 'size' || k === 'font') && collapsed) {   // caret only: start a run with the new size / font at the caret
+    const sp = document.createElement('span'); if (k === 'size') sp.style.fontSize = v + 'px'; else sp.style.fontFamily = fontStack(v); sp.textContent = '\u200b';
     const r = sel.getRangeAt(0); r.insertNode(sp); const r2 = document.createRange(); r2.setStart(sp.firstChild, 1); r2.collapse(true); sel.removeAllRanges(); sel.addRange(r2);
   } else if (k === 'size') {
     document.execCommand('fontSize', false, '7');
     TBE.el.querySelectorAll('font[size="7"]').forEach(f => { const s = document.createElement('span'); s.style.fontSize = v + 'px'; s.innerHTML = f.innerHTML; f.replaceWith(s); });
     TBE.el.querySelectorAll('span').forEach(s => { if (/xxx-large|-webkit-xxx-large/.test(s.style.fontSize)) s.style.fontSize = v + 'px'; });
-  } else if (k === 'color') document.execCommand('foreColor', false, v);
+  } else if (k === 'font') document.execCommand('fontName', false, fontStack(v));
+  else if (k === 'color') document.execCommand('foreColor', false, v);
   else if (k === 'bg') document.execCommand('hiliteColor', false, v || 'transparent');
   else if (k === 'bold') document.execCommand('bold');
   else if (k === 'italic') document.execCommand('italic');
@@ -3834,6 +3854,7 @@ function currentTBStyle(){
   const cs = getComputedStyle(n);
   const rgb2hex = v => { const m = v.match(/\d+(\.\d+)?/g); return m ? '#' + m.slice(0, 3).map(x => pad2((+x).toString(16))).join('') : v; };
   return {...TB_STYLE, size:Math.round(parseFloat(cs.fontSize)), color:rgb2hex(cs.color), bold:+cs.fontWeight >= 600, italic:cs.fontStyle === 'italic', underline:/underline/.test(cs.textDecorationLine),
+    font:TBE.el.classList.contains('real') ? '' : firstFamily(cs.fontFamily),
     boxBg:TBE.el.dataset.boxbg || '', border:!!TBE.el.dataset.border};
 }
 const TB_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 60, 72];
@@ -7874,7 +7895,11 @@ function setTheme(t){
 if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyTheme();
 paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box, tidyOcr, denoiseCanvas,
-  fontCat:() => ({ok:FONTCAT.ok, fams:FONTCAT.fams.map(f => ({...f}))}), fontLoad:loadFontCatalog, fontReady:() => loadFontCatalog().then(fontAnalysisDone)};
+  fontCat:() => ({ok:FONTCAT.ok, fams:FONTCAT.fams.map(f => ({...f}))}), fontLoad:loadFontCatalog, tbStyle:() => currentTBStyle(),
+  tbRT:async i => { const doc = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false}), out = [];
+    for (const a of (await getAnns(i)).filter(a => a.subtype === 'FreeText')) { const ref = findAnnotRef(doc, i, a.id), d = ref && doc.context.lookup(ref, PDFDict), v = d && d.lookupMaybe(PDFName.of('PDFE_RT'), PDFHexString, PDFString); if (v) out.push({id:a.id, rt:JSON.parse(v.decodeText())}); }
+    return out; },
+  fontReady:() => loadFontCatalog().then(fontAnalysisDone)};
 </script>
 </body>
 </html>
