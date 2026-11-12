@@ -1,6 +1,8 @@
 // 字型辨識的比對引擎（app/fontid.js）: the blank fallback font, glyphs out of a scanned picture, glyph-by-glyph
 // matching against installed fonts, and the Google Fonts subset loader (with a fake source, no network).
 import { launch } from './_env.mjs';
+import { execFileSync } from 'child_process';
+import fs from 'fs';
 
 let failed = 0;
 const check = (name, ok, detail = '') => { console.log(`${ok ? '✔' : '✘'} ${name}${detail !== '' ? '  ' + (typeof detail === 'string' ? detail : JSON.stringify(detail)) : ''}`); if (!ok) { failed++; process.exitCode = 1; } };
@@ -73,6 +75,51 @@ r = await A(() => { const s = __scan({css:'"DejaVu Serif"', text:'Quick brown fo
   const sym = s.symbols.find(x => x.text === 'R'); sym.bbox = {...sym.bbox, x0:sym.bbox.x0 - 6, x1:sym.bbox.x1 + 6};
   const w1 = FontId.glyphsFromImage(s.canvas, s.symbols).latin.find(x => x.ch === 'R').w; return {w0, w1}; });
 check('neighbour ink left out', Math.abs(r.w1 - r.w0) <= 2, r);
+await app.close();
+
+// ---- part 3: matching a scan against the installed fonts ---------------------------------------
+// the candidates: every font family on this machine (as the app lists them) and the bundled 思源黑體
+const FAMS = [...new Set(execFileSync('fc-list', [':', 'family'], {encoding:'utf8'}).split('\n').map(l => l.split(',')[0].replace(/\\-/g, '-').trim()).filter(Boolean))].sort();
+const C = [...FAMS.map(f => ({key:f, css:'"' + f.replace(/["\\]/g, '\\$&') + '"', label:f, source:'local', family:f})), {key:'builtin', css:'"PDFE Sans"', label:'思源黑體（內建）', source:'builtin', family:''}];
+const L = 'Quick brown fox Rag 2025', CJ = '中華民國臺灣字型辨識測試範例永東國酬愛鬱靈鷹';
+({ app, win, A } = await open('fid3.pdf'));
+await A(SCAN_JS); await A(() => FontId.ready());
+await A(t => document.fonts.load('46px "PDFE Sans"', t), CJ);
+const top = (scan, cands) => A(async ([s, c]) => { const sc = __scan(s), set = FontId.glyphsFromImage(sc.canvas, sc.symbols);
+  const r = await FontId.identify(set.cjk.length >= 3 ? set.cjk : set.latin, c); return r.results.map(x => ({k:x.cand.key, pct:x.pct, bold:x.bold, twins:x.twins.map(t => t.key)})); }, [scan, cands]);
+r = await top({css:'"DejaVu Serif"', text:L, px:42, blur:.8, noise:20, seed:2}, C);
+check('DejaVu Serif first, ≥ 70%, ahead of others', r[0].k === 'DejaVu Serif' && r[0].pct >= 70 && r[0].pct > r[1].pct, r.slice(0, 3));
+check('Bitstream Charter (Type 1) left out', !r.some(x => x.k === 'Bitstream Charter' || x.twins.includes('Bitstream Charter')));
+r = await top({css:'"Liberation Sans"', text:L, px:42, blur:.8, noise:20, seed:3, weight:700}, C);
+check('Liberation Sans bold first, marked bold', r[0].k === 'Liberation Sans' && r[0].bold, r.slice(0, 3));
+r = await top({css:'"WenQuanYi Zen Hei"', text:CJ, px:42, blur:.8, noise:20, seed:4}, C);
+const wq = r[0] ? [r[0].k, ...r[0].twins] : [];
+check('WenQuanYi Zen Hei first, its mono twin merged', wq.includes('WenQuanYi Zen Hei') && wq.includes('WenQuanYi Zen Hei Mono'), r.slice(0, 3));
+r = await top({css:'"PDFE Sans"', text:CJ, px:42, blur:.8, noise:20, seed:5}, C);
+check('bundled 思源黑體 first', r[0].k === 'builtin', r.slice(0, 3));
+r = await top({css:'"DejaVu Serif"', text:L, px:150, blur:1.5, noise:20, seed:6}, C);
+check('very large glyphs', r[0].k === 'DejaVu Serif', r.slice(0, 3));
+r = await top({css:'"WenQuanYi Zen Hei"', text:CJ, px:42, seed:7}, C.filter(c => c.key === 'DejaVu Serif'));
+check('no candidate has the glyphs: no results', Array.isArray(r) && r.length === 0, r);
+r = await A(async c => { const sc = __scan({css:'"DejaVu Serif"', text:'Quick brown fox Rag 2025', px:42, seed:8}), set = FontId.glyphsFromImage(sc.canvas, sc.symbols);
+  return await FontId.identify(set.latin, c, {stop:() => true}); }, C);
+check('stop: null', r === null, r);
+// the same outlines once installed and once as a web font: one row, the installed one first
+const libSerif = fs.readFileSync('/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf').toString('base64');
+r = await A(async b64 => { const ff = new FontFace('PDFE GF T', Uint8Array.from(atob(b64), c => c.charCodeAt(0))); await ff.load(); document.fonts.add(ff);
+  const sc = __scan({css:'"Liberation Serif"', text:'Quick brown fox Rag 2025', px:42, seed:9}), set = FontId.glyphsFromImage(sc.canvas, sc.symbols);
+  const a = await FontId.identify(set.latin, [{key:'local:Liberation Serif', css:'"Liberation Serif"', label:'Liberation Serif', source:'local'}]);
+  const g = await FontId.identify(set.latin, [{key:'google:Tinos', css:'"PDFE GF T"', label:'Tinos', source:'google'}], {sigma:a.sigma, keep:a.keep});
+  const m = FontId.mergeResults(g.results, a.results); return m.map(x => ({k:x.cand.key, twins:x.twins.map(t => t.key)})); }, libSerif);
+check('merge: one row, installed first', r.length === 1 && r[0].k === 'local:Liberation Serif' && r[0].twins.includes('google:Tinos'), r);
+// hundreds of fonts: quick enough, and the window keeps responding meanwhile
+r = await A(async c => { const many = []; for (let k = 0; k < 25; k++) for (const x of c) many.push({...x, key:x.key + '|' + k});
+  const sc = __scan({css:'"DejaVu Serif"', text:'Quick brown fox Rag 2025', px:42, seed:10}), set = FontId.glyphsFromImage(sc.canvas, sc.symbols);
+  // the window keeps drawing: the longest time between two frames while matching runs (up to its end)
+  let last = performance.now(), gap = 0, on = true, frames = 0; const tick = () => { const t = performance.now(); gap = Math.max(gap, t - last); last = t; frames++; if (on) requestAnimationFrame(tick); }; requestAnimationFrame(tick);
+  const t0 = performance.now(), res = await FontId.identify(set.latin, many); const ms = performance.now() - t0; on = false; gap = Math.max(gap, performance.now() - last);
+  return {n:many.length, ms:Math.round(ms), gap:Math.round(gap), frames, first:res.results[0].cand.key}; }, C);
+check('500+ candidates: < 8 s, never stalls > 100 ms', r.n >= 500 && r.ms < 8000 && r.gap < 100 && r.first.startsWith('DejaVu Serif|'), r);
 await app.close();
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
