@@ -83,11 +83,12 @@
     }
     return lines;
   }
-  // the ink strokes in a region R of the picture: a label per pixel (0 = paper) and each stroke's size, box and centre
-  function strokesIn(gray, W, R, T){
+  // the ink strokes in a region R of the picture (lg: its grey values, row by row): a label per pixel (0 = paper) and
+  // each stroke's size, box and centre (in picture coordinates)
+  function strokesIn(lg, R, T){
     const w = R.x1 - R.x0, h = R.y1 - R.y0, lab = new Int32Array(w * h), comps = [], stack = [];
     for (let start = 0; start < w * h; start++) {
-      if (lab[start] || gray[(R.y0 + ((start / w) | 0)) * W + R.x0 + start % w] >= T) continue;
+      if (lab[start] || lg[start] >= T) continue;
       const c = {id:comps.length + 1, n:0, sx:0, sy:0, x0:Infinity, y0:Infinity, x1:-1, y1:-1};
       lab[start] = c.id; stack.push(start);
       while (stack.length) {
@@ -96,7 +97,7 @@
         if (ax < c.x0) c.x0 = ax; if (ax > c.x1) c.x1 = ax; if (ay < c.y0) c.y0 = ay; if (ay > c.y1) c.y1 = ay;
         for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
           const nx = qx + dx, ny = qy + dy; if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-          const r = ny * w + nx; if (!lab[r] && gray[(R.y0 + ny) * W + R.x0 + nx] < T) { lab[r] = c.id; stack.push(r); }
+          const r = ny * w + nx; if (!lab[r] && lg[r] < T) { lab[r] = c.id; stack.push(r); }
         }
       }
       comps.push(c);
@@ -109,15 +110,22 @@
   function glyphsFromImage(img, symbols, {max = 16} = {}){
     const out = {cjk:[], latin:[], order:''}, W = img.width, H = img.height;
     if (!W || !H) return out;
-    const gray = grayOf(img), {fg, bg} = levels(gray);
-    if (bg - fg < 40) return out;   // no ink to speak of
-    const T = (fg + bg) / 2, span = Math.max(1, bg - fg), best = new Map();
+    const gray = grayOf(img), best = new Map();
     for (const ln of linesOf(symbols)) {
       const B = ln.box, thick = ln.vert ? B.x1 - B.x0 : B.y1 - B.y0; if (!(thick >= 8)) continue;
       const mx = (ln.vert ? .25 : .5) * thick, my = (ln.vert ? .5 : .25) * thick;
       const R = {x0:Math.max(0, Math.floor(B.x0 - mx)), y0:Math.max(0, Math.floor(B.y0 - my)), x1:Math.min(W, Math.ceil(B.x1 + mx)), y1:Math.min(H, Math.ceil(B.y1 + my))};
       if (R.x1 <= R.x0 || R.y1 <= R.y0) continue;
-      const st = strokesIn(gray, W, R, T), minN = Math.max(3, Math.round((thick * .04) ** 2));
+      // the line's own copy of the picture, its ink and paper levels; light text on a dark band (the line mostly
+      // dark) is turned around first
+      const rw = R.x1 - R.x0, lg = new Uint8Array(rw * (R.y1 - R.y0));
+      for (let y = R.y0; y < R.y1; y++) lg.set(gray.subarray(y * W + R.x0, y * W + R.x1), (y - R.y0) * rw);
+      const hist = new Uint32Array(256); for (let k = 0; k < lg.length; k++) hist[lg[k]]++;
+      let n = 0, med = 255; for (let v = 0; v < 256; v++) { n += hist[v]; if (n * 2 >= lg.length) { med = v; break; } }
+      if (med < 128) for (let k = 0; k < lg.length; k++) lg[k] = 255 - lg[k];
+      const {fg, bg} = levels(lg); if (bg - fg < 40) continue;   // no ink to speak of
+      const T = (fg + bg) / 2, span = Math.max(1, bg - fg);
+      const st = strokesIn(lg, R, T), minN = Math.max(3, Math.round((thick * .04) ** 2));
       const usable = s => s.text && [...s.text].length === 1 && s.confidence >= 75 && !SKIP.includes(s.text) && (HAN.test(s.text) || LATIN.test(s.text));
       // one anchor per character position, at the centre of its box along the line (the same glyph read twice: its
       // most confident usable reading)
@@ -176,12 +184,12 @@
         const box = {x0:Math.min(...a.mine.map(c => c.x0)), y0:Math.min(...a.mine.map(c => c.y0)), x1:Math.max(...a.mine.map(c => c.x1)) + 1, y1:Math.max(...a.mine.map(c => c.y1)) + 1};
         if (box.y1 - box.y0 < 10) continue;
         out.order += ch;
-        const cur = best.get(ch); if (!cur || s.confidence > cur.conf) best.set(ch, {kind, conf:s.confidence, box, ids:new Set(a.mine.map(c => c.id)), st});
+        const cur = best.get(ch); if (!cur || s.confidence > cur.conf) best.set(ch, {kind, conf:s.confidence, box, ids:new Set(a.mine.map(c => c.id)), st, lg, bg, span});
       }
     }
-    for (const [ch, {kind, box, ids, st}] of best) {
+    for (const [ch, {kind, box, ids, st, lg, bg, span}] of best) {
       // the glyph's own strokes; the neighbours' strokes inside its box count as paper
-      const grid = gridFrom(box, (x, y) => { const l = st.lab[(y - st.R.y0) * st.w + x - st.R.x0]; return l && !ids.has(l) ? 0 : clamp01((bg - gray[y * W + x]) / span); });
+      const grid = gridFrom(box, (x, y) => { const k = (y - st.R.y0) * st.w + x - st.R.x0, l = st.lab[k]; return l && !ids.has(l) ? 0 : clamp01((bg - lg[k]) / span); });
       let ink = 0; for (let k = 0; k < grid.length; k++) ink += grid[k];
       out[kind].push({ch, w:box.x1 - box.x0, h:box.y1 - box.y0, ink, grid});
     }
@@ -409,36 +417,42 @@
     }
     return out;
   }
-  // load these Google families for these characters: candidates for identify(). offline = no request reached Google
-  async function loadGoogle(entries, chars, {fetchCss = url => fetch(url), timeout = 8000, stop = null} = {}){
-    const cands = [], failed = [], todo = []; let answered = 0;
+  // load these Google families for these characters: candidates for identify(). offline = no request reached Google.
+  // timeout: for each request and font file; deadline: for the whole call (what has come by then is kept). Once a
+  // request fails before any has been answered, no further ones are asked (no network: one round of waiting, not three)
+  async function loadGoogle(entries, chars, {fetchCss = url => fetch(url), timeout = 8000, deadline = 12000, stop = null} = {}){
+    const cands = [], failed = [], todo = []; let answered = 0, dead = false;
     for (const e of entries) { const c = gfCache.get(e.family + '|' + chars); if (c) cands.push(c); else todo.push(e); }
     if (!todo.length) return {cands, failed, offline:false};
+    const t0 = performance.now(), left = () => Math.max(1, Math.min(timeout, deadline - (performance.now() - t0)));
+    const over = () => dead || performance.now() - t0 >= deadline || (stop && stop());
     const byFamily = new Map(todo.map(e => [e.family, e]));
+    const give = batch => batch.forEach(e => failed.push(e.family));
     // one request for a batch of families; a batch Google refuses (a bad name) is asked again one family at a time
     const ask = async batch => {
-      if (stop && stop()) return;
+      if (over()) { give(batch); return; }
       const url = 'https://fonts.googleapis.com/css2?' + batch.map(familyParam).join('&') + '&text=' + encodeURIComponent(chars);
-      let res; try { res = await withTimeout(Promise.resolve(fetchCss(url)), timeout); } catch (_) { batch.forEach(e => failed.push(e.family)); return; }
-      if (!res || res.status >= 500) { batch.forEach(e => failed.push(e.family)); return; }
+      let res; try { res = await withTimeout(Promise.resolve(fetchCss(url)), left()); } catch (_) { if (!answered) dead = true; give(batch); return; }
+      if (!res || res.status >= 500) { if (!answered) dead = true; give(batch); return; }
       answered++;
-      if (!res.ok) { if (batch.length > 1) { for (const e of batch) await ask([e]); } else failed.push(batch[0].family); return; }
-      let css = ''; try { css = await withTimeout(Promise.resolve(res.text()), timeout); } catch (_) { batch.forEach(e => failed.push(e.family)); return; }
-      const faces = parseFaces(css), got = new Set();
-      for (const e of batch) {
-        const mine = faces.filter(f => f.family === e.family); if (!mine.length) { failed.push(e.family); continue; }
-        const alias = 'PDFE GF ' + (++gfAlias); let ok = 0;
-        for (const f of mine) {
-          try { const ff = new FontFace(alias, `url(${f.src})`, {weight:String(f.weight)}); await withTimeout(ff.load(), timeout); document.fonts.add(ff); ok++; } catch (_) {}
-        }
-        if (!ok) { failed.push(e.family); continue; }
+      if (!res.ok) { if (batch.length > 1) { for (const e of batch) await ask([e]); } else give(batch); return; }
+      let css = ''; try { css = await withTimeout(Promise.resolve(res.text()), left()); } catch (_) { give(batch); return; }
+      const faces = parseFaces(css);
+      await Promise.all(batch.map(async e => {
+        const mine = faces.filter(f => f.family === e.family); if (!mine.length) { failed.push(e.family); return; }
+        const alias = 'PDFE GF ' + (++gfAlias);
+        const loaded = await Promise.all(mine.map(async f => {
+          try { const ff = new FontFace(alias, `url(${f.src})`, {weight:String(f.weight)}); await withTimeout(ff.load(), left()); document.fonts.add(ff); return true; } catch (_) { return false; }
+        }));
+        if (!loaded.some(Boolean)) { failed.push(e.family); return; }
         const c = {key:'google:' + e.family, css:`"${alias}"`, label:e.zh ? `${e.zh}（${e.family}）` : e.family, source:'google', entry:byFamily.get(e.family)};
-        gfCache.set(e.family + '|' + chars, c); got.add(e.family); cands.push(c);
-      }
+        gfCache.set(e.family + '|' + chars, c); cands.push(c);
+      }));
     };
     const batches = []; for (let k = 0; k < todo.length; k += 10) batches.push(todo.slice(k, k + 10));
     let next = 0;
-    await Promise.all(Array.from({length:Math.min(6, batches.length)}, async () => { while (next < batches.length) await ask(batches[next++]); }));
+    await Promise.all(Array.from({length:Math.min(6, batches.length)}, async () => { while (next < batches.length && !over()) await ask(batches[next++]); }));
+    while (next < batches.length) give(batches[next++]);
     // keep the list's order
     const pos = new Map(entries.map((e, k) => [e.family, k]));
     cands.sort((a, b) => pos.get(a.entry.family) - pos.get(b.entry.family));

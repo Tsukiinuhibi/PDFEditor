@@ -5057,6 +5057,8 @@ function decodeFontName(raw){
   return out.length ? out : [s];
 }
 const cleanFontName = n => String(n || '').replace(/^[A-Z]{6}\+/, '').replace(/(.)-\d+$/, '$1').trim();   // subset tag, pdf-lib's number
+// without the style Word and others add ("新細明體,Bold", "Arial-BoldMT" stay with their family)
+const plainFontName = n => n.replace(/[-,_ ]+(regular|book|roman|bold|italic|oblique|medium|light|semibold|demibold|black|heavy)\w*\b.*$/i, '').trim() || n;
 // the Google Fonts family a PDF font name stands for ('LXGWWenKaiTC-Regular' → LXGW WenKai TC)
 function googleByName(name){
   const flat = v => v.replace(/[\s_-]/g, '').toLowerCase(), base = flat(String(name).replace(/[-,_](regular|book|roman|bold|italic|oblique|medium|light|semibold|demibold|black|heavy)\b.*$/i, ''));
@@ -5076,11 +5078,11 @@ async function pdfFontsIn(i, box){
     const names = decodeFontName(f && f.name).map(cleanFontName);
     if (names.some(n => /^GlyphLessFont$/i.test(n))) { hidden += chars; continue; }
     const generic = !!(f && f.isType3Font) || !names[0] || GENERIC_FONT.test(names[0]);
-    let name = names[0], local = null, google = null;
+    let name = generic ? names[0] : plainFontName(names[0]), local = null, google = null;
     if (!generic) {
       for (const n of names) {
-        const fam = matchSystemFont(n) || (FONTCAT.fams.find(x => x.name === n) || {}).family;
-        if (fam) { name = n; local = {family:fam, label:fontLabel(fam), alias:false}; break; }
+        const b = plainFontName(n), fam = matchSystemFont(n) || (FONTCAT.fams.find(x => x.name === b || x.name === n) || {}).family;
+        if (fam) { name = b; local = {family:fam, label:fontLabel(fam), alias:false}; break; }
       }
       if (!local) { const alt = (STD_FONT_ALIAS[name.split(/[-,]/)[0]] || []).find(fontInstalled); if (alt) local = {family:alt, label:fontLabel(alt), alias:true}; }
       if (!local) google = googleByName(name);
@@ -7370,7 +7372,7 @@ function ocrPanel(i, box){
       if (b.dataset.dir) readRegion(OCR.i, OCR.box, {image:true, dir:b.dataset.dir});
       if (b.dataset.ot) showOcrTab(b.dataset.ot);
       if (b.dataset.o === 'refont') fontIdStart();
-      if (b.dataset.o === 'byshape') { b.parentNode.remove(); fontIdImage(OCR.job); }
+      if (b.dataset.o === 'byshape') { OCR.panel.dataset.shape = '1'; b.parentNode.remove(); fontIdImage(OCR.job); }
       if (b.dataset.fa === 'apply') applyIdentifiedFont(b.dataset.family || '');
       if (b.dataset.fa === 'download') openFontPage(b.dataset.gf, b.closest('.fi-row'));
     });
@@ -7422,7 +7424,7 @@ function closeOcr(){
    (installed) or 下載 (Google Fonts). Nothing here changes the document.
    ==================================================================== */
 const FONTID_KEY = 'pdfeditor.fontid.v1';
-const FONTID = {tab:'text', job:-1, busy:false, recent:[], pdfRecent:[], fetchCss:null, timeout:8000,
+const FONTID = {tab:'text', job:-1, run:0, startRun:0, busy:false, recent:[], pdfRecent:[], imgRecent:[], fetchCss:null, timeout:8000, deadline:12000,
   google:(() => { try { const v = JSON.parse(localStorage.getItem(FONTID_KEY)); return !(v && v.google === false); } catch (_) { return true; } })()};
 // the window shows the tab FONTID.tab says (a new window opens on the tab last used)
 function paintOcrTab(){
@@ -7444,21 +7446,48 @@ function fiStatus(msg, progress = null){
   st.classList.toggle('idle', !msg && progress == null);
   placeOcrPanel();
 }
-// identify the font of the current box (again)
+// identify the font of the current box (again). Each run has its own number: a newer run (重新比對, a new box)
+// makes an older one stop quietly
 async function fontIdStart(){
   const p = OCR.panel; if (!p) return;
-  const job = FONTID.job = OCR.job;
-  p.querySelector('.fi-pdf').innerHTML = ''; p.querySelector('.fi-img').innerHTML = ''; p.querySelector('.fi-note').hidden = true; FONTID.pdfRecent = [];
+  const job = FONTID.job = OCR.job, run = FONTID.startRun = ++FONTID.run;
+  p.querySelector('.fi-pdf').innerHTML = ''; p.querySelector('.fi-img').innerHTML = ''; p.querySelector('.fi-note').hidden = true;
+  FONTID.pdfRecent = []; FONTID.imgRecent = []; delete p.dataset.shape;
   // the PDF's own text: the fonts the file records (exact); comparing shapes only when asked
   FONTID.busy = true; fiStatus('讀取中…');
   let pf = {fonts:[], hidden:0};
   try { pf = await pdfFontsIn(OCR.i, OCR.box); } catch (e) { console.error(e); }
-  if (job !== OCR.job || !OCR.panel) return;
+  if (job !== OCR.job || run !== FONTID.run || !OCR.panel) { if (run === FONTID.run) FONTID.busy = false; return; }
   if (pf.fonts.length) {
-    FONTID.recent = FONTID.pdfRecent = [...new Set(pf.fonts.filter(f => f.local).map(f => f.local.family))].slice(0, 5).map(family => ({family, pct:100}));
-    renderPdfFonts(pf.fonts); fiStatus(''); FONTID.busy = false; return;
+    showPdfFonts(pf.fonts); FONTID.busy = false; fiStatus('');
+    // the Chinese names of the installed fonts are still being read (first start): look again once they are known
+    if (FONTCAT.busy) {
+      fiStatus('正在讀取這台電腦的字型名稱…');
+      const again = async () => {
+        if (FONTCAT.busy) return;
+        FONTCAT.subs.delete(again);
+        const same = () => job === OCR.job && run === FONTID.startRun && OCR.panel;
+        if (!same()) return;
+        let pf2 = null; try { pf2 = await pdfFontsIn(OCR.i, OCR.box); } catch (e) { console.error(e); }
+        if (!same()) return;
+        if (pf2 && pf2.fonts.length) showPdfFonts(pf2.fonts);
+        if (!FONTID.busy) fiStatus('');
+      };
+      FONTCAT.subs.add(again);
+    }
+    return;
   }
-  await fontIdImage(job);
+  await fontIdImage(job, run);
+}
+// the font menu's 字型辨識結果: the PDF's own fonts of this box first, then the shapes found
+function updateRecent(){
+  const seen = new Set();
+  const list = [...FONTID.pdfRecent, ...FONTID.imgRecent].filter(r => !seen.has(r.family) && seen.add(r.family)).slice(0, 5);
+  if (list.length) FONTID.recent = list;
+}
+function showPdfFonts(fonts){
+  FONTID.pdfRecent = [...new Set(fonts.filter(f => f.local).map(f => f.local.family))].map(family => ({family, pct:100}));
+  updateRecent(); renderPdfFonts(fonts);
 }
 function renderPdfFonts(fonts){
   const el = OCR.panel.querySelector('.fi-pdf');
@@ -7467,7 +7496,7 @@ function renderPdfFonts(fonts){
     const label = !f.local ? f.name : f.local.alias ? `${f.name}，以 ${f.local.label} 代替` : f.local.label + (f.local.label !== f.name ? `（${f.name}）` : '');
     const act = f.local ? `<button data-fa="apply" data-family="${esc(f.local.family)}">套用</button>` : f.google ? `<button data-fa="download" data-gf="${esc(f.google.family)}">下載</button>` : '<span class="fi-none">這台電腦沒有</span>';
     return `<div class="fi-row" data-key="pdf:${esc(f.key)}"><div class="fi-name"><span class="fi-label" title="${esc(label)}">${esc(label)}</span><span class="fi-src">${f.embedded ? '已內嵌' : '未內嵌'}</span></div><span class="fi-pct">100%</span>${act}</div>`;
-  }).join('') + '<div class="fi-by"><button class="fi-more" data-o="byshape">用字形比對找相似字型</button></div>';
+  }).join('') + (OCR.panel.dataset.shape ? '' : '<div class="fi-by"><button class="fi-more" data-o="byshape">用字形比對找相似字型</button></div>');
   placeOcrPanel();
 }
 // the candidates on this computer: the bundled 思源黑體 and every installed family
@@ -7476,62 +7505,76 @@ function localCands(){
   if (FONTCAT.ok) for (const f of FONTCAT.fams) out.push({key:'local:' + f.family, css:cssFamily(f.family), label:f.name || f.family, source:'local', family:f.family});
   return out;
 }
-// the picture of the box read only for its character boxes (when the 文字 tab showed the PDF's own text)
-async function ocrGlyphsOnly(job){
+// the picture of the box read only for its character boxes (when the 文字 tab showed the PDF's own text, or to try
+// the other writing direction)
+async function ocrGlyphsOnly(job, dir = OCR.dir){
   const img = await ocrImage(OCR.i, OCR.box); if (job !== OCR.job) return null;
-  const best = await ocrPasses(img, OCR.dir === 'v', job, pr => fiStatus('辨識字形中…', pr));
+  const best = await ocrPasses(img, dir === 'v', job, pr => fiStatus('辨識字形中…', pr));
   if (!best) return null;
   return (OCR.glyphs = {job, img:best.img, symbols:best.symbols});
 }
-// compare the box's glyphs: Chinese and Latin each on their own when both are there, installed fonts first and
-// Google Fonts after them (merged into the same list)
-async function fontIdImage(job){
-  const stop = () => job !== OCR.job, p = OCR.panel; if (!p) return;
+// compare the box's glyphs: Chinese and Latin each on their own when both are there. The installed fonts of every
+// group are listed first; Google Fonts come after them, merged into the same lists
+async function fontIdImage(job, run = ++FONTID.run){
+  const stop = () => job !== OCR.job || run !== FONTID.run || !OCR.panel, p = OCR.panel; if (!p) return;
   const out = p.querySelector('.fi-img'); out.innerHTML = '';
   FONTID.busy = true; fiStatus('讀取中…');
   try {
     await OCR.readP; if (stop()) return;
     let g = OCR.glyphs && OCR.glyphs.job === job ? OCR.glyphs : null;
     if (!g) { fiStatus(OCR.worker ? '辨識字形中…' : '載入辨識引擎…（第一次需要幾秒鐘）', 0); g = await ocrGlyphsOnly(job); if (stop()) return; }
-    const set = g ? FontId.glyphsFromImage(g.img, g.symbols) : {cjk:[], latin:[], order:''}, groups = [];
+    let set = g ? FontId.glyphsFromImage(g.img, g.symbols) : {cjk:[], latin:[], order:''};
+    const enough = x => x.cjk.length >= 3 || x.latin.length >= 5;
+    if (!enough(set)) {   // read the wrong way, perhaps (vertical columns in a box wider than tall): once more the other way
+      fiStatus('換個書寫方向辨識字形…', 0);
+      const g2 = await ocrGlyphsOnly(job, OCR.dir === 'v' ? 'h' : 'v'); if (stop()) return;
+      const set2 = g2 ? FontId.glyphsFromImage(g2.img, g2.symbols) : null;
+      if (set2 && enough(set2)) set = set2;
+    }
+    const groups = [];
     if (set.cjk.length >= 3) groups.push({title:'中文', script:'cjk', glyphs:set.cjk});
     if (set.latin.length >= 5) groups.push({title:'英數字', script:'latin', glyphs:set.latin});
     if (!groups.length) { fiStatus('這個範圍能比對的字太少，請框大一點或框清楚的字'); return; }
     await loadFontCatalog(); await FontId.ready(); if (stop()) return;
-    const local = localCands(); let offline = false, any = false;
+    const local = localCands();
     for (const grp of groups) {
-      const el = document.createElement('div'); el.className = 'fi-grp';
-      if (groups.length > 1) el.innerHTML = `<div class="fi-h">${grp.title}</div>`;
-      out.appendChild(el);
-      const sample = [...set.order].filter(ch => grp.glyphs.some(x => x.ch === ch)).slice(0, 12).join('');
+      grp.el = document.createElement('div'); grp.el.className = 'fi-grp';
+      if (groups.length > 1) grp.el.innerHTML = `<div class="fi-h">${grp.title}</div>`;
+      out.appendChild(grp.el);
+      grp.sample = [...set.order].filter(ch => grp.glyphs.some(x => x.ch === ch)).slice(0, 12).join('');
       fiStatus('比對本機字型…', 0);
-      const loc = await FontId.identify(grp.glyphs, local, {stop, onProgress:(d, t) => fiStatus(`比對本機字型… ${d}／${t}`, d / t)});
-      if (!loc || stop()) return;
-      grp.results = loc.results; renderFontRows(el, grp.results, sample);
-      if (FONTID.google) {
-        fiStatus('比對 Google Fonts…');
-        const ents = FontId.GOOGLE.filter(e => e.script === grp.script && !fontInstalled(e.family));
-        const gl = await FontId.loadGoogle(ents, FontId.requestChars(grp.glyphs), {fetchCss:FONTID.fetchCss || undefined, timeout:FONTID.timeout, stop});
-        if (stop()) return;
-        if (gl.offline && !gl.cands.length) offline = true;   // fonts downloaded earlier still count: then it is not "only this computer's"
-        if (gl.cands.length) {
-          const gr = await FontId.identify(grp.glyphs, gl.cands, {sigma:loc.sigma, keep:loc.keep, stop, onProgress:(d, t) => fiStatus(`比對 Google Fonts… ${d}／${t}`, d / t)});
-          if (!gr || stop()) return;
-          grp.results = FontId.mergeResults(loc.results, gr.results); renderFontRows(el, grp.results, sample);
-        }
-      }
-      if (grp.results.length) any = true; else el.remove();
+      grp.loc = await FontId.identify(grp.glyphs, local, {stop, onProgress:(d, t) => fiStatus(`比對本機字型… ${d}／${t}`, d / t)});
+      if (!grp.loc || stop()) return;
+      grp.results = grp.loc.results; renderFontRows(grp.el, grp.results, grp.sample);
     }
-    // the installed fonts found, for the font menu's 字型辨識結果 (the PDF's own fonts of this box first)
-    const seen = new Set(FONTID.pdfRecent.map(r => r.family));
-    FONTID.recent = [...FONTID.pdfRecent, ...groups.flatMap(x => x.results).filter(r => r.cand.source !== 'google').sort((a, b) => b.score - a.score)
-      .filter(r => !seen.has(r.cand.family) && seen.add(r.cand.family)).map(r => ({family:r.cand.family, pct:r.pct}))].slice(0, 5);
+    let unreachable = false, gotGoogle = false;
+    if (FONTID.google) for (const grp of groups) {
+      const ents = FontId.GOOGLE.filter(e => e.script === grp.script && !fontInstalled(e.family)); if (!ents.length) continue;
+      fiStatus('比對 Google Fonts…');
+      const gl = await FontId.loadGoogle(ents, FontId.requestChars(grp.glyphs), {fetchCss:FONTID.fetchCss || undefined, timeout:FONTID.timeout, deadline:FONTID.deadline, stop});
+      if (stop()) return;
+      if (!gl.cands.length) {   // nothing came: Google (or its font files) could not be reached; offline: not the next group either
+        if (gl.offline || gl.failed.length >= ents.length) unreachable = true;
+        if (gl.offline) break; else continue;
+      }
+      gotGoogle = true;   // fonts downloaded earlier still count: then it is not "only this computer's"
+      const gr = await FontId.identify(grp.glyphs, gl.cands, {sigma:grp.loc.sigma, keep:grp.loc.keep, stop, onProgress:(d, t) => fiStatus(`比對 Google Fonts… ${d}／${t}`, d / t)});
+      if (!gr || stop()) return;
+      grp.results = FontId.mergeResults(grp.loc.results, gr.results); renderFontRows(grp.el, grp.results, grp.sample);
+    }
+    let any = false;
+    for (const grp of groups) if (grp.results.length) any = true; else grp.el.remove();
+    // the installed fonts found, for the font menu's 字型辨識結果
+    const seen = new Set();
+    FONTID.imgRecent = groups.flatMap(x => x.results).filter(r => r.cand.source !== 'google').sort((a, b) => b.score - a.score)
+      .filter(r => !seen.has(r.cand.family) && seen.add(r.cand.family)).map(r => ({family:r.cand.family, pct:r.pct}));
+    updateRecent();
     p.querySelector('.fi-note').hidden = !any;
-    fiStatus(!any ? '這台電腦沒有可以比對的字型' : offline ? '連不上 Google Fonts，只比對了這台電腦的字型' : '');
+    fiStatus(!any ? '這台電腦沒有可以比對的字型' : unreachable && !gotGoogle ? '連不上 Google Fonts，只比對了這台電腦的字型' : '');
   } catch (e) {
     console.error(e);
     if (!stop()) fiStatus('辨識失敗：' + (e && e.message || e));
-  } finally { if (!stop()) FONTID.busy = false; }
+  } finally { if (run === FONTID.run) FONTID.busy = false; }
 }
 // 套用: the font becomes the default of new text boxes; while editing, the font menu's 字型辨識結果 applies it to the
 // highlighted text ('' = the bundled 思源黑體)
@@ -8658,7 +8701,7 @@ window.__pdfapp = {
         bold:r.dataset.bold === '1', pct:pct ? parseInt(pct.textContent, 10) : null, action:b ? b.dataset.fa : ''}; };
     return {tab:FONTID.tab, busy:FONTID.busy, msg:p.querySelector('.fi-msg').textContent, pdf:[...p.querySelectorAll('.fi-pdf .fi-row')].map(row),
       groups:[...p.querySelectorAll('.fi-img .fi-grp')].map(g => ({title:(g.querySelector('.fi-h') || {}).textContent || '', rows:[...g.querySelectorAll('.fi-row')].map(row)}))}; },
-  fontIdGoogle:(fn, {timeout = 8000} = {}) => { FONTID.fetchCss = fn || null; FONTID.timeout = timeout; },
+  fontIdGoogle:(fn, {timeout = 8000, deadline = 12000} = {}) => { FONTID.fetchCss = fn || null; FONTID.timeout = timeout; FONTID.deadline = deadline; },
   fontIdRecent:() => FONTID.recent.map(r => ({...r})),
   S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box, tidyOcr, denoiseCanvas,
   fontCat:() => ({ok:FONTCAT.ok, fams:FONTCAT.fams.map(f => ({...f}))}), fontLoad:loadFontCatalog,
