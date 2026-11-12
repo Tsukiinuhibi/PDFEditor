@@ -250,6 +250,35 @@ check('vertical: no vertical data, greyed', !!vDv && vDv.off && /沒有直書資
 check('vertical: a font with vertical data can be picked', !!vOk && !vOk.off, vOk);
 await win.keyboard.press('Escape'); await win.waitForTimeout(200); await win.keyboard.press('Escape'); await win.waitForTimeout(1500);
 
+// ---- part 5: vertical page text in a system font with vertical data ------------------------------------
+// where each character sits (pt, page view coordinates): in the editor, and later on the page
+const edChars = () => A(() => { const e = document.querySelector('.tbed'), s = window.__pdfapp.S.scale, p = window.__pdfapp.S.els[0].getBoundingClientRect(), out = [];
+  const w = document.createTreeWalker(e, NodeFilter.SHOW_TEXT); let tn; while ((tn = w.nextNode())) for (let k = 0; k < tn.length; k++) { if (/\s|​/.test(tn.data[k])) continue;
+    const r = document.createRange(); r.setStart(tn, k); r.setEnd(tn, k + 1); const b = r.getBoundingClientRect(); out.push([tn.data[k], (b.left + b.width / 2 - p.left) / s, (b.top + b.height / 2 - p.top) / s]); }
+  return out; });
+const pageChars = str => A(async str => { const pg = window.__pdfapp.S.pages[0], tc = await pg.page.getTextContent(), it = tc.items.find(t => t.str.includes(str)); if (!it) return null;
+  const [a, b, c, d, e, f] = it.transform, fs = Math.hypot(c, d), uy = [c / fs, d / fs], chars = [...it.str], step = (it.height || fs * chars.length) / chars.length;
+  return chars.map((ch, k) => { const q = [e - uy[0] * (k + .5) * step, f - uy[1] * (k + .5) * step]; const v = pg.vp1.convertToViewportPoint(q[0], q[1]); return [ch, v[0], v[1]]; }); }, str);
+check('(vertical editor again)', await clickText('直書') && await A(() => !!document.querySelector('.tbed.vert')));
+await win.keyboard.press('Control+a'); await win.keyboard.type('直書測試，'); await win.keyboard.press('Control+a'); await fmt('font', 'PDFE Vert Test');
+await win.keyboard.press('End'); await win.waitForTimeout(200);
+const edPos = await edChars();
+await commit();
+const pgPos = await pageChars('直書測試');
+const worst = edPos && pgPos ? Math.max(...edPos.slice(0, pgPos.length).map((c, k) => Math.hypot(c[1] - pgPos[k][1], c[2] - pgPos[k][2]))) : NaN;
+check('vertical: each character where the editor showed it (±1 pt)', Number.isFinite(worst) && worst <= 1, {worst:Number.isFinite(worst) ? +worst.toFixed(2) : String(worst), editor:edPos && edPos.map(c => c.map(v => typeof v === 'number' ? +v.toFixed(1) : v)), page:pgPos && pgPos.map(c => c.map(v => typeof v === 'number' ? +v.toFixed(1) : v))});
+const vf = await A(async () => { const P = PDFLib, d = await P.PDFDocument.load(window.__pdfapp.S.bytes), out = [];
+  d.context.enumerateIndirectObjects().forEach(([, o]) => { if (!(o instanceof P.PDFDict) || String(o.get(P.PDFName.of('Subtype'))) !== '/Type0') return;
+    const base = String(o.get(P.PDFName.of('BaseFont'))); if (!/PDFEVertTest/.test(base)) return;
+    const df = o.lookup(P.PDFName.of('DescendantFonts')).lookup(0), w2 = df.lookup(P.PDFName.of('W2'));
+    out.push({base, enc:String(o.get(P.PDFName.of('Encoding'))), w2:w2 ? w2.size() : 0}); });
+  return out; });
+check('vertical font: Identity-V with W2 metrics', vf.length === 1 && vf[0].enc === '/Identity-V' && vf[0].w2 > 0, vf);
+const vtext = execFileSync('pdftotext', ['-raw', '-f', '1', '-l', '1', await (async () => { const b = await A(() => Array.from(window.__pdfapp.S.bytes)); const f = path.join(TMP, 'rf5.pdf'); fs.writeFileSync(f, Buffer.from(b)); return f; })(), '-']).toString();
+check('vertical text readable by other programs', /直書測試/.test(vtext.replace(/\s/g, '')), vtext.slice(0, 80));
+gc = await glyphCheck();
+check('vertical font glyphs intact', gc.filter(g => /PDFEVertTest/.test(g.font)).every(g => g.broken === 0), gc.filter(g => /PDFEVertTest/.test(g.font)));
+
 // ---- end --------------------------------------------------------------------------------------
 console.log(failed ? `${failed} check(s) failed` : 'all checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
