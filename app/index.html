@@ -662,6 +662,18 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
 .tbveil{position:absolute;z-index:29;background:#fff;pointer-events:none}
 .tfmt{min-width:26px;height:26px;padding:0 6px;border:1px solid var(--line);border-radius:5px;background:var(--surface);color:var(--ink);font-size:13px;cursor:pointer}
 .tfmt:hover{background:#fff3bf;color:#1f2328}
+/* 字型: the button in the text box format bar and its menu */
+.fpick{height:26px;max-width:170px;padding:0 8px;border:1px solid var(--line);border-radius:5px;background:var(--surface);color:var(--ink);font-size:12.5px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fpick::after{content:" ▾";color:var(--ink3);font-family:var(--font)}
+.fpick:hover{background:#fff3bf;color:#1f2328}
+#fontMenu{z-index:10050;width:300px;padding:8px}
+#fontMenu [hidden]{display:none!important}
+.fm-q{display:block;width:100%;box-sizing:border-box;font:inherit;font-size:13px;border:1px solid var(--line2);border-radius:7px;padding:6px 9px;background:var(--surface);color:var(--ink);margin-bottom:6px}
+.fm-list{max-height:min(420px,calc(100vh - 170px));overflow-y:auto}
+.fm-sec{font-size:11px;color:var(--ink3);padding:7px 8px 2px}
+#fontMenu .fm-it{display:block;font-size:15px;padding:5px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#fontMenu .fm-it.on{background:var(--seal-soft);color:var(--seal-ink)}
+.fm-busy,.fm-none{font-size:11.5px;color:var(--ink3);padding:7px 8px}
 .tfmt.on{background:#d0ebff;border-color:#1c64d9;color:#1c64d9}
 .tm-sizes,.tm-cols{display:flex;gap:4px;padding:4px 10px;flex-wrap:wrap;max-width:290px}
 .tm-sizes button{width:auto;min-width:28px;padding:3px 6px;border:1px solid var(--line);border-radius:4px;justify-content:center}
@@ -914,6 +926,7 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
 <div class="ctx aidmenu" id="aidMenu"></div>
 <div class="ctx toolmenu" id="toolMenu"></div>
 <div class="ctx cpmenu" id="cpMenu"></div>
+<div class="ctx fontmenu" id="fontMenu"></div>
 <div class="pop" id="pop"></div>
 <div class="mask" id="mask"><div class="modal" id="modal"></div></div>
 <div class="toasts" id="toasts"></div>
@@ -3792,7 +3805,7 @@ function openTextEditor(i, x, y, {id = null, lines = null, box = null, veilBox =
   if (d.bg && !lines) document.execCommand('hiliteColor', false, d.bg);
   el.addEventListener('pointerdown', e => e.stopPropagation());
   el.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (ctx.style.display === 'block' || $('#cpMenu').style.display === 'block') { hideCtx(); $('#cpMenu').style.display = 'none'; } else commitTextEditor(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (ctx.style.display === 'block' || $('#cpMenu').style.display === 'block' || FM) { hideCtx(); $('#cpMenu').style.display = 'none'; closeFontMenu(); } else commitTextEditor(); }
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); commitTextEditor(); }
     e.stopPropagation();
   });
@@ -3858,9 +3871,17 @@ function currentTBStyle(){
     boxBg:TBE.el.dataset.boxbg || '', border:!!TBE.el.dataset.border};
 }
 const TB_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 60, 72];
+// the font button's text: the font's name, or that this computer does not have it
+function fontButtonLabel(f){
+  if (!f) return '思源黑體';
+  return FONTCAT.ok && !fontInstalled(f) ? `${f}（這台電腦沒有）` : fontLabel(f);
+}
+const tbReal = () => !!(TBE && TBE.el.classList.contains('real'));
 function textBarHTML(){
   const st = currentTBStyle();
-  return `<label class="sb-l">字級<select data-tb="size">${TB_SIZES.map(v => `<option value="${v}"${+st.size === v ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
+  loadFontCatalog();
+  return `${tbReal() ? '' : `<span class="sb-h">字型</span><button class="fpick" data-tbfont style="font-family:${esc(fontStack(st.font))}" title="字型">${esc(fontButtonLabel(st.font))}</button>`}
+    <label class="sb-l">字級<select data-tb="size">${TB_SIZES.map(v => `<option value="${v}"${+st.size === v ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
     <span class="sb-h">顏色</span><button class="cpick" data-tbc="color" style="--c:${st.color}"><i></i>▾</button>
     <span class="sb-h">文字底色</span><button class="cpick none" data-tbc="bg" data-none="1" style="--c:transparent"><i></i>▾</button>
     <button class="tfmt${st.bold ? ' on' : ''}" data-tb="bold" title="粗體 (Ctrl+B)"><b>B</b></button><button class="tfmt${st.italic ? ' on' : ''}" data-tb="italic" title="斜體 (Ctrl+I)"><i>I</i></button><button class="tfmt${st.underline ? ' on' : ''}" data-tb="underline" title="底線 (Ctrl+U)"><u>U</u></button>
@@ -3875,6 +3896,7 @@ function syncTBBar(){
 $('#hint').addEventListener('pointerdown', e => { if (S.tool === 'textbox' && TBE && e.target.closest('button')) e.preventDefault(); });   // keep the text selection
 $('#hint').addEventListener('click', e => {
   if (S.tool !== 'textbox') return;
+  const fb = e.target.closest('[data-tbfont]'); if (fb) { if (FM) closeFontMenu(); else openFontMenu(fb); return; }
   const b = e.target.closest('[data-tb]'); if (b && b.tagName === 'BUTTON') { const k = b.dataset.tb; applyTextFormat(k, !currentTBStyle()[k]); return; }
   const c = e.target.closest('[data-tbc]'); if (c) showTextColorMenu(c, c.dataset.tbc);
 });
@@ -3893,6 +3915,7 @@ function showTextMenu(e){
     <div class="tm-cols">${['#1f2328', '#e03131', '#1c64d9', '#2b8a3e', '#f76707', '#7048e8'].map(c => `<button data-col="${c}" style="background:${c}" title="文字顏色"></button>`).join('')}</div>
     <div class="tm-cols">${['#ffd43b', '#b2f2bb', '#a5d8ff', '#fcc2d7', ''].map(c => `<button data-hl="${c}" style="background:${c || '#fff'}" title="${c ? '文字底色' : '清除底色'}">${c ? '' : '∅'}</button>`).join('')}</div>
     <button data-more="color">🎨　更多文字顏色…</button><button data-more="bg">🎨　更多文字底色…</button>
+    ${tbReal() ? '' : '<button data-font="1">Aa　字型…</button>'}
     <hr><button data-f="bold"><b>B</b>　粗體</button><button data-f="italic"><i>I</i>　斜體</button><button data-f="underline"><u>U</u>　底線</button>
     <hr><button data-f="done">完成編輯</button>`;
   ctx.style.display = 'block'; ctxShownAt = performance.now();
@@ -3901,6 +3924,7 @@ function showTextMenu(e){
   ctx.onclick = ev => {
     const b = ev.target.closest('button'); if (!b) return;
     if (b.dataset.more) { hideCtx(); showTextColorMenu(null, b.dataset.more, {left:ev.clientX, top:ev.clientY, bottom:ev.clientY}); return; }
+    if (b.dataset.font) { hideCtx(); openFontMenu(null, {left:ev.clientX, top:ev.clientY, bottom:ev.clientY}); return; }
     if (b.dataset.sz) applyTextFormat('size', +b.dataset.sz);
     else if (b.dataset.col) applyTextFormat('color', b.dataset.col);
     else if (b.dataset.hl != null) applyTextFormat('bg', b.dataset.hl);
@@ -3909,6 +3933,85 @@ function showTextMenu(e){
     hideCtx();
   };
 }
+/* the font menu: search box, then 預設 / 最近用過 / 中文字型 / 其他字型; each name is shown in its own font */
+const FONT_RECENT_KEY = 'pdfeditor.fonts.recent.v1';
+const recentFonts = () => { try { const r = JSON.parse(localStorage.getItem(FONT_RECENT_KEY)); return Array.isArray(r) ? r : []; } catch (_) { return []; } };
+function noteRecentFont(f){
+  if (!f) return;
+  try { localStorage.setItem(FONT_RECENT_KEY, JSON.stringify([f, ...recentFonts().filter(x => x !== f)].slice(0, 8))); } catch (_) {}
+}
+let FM = null;   // the open font menu: {cur}
+function fontMenuList(){
+  const cur = FM ? FM.cur : '', sec = t => `<div class="fm-sec">${t}</div>`;
+  const item = (f, label) => `<button class="fm-it${f === cur ? ' on' : ''}" data-f="${esc(f)}" title="${esc(f && label !== f ? `${label}（${f}）` : label)}">${esc(label)}</button>`;
+  let h = sec('預設') + item('', '思源黑體');
+  const rec = recentFonts().filter(fontInstalled);
+  if (rec.length) h += sec('最近用過') + rec.map(f => item(f, fontLabel(f))).join('');
+  const zh = FONTCAT.fams.filter(f => f.cjk).sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant')), other = FONTCAT.fams.filter(f => !f.cjk);
+  if (zh.length) h += sec('中文字型') + zh.map(f => item(f.family, f.name)).join('');
+  if (other.length) h += sec('其他字型') + other.map(f => item(f.family, f.name)).join('');
+  if (FONTCAT.ok === false) h += '<div class="fm-none">讀不到這台電腦的字型</div>';
+  else if (FONTCAT.busy || FONTCAT.ok === null) h += '<div class="fm-busy">正在讀取字型…</div>';
+  return h;
+}
+// show only the fonts whose name (Chinese or English) contains the search text; a section goes when all its fonts do
+function filterFontMenu(){
+  const m = $('#fontMenu'), q = m.querySelector('.fm-q').value.trim().toLowerCase();
+  let head = null, any = false;
+  const close = () => { if (head) head.hidden = !any; };
+  for (const el of m.querySelector('.fm-list').children) {
+    if (el.classList.contains('fm-sec')) { close(); head = el; any = false; continue; }
+    if (!el.classList.contains('fm-it')) continue;
+    el.hidden = !!q && !(el.textContent.toLowerCase().includes(q) || el.dataset.f.toLowerCase().includes(q));
+    if (!el.hidden) any = true;
+  }
+  close();
+}
+// each name is drawn in its own font once it scrolls into view (matching hundreds of fonts at once takes a while)
+function styleFontItems(list){
+  if (FM.io) FM.io.disconnect();
+  FM.io = new IntersectionObserver(ents => ents.forEach(en => { if (en.isIntersecting) { en.target.style.fontFamily = fontStack(en.target.dataset.f); FM.io.unobserve(en.target); } }), {root:list, rootMargin:'120px 0px'});
+  list.querySelectorAll('.fm-it').forEach(b => FM.io.observe(b));
+}
+function refreshFontMenu(){
+  if (!FM) return;
+  const list = $('#fontMenu .fm-list'), top = list.scrollTop;
+  list.innerHTML = fontMenuList(); filterFontMenu(); styleFontItems(list); list.scrollTop = top;
+}
+function openFontMenu(anchor, at){
+  if (tbReal()) return;
+  loadFontCatalog();
+  const m = $('#fontMenu');
+  FM = {cur:currentTBStyle().font || ''};
+  m.innerHTML = `<input class="fm-q" placeholder="搜尋字型（中文或英文名稱）" spellcheck="false"><div class="fm-list">${fontMenuList()}</div>`;
+  m.style.display = 'block';
+  const r = at || (anchor ? anchor.getBoundingClientRect() : {left:innerWidth / 2 - 150, bottom:120, top:120});
+  m.style.left = Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8)) + 'px';
+  let top = (r.bottom ?? r.top) + 4;
+  if (top + m.offsetHeight > innerHeight - 8) top = Math.max(8, (r.top ?? top) - m.offsetHeight - 4);
+  m.style.top = Math.max(8, Math.min(top, innerHeight - m.offsetHeight - 8)) + 'px';
+  const on = m.querySelector('.fm-it.on'); if (on) on.scrollIntoView({block:'center'});
+  styleFontItems(m.querySelector('.fm-list'));
+  const q = m.querySelector('.fm-q');
+  q.oninput = filterFontMenu;
+  q.onkeydown = e => {
+    e.stopPropagation();
+    if (e.key === 'Escape') { e.preventDefault(); closeFontMenu(); restoreTBRange(); }
+    if (e.key === 'Enter') { e.preventDefault(); const b = [...m.querySelectorAll('.fm-it')].find(b => !b.hidden); if (b) pickFont(b.dataset.f); }
+  };
+  m.onpointerdown = e => { if (e.target.closest('button')) e.preventDefault(); };   // keep the text selection
+  m.onclick = e => { const b = e.target.closest('.fm-it'); if (b) pickFont(b.dataset.f); };
+  q.focus();
+}
+function pickFont(f){ closeFontMenu(); applyTextFormat('font', f); noteRecentFont(f); }
+function closeFontMenu(){ if (!FM) return; if (FM.io) FM.io.disconnect(); FM = null; const m = $('#fontMenu'); m.style.display = 'none'; m.innerHTML = ''; }
+document.addEventListener('pointerdown', e => { if (FM && !e.target.closest('#fontMenu,[data-tbfont]')) closeFontMenu(); }, true);
+// the catalogue fills in: update the font button and an open menu
+FONTCAT.subs.add(() => {
+  const b = $('#hint [data-tbfont]'); if (b) b.textContent = fontButtonLabel(currentTBStyle().font);
+  refreshFontMenu();
+});
+
 let tbSaving = Promise.resolve();
 function commitTextEditor(){
   if (!TBE) return tbSaving;
@@ -3988,7 +4091,7 @@ async function editTextBox(i, a){
   openTextEditor(i, a.x, a.y, {id:a.id, lines, box:rt ? rt.box : {boxBg:'', border:false}, veilBox:a});
 }
 let tbCommittedAt = 0;
-document.addEventListener('pointerdown', e => { if (TBE && !TBE.el.contains(e.target) && !e.target.closest('#hint,#cpMenu,#ctx,#eyedrop')) { if (e.button === 0) tbCommittedAt = performance.now(); commitTextEditor(); } }, true);
+document.addEventListener('pointerdown', e => { if (TBE && !TBE.el.contains(e.target) && !e.target.closest('#hint,#cpMenu,#ctx,#eyedrop,#fontMenu')) { if (e.button === 0) tbCommittedAt = performance.now(); commitTextEditor(); } }, true);
 async function textboxAt(i, e){
   const p = snapPoint(i, pagePoint(i, e), {mark:false});
   await tbSaving;
@@ -7895,7 +7998,10 @@ function setTheme(t){
 if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyTheme();
 paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box, tidyOcr, denoiseCanvas,
-  fontCat:() => ({ok:FONTCAT.ok, fams:FONTCAT.fams.map(f => ({...f}))}), fontLoad:loadFontCatalog, tbStyle:() => currentTBStyle(),
+  fontCat:() => ({ok:FONTCAT.ok, fams:FONTCAT.fams.map(f => ({...f}))}), fontLoad:loadFontCatalog,
+  fontCatFake:(n, ok = true) => { FONTCAT.ok = ok; FONTCAT.busy = false; FONTCAT.fams = ok ? Array.from({length:n}, (_, k) => { const f = 'Fake Font ' + String(k).padStart(3, '0'); return {family:f, ps:'', name:f, cjk:k % 5 === 0}; }) : []; fontChanged(); },
+  fontCatReload:() => { fontListing = null; FONTCAT.ok = null; FONTCAT.fams = []; return loadFontCatalog().then(fontAnalysisDone); },
+  tbStyle:() => currentTBStyle(),
   tbRT:async i => { const doc = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false}), out = [];
     for (const a of (await getAnns(i)).filter(a => a.subtype === 'FreeText')) { const ref = findAnnotRef(doc, i, a.id), d = ref && doc.context.lookup(ref, PDFDict), v = d && d.lookupMaybe(PDFName.of('PDFE_RT'), PDFHexString, PDFString); if (v) out.push({id:a.id, rt:JSON.parse(v.decodeText())}); }
     return out; },

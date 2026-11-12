@@ -104,6 +104,96 @@ check('page text has no font', realRuns.length > 0 && realRuns.every(r => r[1] =
 await fmt('font', '');
 check('default restored', await A(() => JSON.parse(localStorage.getItem('pdfeditor.textbox.v1')).font) === '');
 
+// ---- part 3: the font menu ---------------------------------------------------------------------
+await app.evaluate(({app}) => app.exit(0)).catch(() => {});
+({ app, win, A } = await open('font3.pdf'));
+await win.click('[data-view="single"]'); await win.waitForTimeout(500);
+await win.click('[data-tool="textbox"]'); await win.waitForTimeout(400);
+await A(() => window.__pdfapp.fontReady());
+// what the open menu shows: section titles in order, and for each family button its section, label and whether it is visible
+const menu = () => A(() => {
+  const m = document.querySelector('#fontMenu'); if (!m || getComputedStyle(m).display === 'none') return null;   // (a fixed element has no offsetParent)
+  let sec = ''; const items = [], secs = [];
+  for (const el of m.querySelectorAll('.fm-sec, .fm-it')) {
+    if (el.classList.contains('fm-sec')) { if (!el.hidden) secs.push(el.textContent.trim()); sec = el.textContent.trim(); continue; }
+    items.push({f:el.dataset.f, label:el.textContent.trim(), sec, shown:!el.hidden && el.offsetParent !== null});
+  }
+  return {secs, items, none:(m.querySelector('.fm-none') || {}).textContent || ''};
+});
+const fontBtn = () => A(() => { const b = document.querySelector('#hint [data-tbfont]'); return b ? b.textContent.trim() : null; });
+await clickAt(60, 585); await win.keyboard.type('中文 Latin');
+for (let k = 0; k < 5; k++) await win.keyboard.press('Shift+ArrowLeft');
+await win.click('#hint [data-tbfont]'); await win.waitForTimeout(300);
+let m = await menu();
+check('menu opens', !!m, m && m.secs);
+check('sections in order', !!m && JSON.stringify(m.secs) === JSON.stringify(['預設', '中文字型', '其他字型']), m && m.secs);
+const wq = m && m.items.find(x => x.f === 'WenQuanYi Zen Hei');
+check('Chinese name, Chinese section', !!wq && wq.label === '文泉驛正黑' && wq.sec === '中文字型', wq);
+check('default item', !!m && m.items[0].f === '' && m.items[0].label === '思源黑體', m && m.items[0]);
+await win.screenshot({path:TMP + '/font_menu.png'});
+await win.fill('#fontMenu .fm-q', '文泉'); await win.waitForTimeout(200);
+m = await menu(); let shown = m.items.filter(x => x.shown);
+check('search by Chinese name', shown.length >= 1 && shown.every(x => /^WenQuanYi/.test(x.f)), shown.map(x => x.label));
+await win.fill('#fontMenu .fm-q', 'dejavu serif'); await win.waitForTimeout(200);
+m = await menu(); shown = m.items.filter(x => x.shown);
+check('search by English name', shown.some(x => x.f === 'DejaVu Serif'), shown.map(x => x.label));
+await win.click('#fontMenu .fm-it[data-f="DejaVu Serif"]'); await win.waitForTimeout(300);
+check('picking closes the menu, editor stays', !(await menu()) && !!(await A(() => window.__pdfapp.TBE())));
+check('button shows the font', /DejaVu Serif/.test(await fontBtn() || ''), await fontBtn());
+await commit();
+const r5 = runs(await rtOf('Latin'));
+check('UI: only the highlighted text', same(r5, [['中文 ', ''], ['Latin', 'DejaVu Serif']]), r5);
+// 最近用過 lists only fonts this computer has
+await A(() => localStorage.setItem('pdfeditor.fonts.recent.v1', JSON.stringify(['No Such Font 123', 'DejaVu Serif'])));
+await clickAt(330, 585); await win.click('#hint [data-tbfont]'); await win.waitForTimeout(300);
+m = await menu();
+check('recent: installed fonts only', !!m && JSON.stringify(m.items.filter(x => x.sec === '最近用過').map(x => x.f)) === JSON.stringify(['DejaVu Serif']), m && m.items.filter(x => x.sec === '最近用過'));
+await win.keyboard.press('Escape'); await win.waitForTimeout(200);
+check('Esc closes the menu only', !(await menu()) && !!(await A(() => window.__pdfapp.TBE())));
+await win.keyboard.type('R'); await commit();
+// a font this computer does not have: named as missing, kept when saved again
+await clickAt(60, 770); await win.keyboard.type('Missing'); await win.keyboard.press('Shift+Home'); await fmt('font', 'No Such Font 123'); await commit();
+await clickAt(66, 777); await win.keyboard.press('End'); await win.keyboard.press('ArrowLeft'); await win.waitForTimeout(250);
+check('missing font named', await fontBtn() === 'No Such Font 123（這台電腦沒有）', await fontBtn());
+await commit();
+check('missing font kept', same(runs(await rtOf('Missing')), [['Missing', 'No Such Font 123']]), runs(await rtOf('Missing')));
+// right-click menu
+await clickAt(440, 660); await win.keyboard.type('ctx'); await win.waitForTimeout(150);
+const tb = await win.locator('.tbed').boundingBox();
+await win.mouse.click(tb.x + tb.width / 2, tb.y + tb.height / 2, {button:'right'}); await win.waitForTimeout(250);
+check('right-click menu has 字型…', await A(() => [...document.querySelectorAll('#ctx button')].some(b => b.textContent.trim().endsWith('字型…'))));
+await win.click('#ctx button[data-font]'); await win.waitForTimeout(300);
+check('字型… opens the font menu', !!(await menu()));
+await win.keyboard.press('Escape'); await win.waitForTimeout(150); await commit();
+// the PDF's own text: no font control
+p = await at('A test document'); await win.waitForTimeout(250); await win.mouse.click(p.x, p.y); await win.waitForTimeout(800);
+check('page text: no font button', await A(() => !!document.querySelector('.tbed.real')) && await fontBtn() === null);
+const tr = await win.locator('.tbed').boundingBox();
+await win.mouse.click(tr.x + 10, tr.y + tr.height / 2, {button:'right'}); await win.waitForTimeout(250);
+check('page text: no 字型… in the right-click menu', await A(() => document.querySelectorAll('#ctx button').length > 3 && ![...document.querySelectorAll('#ctx button')].some(b => b.textContent.trim().endsWith('字型…'))));
+await win.keyboard.press('Escape'); await win.waitForTimeout(150); await win.keyboard.press('Escape'); await win.waitForTimeout(2000);
+// 600 families: opening and searching stay quick
+await A(() => window.__pdfapp.fontCatFake(600));
+const t = await A(async () => {
+  const t0 = performance.now(); document.querySelector('#hint [data-tbfont]').click(); const m = document.querySelector('#fontMenu'); m.offsetHeight; const open = performance.now() - t0;
+  const q = m.querySelector('.fm-q'), t1 = performance.now(); q.value = 'Fake Font 5'; q.dispatchEvent(new Event('input')); m.offsetHeight; const search = performance.now() - t1;
+  return {open:Math.round(open), search:Math.round(search), items:m.querySelectorAll('.fm-it').length, shown:[...m.querySelectorAll('.fm-it')].filter(b => !b.hidden).length};
+});
+check('600 fonts: open < 300 ms, search < 300 ms', t.open < 300 && t.search < 300 && t.items >= 600 && t.shown >= 100, t);
+await win.keyboard.press('Escape'); await win.waitForTimeout(150);
+// no system fonts at all
+await A(() => window.__pdfapp.fontCatFake(0, false));
+await win.click('#hint [data-tbfont]'); await win.waitForTimeout(250);
+m = await menu();
+check('no fonts: default only, with a note', !!m && m.items.length === 1 && m.items[0].f === '' && m.none === '讀不到這台電腦的字型', m);
+await win.keyboard.press('Escape'); await win.waitForTimeout(150);
+await A(() => window.__pdfapp.fontCatReload());
+// dark theme look
+await A(() => window.__pdfapp.setTheme('dark')); await clickAt(330, 640); await win.click('#hint [data-tbfont]'); await win.waitForTimeout(400);
+await win.screenshot({path:TMP + '/font_menu_dark.png'});
+await win.keyboard.press('Escape'); await win.keyboard.press('Escape'); await A(() => window.__pdfapp.setTheme('system'));
+console.log('   screenshots in', TMP);
+
 // ---- end --------------------------------------------------------------------------------------
 console.log(failed ? `${failed} check(s) failed` : 'all checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
