@@ -25,7 +25,7 @@ console.log('anns', JSON.stringify(anns));
 // textbox: multi-line, caret size change, in-editor context menu
 await win.click('[data-tool="textbox"]'); await win.waitForTimeout(300);
 await win.mouse.click(box.x + 600, box.y + 200); await win.waitForTimeout(300);
-await win.keyboard.type('第一行'); await win.keyboard.press('Enter');
+await win.keyboard.type('第一行'); await win.waitForTimeout(200); await win.keyboard.press('Enter'); await win.waitForTimeout(200);
 await win.selectOption('#hint select[data-tb="size"]', '28'); await win.waitForTimeout(150);
 await win.keyboard.type('第二行大字'); await win.waitForTimeout(150);
 await win.keyboard.press('Shift+Home');

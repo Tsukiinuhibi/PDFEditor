@@ -8,7 +8,7 @@ const box = await win.locator('.page').first().boundingBox(); console.log('page'
 await win.mouse.click(box.x + 120, box.y + 120); await win.waitForTimeout(300);
 console.log('TBE', await win.evaluate(() => window.__pdfapp.TBE()));
 await win.keyboard.type('你好世界 Hello'); await win.waitForTimeout(200);
-for (let k = 0; k < 8; k++) await win.keyboard.press('Shift+ArrowLeft');   // select "世界 Hello"? -> last 8 chars
+for (let k = 0; k < 8; k++) { await win.keyboard.press('Shift+ArrowLeft'); await win.waitForTimeout(40); }   // select "世界 Hello"? -> last 8 chars
 await win.selectOption('#hint select[data-tb="size"]', '24'); await win.waitForTimeout(200);
 await win.click('#hint [data-tbc="color"]'); await win.waitForTimeout(200);
 await win.click('#cpMenu .cp-sw[data-v="#e03131"]'); await win.waitForTimeout(200);

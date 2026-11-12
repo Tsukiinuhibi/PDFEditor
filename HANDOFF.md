@@ -1,6 +1,6 @@
 # PDF 工作台（PDFEditor）交接文件
 
-這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-12，最新發布版本是 **v1.0.20**。
+這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-12，最新發布版本是 **v1.0.21**。
 
 ---
 
@@ -117,6 +117,9 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 文字模式：`pageTextItems` 會標出每段文字屬於第幾個區塊（`blk`，依頁面順序，和 `pdfeBlocksIn` 的順序一致）。點區塊 → `editOwnText`（帶著原本格式），送出時 `cutPageBlock` 整段拿掉再寫新的；框選時碰到的區塊整段算進來。
 - `realTextOK` 檢查字型有沒有每個字，沒有就退回 FreeText 圖片做法。
 - 這種文字是頁面本身的一部分：不能用選取工具移動，不屬於圖層。
+- 方向（v1.0.21）：`pageTextItems` 替每段文字算出它在畫面上的方向 `rot`（0／90／180／270，順時針）和是否直書 `vert`（直書字型，或 `findStackedText` 找到的「一字一行」的假直書），並換算到「閱讀座標」（把畫面轉回 `rot`）：`base` 是基線（直書是欄的中線），`a0..a1` 是沿閱讀方向的範圍，`u` 是 PDF 座標的範圍（給 `removePageText`）。`lineOf`／`groupLines` 都在閱讀座標裡分行（直書的欄從右到左）。
+- 編輯器（`openTextEditor` 的 `rot`、`vert`）用 CSS 轉向；直書用 `writing-mode:vertical-rl; text-orientation:upright`，錨點是右上角（`translateX(-100%)`）。`writePageText` 用同一個方向寫回：直書用 `layoutRealV` 排版、字型加 `vert` 特性（直書標點）並在嵌入後把 Encoding 改成 `/Identity-V`（Noto 的直書原點 880、前進 1000，和 PDF 預設 `DW2 [880 -1000]` 一樣，所以和瀏覽器排出來的位置一致）。區塊的 `PDFE_RT` 會記 `vert`，方向從 `PDFE_M` 算回來。
+- `locateTextOps`／`fontMetrics` 認得直書字型（`-V` 編碼、`W2`／`DW2`），`removePageText` 用每段的方向算範圍；只有 Identity 編碼的 CID 字型才當作寬度可靠。
 
 ### 3.9 其他
 - 工具：`setTool(t)`，搭配 `HINTS[t]`（上方提示列）。繪圖工具的設定在 `DRAW_TOOLS`、`STYLES`（存 localStorage）、`PRESETS`。新增工具時，這些都要補上，ribbon 也要加按鈕。
@@ -173,6 +176,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 |---|---|
 | textbox-basic / textbox-image-drop | 文字方塊、格式化、右鍵選單、拖入圖片 |
 | edit-page-text | 修改與刪除 PDF 原文、再次編輯 |
+| rotated-text | 轉 90°／180°、直書、假直書、旋轉頁面上的文字，原位編輯後方向不變、pdftotext 讀得到；編輯器與頁面上字的位置一致（`_rotated_fixture.mjs` 產生測試檔） |
 | edit-page-text-real | 修改後是頁面文字（pdftotext 讀得到）、嵌入的字型子集每個字形都完整、編輯器與頁面寬度一致、帶格式再次編輯、粗體紅字、emoji 退回圖片、復原、框選跨區塊合併 |
 | select-move / rotate-arrow | 選取、移動、旋轉、端點 |
 | rotate-box | 矩形與圖片旋轉、沿旋轉後的方向調整大小、移動、填色、復原、旋轉頁面後角度不變 |
@@ -203,13 +207,15 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | 1.0.18 | 矩形、橢圓、雲形、戳記、圖片可以旋轉 |
 | 1.0.19 | 巢狀圖層：保留並顯示群組與子圖層，整組顯示／隱藏、鎖定，拖曳進出群組 |
 | 1.0.20 | 修改原文時寫成真正的文字（內嵌 Noto Sans TC 子集），其他軟體可搜尋、複製 |
+| 1.0.21 | 直書、轉向（90°／180°／270°）、旋轉頁面上的文字都能修改；逐字排成一欄的假直書也能辨識 |
 
 ---
 
 ## 7. 已知限制與可以接著做的事
 
 - 修改原文時，字型（Noto Sans TC）沒有的字（emoji、罕用字）那一段仍是圖片，搜尋不到。
-- 修改原文只支援橫書；旋轉 90°、直書的文字還不能改。Form XObject 裡的文字只能用底色蓋住。
+- 修改原文不支援斜放（不是 90° 倍數）或鏡像的文字。直書字型如果用的不是 Identity-V 編碼（例如 `ETen-B5-V`），寬度對不上，原文會改用隱藏的方式（3 Tr）拿掉。Form XObject 裡的文字只能用底色蓋住。
+- 轉向或直書的文字裡如果有字型沒有的字（emoji 等），不能修改（橫書會退回圖片做法，轉向／直書沒有）。
 - 文字方塊（FreeText）還不能旋轉。旋轉過的矩形、橢圓是靠外觀串流呈現，如果其他軟體重新產生外觀（例如在 Acrobat 裡改它的樣式），會變回不旋轉的樣子。
 - pdf.js 解析文字方塊的 `RC` 時，會印出「XFA rich text」警告。不影響顯示，但 RC 的 XHTML 格式可以再調整。
 - 還不能在程式裡「建立」新的圖層群組（只能使用 PDF 原本就有的群組，或把圖層拖進有子圖層的圖層裡）。

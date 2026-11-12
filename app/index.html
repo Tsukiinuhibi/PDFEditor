@@ -581,6 +581,8 @@ body.autoscrolling[data-autodir=e],body.autoscrolling[data-autodir=e] *{cursor:e
 @font-face{font-family:"PDFE Sans";src:url(fonts/NotoSansTC-Regular.ttf) format("truetype");font-weight:100 600;font-display:block}
 @font-face{font-family:"PDFE Sans";src:url(fonts/NotoSansTC-Bold.ttf) format("truetype");font-weight:601 900;font-display:block}
 .tbed.real{font-family:"PDFE Sans";font-kerning:none;font-synthesis:style}
+.tbed.vert{writing-mode:vertical-rl;text-orientation:upright}
+.tbed.vert div{min-height:0;min-width:1em}
 .tbed:focus{outline-color:#1c64d9}
 html[data-page="night"] .tbveil,html[data-page="night"] .tbed{filter:invert(.9) hue-rotate(180deg)}
 html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
@@ -3419,8 +3421,9 @@ function placeTBE(){
   if (!TBE) return;
   const pg = S.pages[TBE.i];
   TBE.el.style.left = TBE.x / pg.w * 100 + '%'; TBE.el.style.top = TBE.y / pg.h * 100 + '%';
-  TBE.el.style.transform = `scale(${S.scale})`;
-  TBE.el.style.maxWidth = Math.max(60, pg.w - TBE.x - 4) + 'px';
+  // turned text: the editor turns about its corner; vertical text grows to the left from its top-right corner
+  TBE.el.style.transform = `scale(${S.scale})${TBE.rot ? ` rotate(${TBE.rot}deg)` : ''}${TBE.vert ? ' translateX(-100%)' : ''}`;
+  TBE.el.style.maxWidth = TBE.rot || TBE.vert ? 'none' : Math.max(60, pg.w - TBE.x - 4) + 'px';
 }
 function runsToHTML(lines){
   return lines.map(line => `<div>${line.length ? line.map(r => {
@@ -3488,10 +3491,10 @@ function richTextXHTML(lines){
   const sp = r => `<span style="font-size:${r.size}pt;color:${r.color}${r.bold ? ';font-weight:bold' : ''}${r.italic ? ';font-style:italic' : ''}${r.underline ? ';text-decoration:underline' : ''}${r.bg ? ';background-color:' + r.bg : ''}">${esc(r.text)}</span>`;
   return `<?xml version="1.0"?><body xmlns="http://www.w3.org/1999/xhtml" xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/" xfa:APIVersion="Acrobat:11.0.0" xfa:spec="2.0.2">${lines.map(l => `<p>${l.map(sp).join('') || ' '}</p>`).join('')}</body>`;
 }
-function openTextEditor(i, x, y, {id = null, lines = null, box = null, veilBox = null, veilColor = null, edit = null, selectAll = false, real = false} = {}){
+function openTextEditor(i, x, y, {id = null, lines = null, box = null, veilBox = null, veilColor = null, edit = null, selectAll = false, real = false, rot = 0, vert = false} = {}){
   commitTextEditor();
   const pg = S.pages[i], el = document.createElement('div');
-  el.className = 'tbed' + (real ? ' real' : ''); el.contentEditable = 'true'; el.spellcheck = false;
+  el.className = 'tbed' + (real ? ' real' : '') + (vert ? ' vert' : ''); el.contentEditable = 'true'; el.spellcheck = false;
   const bx = box || {boxBg:TB_STYLE.boxBg, border:TB_STYLE.border};
   el.dataset.boxbg = bx.boxBg || ''; el.dataset.border = bx.border ? '1' : '';
   el.style.background = bx.boxBg || 'transparent'; el.style.outlineStyle = 'dashed';
@@ -3508,7 +3511,7 @@ function openTextEditor(i, x, y, {id = null, lines = null, box = null, veilBox =
     if (veilColor) veil.style.background = veilColor;
     S.els[i].appendChild(veil);
   }
-  TBE = {i, id, x, y, el, veil, range:null, orig:lines ? JSON.stringify(lines) : null, edit};
+  TBE = {i, id, x, y, el, veil, range:null, orig:lines ? JSON.stringify(lines) : null, edit, rot, vert};
   placeTBE();
   try { document.execCommand('styleWithCSS', false, true); } catch (_) {}
   el.focus();
@@ -3667,6 +3670,7 @@ async function commitPageTextEdit(i, x, y, lines, box, edit, empty){
   if (JSON.stringify(lines) === edit.orig && (edit.block ? JSON.stringify(box) === edit.origBox : !box.boxBg && !box.border)) return false;   // nothing changed
   // written as real page text when the bundled font has every character; otherwise as before, a picture in a text box
   const real = !empty && await realTextOK(lines);
+  if (!empty && !real && (edit.rot || edit.vert)) { toast('有字型裡沒有的字（例如表情符號），轉向或直書的文字無法這樣修改', 'err'); return false; }
   let r = empty || real ? null : await renderTextBox(lines, box), removed = 0;
   return mutate(empty ? '已刪除文字' : '已修改文字', async doc => {
     if (edit.block) removed = cutPageBlock(doc, i, edit.block) ? 1 : 0;
@@ -3683,7 +3687,7 @@ async function commitPageTextEdit(i, x, y, lines, box, edit, empty){
       if (!real) r = await renderTextBox(lines, box);
     }
     if (empty) return;
-    if (real) { await writePageText(doc, i, x, y, lines, box); return; }
+    if (real) { await writePageText(doc, i, x, y, lines, box, {rot:edit.rot || 0, vert:!!edit.vert}); return; }
     const plain = lines.map(l => l.map(x => x.text).join('')).join('\n');
     const b = {x, y, w:r.w, h:r.h}, g = visToPdf(i, b), ap = await imageAP(doc, r.png, b.w, b.h, g.rot);
     const f = lines[0] && lines[0][0] || TB_STYLE, col = hexColor(f.color || '#000000');
@@ -3798,7 +3802,17 @@ function fontMetrics(doc, res, name){
         if (nx instanceof PDFArray) { nx.asArray().forEach((v, j) => map.set(c0 + j, num(v))); k += 2; }
         else { const c1 = num(nx), w = num(a[k + 2]); for (let c = c0; c <= c1 && c - c0 < 70000; c++) map.set(c, w); k += 3; }
       } }
-    return {two:true, exact:true, w:c => (map.has(c) ? map.get(c) : DW) / 1000};
+    // which way it writes (Identity-V or a "-V" CMap: top to bottom) and whether codes are the CIDs the widths are given for
+    const enc = f.lookup(N('Encoding')), encName = enc instanceof PDFName ? enc.asString() : '';
+    const vert = /-V$/.test(encName) || !!(enc && enc.dict && num(enc.dict.get(N('WMode'))) === 1), ident = /^\/Identity-[HV]$/.test(encName);
+    const DW2 = df && df.lookupMaybe(N('DW2'), PDFArray), dy = DW2 ? num(DW2.get(1)) : -1000, vmap = new Map(), W2 = df && df.lookupMaybe(N('W2'), PDFArray);
+    if (W2) { const a = W2.asArray().map(x => ctx.lookup(x));
+      for (let k = 0; k < a.length;) {
+        const c0 = num(a[k]), nx = a[k + 1];
+        if (nx instanceof PDFArray) { const v = nx.asArray().map(num); for (let j = 0; j * 3 < v.length; j++) vmap.set(c0 + j, v[j * 3]); k += 2; }
+        else { const c1 = num(nx), w1 = num(a[k + 2]); for (let c = c0; c <= c1 && c - c0 < 70000; c++) vmap.set(c, w1); k += 5; }
+      } }
+    return {two:true, exact:ident, vert, w:c => (map.has(c) ? map.get(c) : DW) / 1000, w1:c => (vmap.has(c) ? vmap.get(c) : dy) / 1000};
   }
   const ws = f.lookupMaybe(N('Widths'), PDFArray), first = f.get(N('FirstChar')) ? num(f.get(N('FirstChar'))) : 0;
   const fd = f.lookupMaybe(N('FontDescriptor'), PDFDict), mw = fd && fd.get(N('MissingWidth')) ? num(fd.get(N('MissingWidth'))) : 500;
@@ -3828,20 +3842,22 @@ function locateTextOps(doc, page, bytes){
   const st = [];
   const nextLine = () => { Tlm = MUL([1, 0, 0, 1, 0, -g.TL], Tlm); Tm = Tlm; };
   const show = (o, items) => {
-    const m0 = MUL(Tm, g.ctm), p0 = MPT(m0, 0, g.Ts), f = fm(g.font), Th = g.Tz / 100;
+    const m0 = MUL(Tm, g.ctm), f = fm(g.font), Th = g.Tz / 100, vert = !!f.vert, p0 = MPT(m0, 0, vert ? 0 : g.Ts);
     let adv = 0;
+    // horizontal fonts move the pen right (scaled by Tz); vertical fonts move it down by the glyphs' vertical advance
+    const move = d => { adv += d; Tm = MUL(vert ? [1, 0, 0, 1, 0, d] : [1, 0, 0, 1, d, 0], Tm); };
     items.forEach(it => {
-      if (typeof it === 'number') { const tx = -it / 1000 * g.fs * Th; adv += tx; Tm = MUL([1, 0, 0, 1, tx, 0], Tm); return; }
+      if (typeof it === 'number') { move(-it / 1000 * g.fs * (vert ? 1 : Th)); return; }
       if (!it || !it.str) return;
       const s = it.str, step = f.two ? 2 : 1;
       for (let k = 0; k + step - 1 < s.length; k += step) {
         const code = f.two ? (s[k] << 8) | s[k + 1] : s[k];
-        const tx = (f.w(code) * g.fs + g.Tc + (!f.two && code === 32 ? g.Tw : 0)) * Th;
-        adv += tx; Tm = MUL([1, 0, 0, 1, tx, 0], Tm);
+        move(vert ? f.w1(code) * g.fs + g.Tc : (f.w(code) * g.fs + g.Tc + (!f.two && code === 32 ? g.Tw : 0)) * Th);
       }
     });
-    const m1 = MUL(Tm, g.ctm), p1 = MPT(m1, 0, g.Ts);
-    runs.push({o, p0, p1, fs:Math.abs(g.fs) * Math.hypot(m0[2], m0[3]), tr:g.Tr, adv, Th, fsText:g.fs, exact:f.exact, Tw:g.Tw, Tc:g.Tc});
+    const m1 = MUL(Tm, g.ctm), p1 = MPT(m1, 0, vert ? 0 : g.Ts), unit = (x, y) => { const l = Math.hypot(x, y) || 1; return [x / l, y / l]; };
+    runs.push({o, p0, p1, fs:Math.abs(g.fs) * Math.hypot(m0[2], m0[3]), tr:g.Tr, adv, Th, fsText:g.fs, exact:f.exact, Tw:g.Tw, Tc:g.Tc, vert,
+      along:vert ? unit(-m0[2], -m0[3]) : unit(m0[0], m0[1]), side:vert ? unit(m0[0], m0[1]) : unit(m0[2], m0[3])});
   };
   for (const o of ops) {
     const a = o.args;
@@ -3886,7 +3902,11 @@ function concatBytes(parts){ const n = parts.reduce((t, p) => t + p.length, 0), 
 function removePageText(doc, i, U){
   const page = doc.getPage(i), bytes = pageContentBytes(doc, page); if (!bytes) return 0;
   const hits = locateTextOps(doc, page, bytes).filter(r => {
-    const fs = r.fs || 1, x0 = Math.min(r.p0[0], r.p1[0]), x1 = Math.max(r.p0[0], r.p1[0], x0 + fs * .3), y0 = Math.min(r.p0[1], r.p1[1]) - fs * .2, y1 = Math.max(r.p0[1], r.p1[1]) + fs * .8;
+    // the run's box: along its direction from start to end (at least .3 em), across from .2 em below to .8 em above the
+    // baseline, or half an em each side of a vertical column
+    const fs = r.fs || 1, len = Math.hypot(r.p1[0] - r.p0[0], r.p1[1] - r.p0[1]), e = len < fs * .3 ? [r.p0[0] + r.along[0] * fs * .3, r.p0[1] + r.along[1] * fs * .3] : r.p1;
+    const [lo, hi] = r.vert ? [-.5, .5] : [-.2, .8], pts = [r.p0, e].flatMap(q => [lo, hi].map(t => [q[0] + r.side[0] * fs * t, q[1] + r.side[1] * fs * t]));
+    const x0 = Math.min(...pts.map(q => q[0])), x1 = Math.max(...pts.map(q => q[0])), y0 = Math.min(...pts.map(q => q[1])), y1 = Math.max(...pts.map(q => q[1]));
     const ix = Math.max(0, Math.min(x1, U.x1) - Math.max(x0, U.x0)), iy = Math.max(0, Math.min(y1, U.y1) - Math.max(y0, U.y0));
     return ix * iy >= .5 * (x1 - x0) * (y1 - y0);
   }).sort((a, b) => a.o.s - b.o.s);
@@ -3894,7 +3914,7 @@ function removePageText(doc, i, U){
   const parts = []; let pos = 0;
   hits.forEach(r => {
     parts.push(bytes.subarray(pos, r.o.s));
-    const k = r.fsText * r.Th, op = r.o.op;
+    const k = r.fsText * (r.vert ? 1 : r.Th), op = r.o.op;
     const lead = op === "'" ? 'T* ' : op === '"' ? `${r.Tw} Tw ${r.Tc} Tc T* ` : '';
     if (r.exact && Math.abs(k) > 1e-6) parts.push(enc8(` ${lead}[${(-r.adv * 1000 / k).toFixed(3)}] TJ `));   // same advance, no glyphs
     else parts.push(enc8(` /PDFE_Hide BMC ${r.tr >= 4 ? 7 : 3} Tr `), bytes.subarray(r.o.s, r.o.e), enc8(` ${r.tr} Tr EMC `));
@@ -3941,6 +3961,20 @@ async function layoutReal(lines){
   });
   return {rows, w:Math.max(20, w), h:Math.max(14, y + TB_PAD)};
 }
+// vertical text (直書, upright characters): columns right to left, each 1.3 em wide, characters going down by their
+// vertical advance (with the vertical forms of punctuation); x is measured from the box's right edge
+async function layoutRealV(lines){
+  const [fr, fb] = await Promise.all([realFont(false), realFont(true)]);
+  const len = r => { const f = r.bold ? fb : fr; return f.layout(r.text, ['vert']).glyphs.reduce((t, g) => t + (g.advanceHeight || f.unitsPerEm), 0) / f.unitsPerEm * r.size; };
+  const cols = []; let x = TB_PAD, h = 0;
+  lines.forEach(line => {
+    const fs = line.length ? Math.max(...line.map(r => r.size)) : TB_STYLE.size, lw = fs * REAL_LH;
+    let y = TB_PAD; const items = [];
+    line.forEach(r => { const l = len(r); items.push({r, y, l}); y += l; });
+    cols.push({mid:x + lw / 2, items}); x += lw; h = Math.max(h, y + TB_PAD);
+  });
+  return {cols, w:Math.max(14, x + TB_PAD), h:Math.max(20, h)};
+}
 // the page's content stream with `text` added on top; the old content is wrapped in q … Q unless it already leaves the graphics state alone
 function appendPageContent(doc, i, text){
   const page = doc.getPage(i), ctx = doc.context, bytes = pageContentBytes(doc, page);
@@ -3958,17 +3992,21 @@ function appendPageContent(doc, i, text){
   page.node.set(PDFName.of('Contents'), ctx.register(ctx.flateStream(out)));
 }
 // write `lines` as page text in a box whose top-left is (x, y) in page view coordinates
-async function writePageText(doc, i, x, y, lines, box){
-  const page = doc.getPage(i), ctx = doc.context, L = await layoutReal(lines), N = k => PDFName.of(k), f2 = v => +(+v).toFixed(3);
+// (x, y): the editor's anchor on screen, its top-left corner, or top-right for vertical text; rot: how the text is turned on screen
+async function writePageText(doc, i, x, y, lines, box, {rot = 0, vert = false} = {}){
+  const page = doc.getPage(i), ctx = doc.context, L = vert ? await layoutRealV(lines) : await layoutReal(lines), N = k => PDFName.of(k), f2 = v => +(+v).toFixed(3);
   doc.registerFontkit(fontkit);
-  const vp = S.pages[i].vp1, P = (a, b) => vp.convertToPdfPoint(a, b), o = P(x, y), px = P(x + 1, y), py = P(x, y - 1);
+  const dx = returnTurn({x:1, y:0}, rot), up = returnTurn({x:0, y:-1}, rot);   // the box's own x and y (up) directions on screen
+  const tl = vert ? {x:x - dx.x * L.w, y:y - dx.y * L.w} : {x, y};
+  const vp = S.pages[i].vp1, P = (a, b) => vp.convertToPdfPoint(a, b), o = P(tl.x, tl.y), px = P(tl.x + dx.x, tl.y + dx.y), py = P(tl.x + up.x, tl.y + up.y);
   const M = [px[0] - o[0], px[1] - o[1], py[0] - o[0], py[1] - o[1], o[0], o[1]];   // local (from the box top-left, x right, y up) → page
   const used = {}, fontOf = async bold => {
-    const k = bold ? 'b' : 'r';
-    if (!used[k]) { const f = await doc.embedFont(await realFontBytes(bold), {subset:true}); used[k] = {f, name:page.node.newFontDictionary(bold ? 'PDFE_B' : 'PDFE_R', f.ref).toString()}; }
+    const k = (bold ? 'b' : 'r') + (vert ? 'v' : '');
+    if (!used[k]) { const f = await doc.embedFont(await realFontBytes(bold), {subset:true, ...(vert ? {features:{vert:true}} : {})}); used[k] = {f, name:page.node.newFontDictionary(bold ? 'PDFE_B' : 'PDFE_R', f.ref).toString()}; }
     return used[k];
   };
   const gs = page.node.newExtGState('PDFE_GS', ctx.register(ctx.obj({Type:'ExtGState', ca:1, CA:1, BM:'Normal', SMask:'None'}))).toString();
+  if (vert) return writeVertical();
   const ops = ['q', `${gs} gs`, `${M.map(f2).join(' ')} cm`];
   if (box.boxBg) ops.push(`${hexRgb(box.boxBg)} rg 0 ${f2(-L.h)} ${f2(L.w)} ${f2(L.h)} re f`);
   if (box.border) ops.push(`0.45 0.45 0.45 RG 0.8 w 0.4 ${f2(-L.h + .4)} ${f2(L.w - .8)} ${f2(L.h - .8)} re S`);
@@ -3982,13 +4020,37 @@ async function writePageText(doc, i, x, y, lines, box){
   ops.push('ET');
   L.rows.forEach(row => row.items.forEach(({r, x:rx, w}) => { if (r.underline && r.text) ops.push(`${hexRgb(r.color || '#000000')} rg ${f2(rx)} ${f2(-(row.base + REAL_UL * r.size + REAL_ULW * r.size / 2))} ${f2(w)} ${f2(REAL_ULW * r.size)} re f`); }));
   ops.push('Q');
-  const res = page.node.Resources(); let props = res.lookupMaybe(N('Properties'), PDFDict);
-  if (!props) { props = ctx.obj({}); res.set(N('Properties'), props); }
-  let name; do { name = 'PDFE_T' + Math.floor(Math.random() * 1e6); } while (props.has(N(name)));
-  props.set(N(name), ctx.obj({PDFE_RT:PDFHexString.fromText(JSON.stringify({lines, box})), PDFE_M:M.map(f2), PDFE_Size:[f2(L.w), f2(L.h)],
-    PDFE_Fonts:Object.values(used).map(u => N(u.name.slice(1))).concat([N(gs.slice(1))])}));
-  appendPageContent(doc, i, `/PDFE_Text /${name} BDC\n${ops.join('\n')}\nEMC`);
-  return {w:L.w, h:L.h};
+  return finish(ops);
+  // columns right to left; every character upright, its em box hanging from the pen position (the standard vertical origin)
+  async function writeVertical(){
+    const ops = ['q', `${gs} gs`, `${M.map(f2).join(' ')} cm`];
+    if (box.boxBg) ops.push(`${hexRgb(box.boxBg)} rg 0 ${f2(-L.h)} ${f2(L.w)} ${f2(L.h)} re f`);
+    if (box.border) ops.push(`0.45 0.45 0.45 RG 0.8 w 0.4 ${f2(-L.h + .4)} ${f2(L.w - .8)} ${f2(L.h - .8)} re S`);
+    L.cols.forEach(col => col.items.forEach(({r, y:ry, l}) => { if (r.bg) ops.push(`${hexRgb(r.bg)} rg ${f2(L.w - col.mid - r.size / 2)} ${f2(-(ry + l))} ${f2(r.size)} ${f2(l)} re f`); }));
+    ops.push('BT 0 Tc 0 Tw 100 Tz 0 Ts 0 Tr');
+    for (const col of L.cols) for (const {r, y:ry} of col.items) {
+      if (!r.text) continue;
+      const u = await fontOf(r.bold);
+      ops.push(`${hexRgb(r.color || '#000000')} rg ${u.name} ${f2(r.size)} Tf 1 0 0 1 ${f2(L.w - col.mid)} ${f2(-ry)} Tm ${u.f.encodeText(r.text).toString()} Tj`);
+    }
+    ops.push('ET');
+    L.cols.forEach(col => col.items.forEach(({r, y:ry, l}) => { if (r.underline && r.text) ops.push(`${hexRgb(r.color || '#000000')} rg ${f2(L.w - col.mid + r.size * .58)} ${f2(-(ry + l))} ${f2(REAL_ULW * r.size)} ${f2(l)} re f`); }));
+    ops.push('Q');
+    for (const u of Object.values(used)) {   // these fonts are written top to bottom
+      await u.f.embed();
+      const fd = ctx.lookup(u.f.ref, PDFDict); fd.set(N('Encoding'), N('Identity-V'));
+    }
+    return finish(ops);
+  }
+  function finish(ops){
+    const res = page.node.Resources(); let props = res.lookupMaybe(N('Properties'), PDFDict);
+    if (!props) { props = ctx.obj({}); res.set(N('Properties'), props); }
+    let name; do { name = 'PDFE_T' + Math.floor(Math.random() * 1e6); } while (props.has(N(name)));
+    props.set(N(name), ctx.obj({PDFE_RT:PDFHexString.fromText(JSON.stringify({lines, box, ...(vert ? {vert:true} : {})})), PDFE_M:M.map(f2), PDFE_Size:[f2(L.w), f2(L.h)],
+      PDFE_Fonts:Object.values(used).map(u => N(u.name.slice(1))).concat([N(gs.slice(1))])}));
+    appendPageContent(doc, i, `/PDFE_Text /${name} BDC\n${ops.join('\n')}\nEMC`);
+    return {w:L.w, h:L.h};
+  }
 }
 // our text blocks in a content stream, in order: {name, s, e} (byte range of the whole block)
 function pdfeBlocksIn(bytes){
@@ -4022,8 +4084,10 @@ async function readPageBlock(i, k){
     if (!rt || !m) return {name:b.name};
     const M = numArr(m), sz = numArr(p.lookup(PDFName.of('PDFE_Size'), PDFArray)), vp = S.pages[i].vp1;
     const corner = (lx, ly) => vp.convertToViewportPoint(M[0] * lx + M[2] * ly + M[4], M[1] * lx + M[3] * ly + M[5]);
-    const q = [corner(0, 0), corner(sz[0], 0), corner(0, -sz[1]), corner(sz[0], -sz[1])], xs = q.map(v => v[0]), ys = q.map(v => v[1]);
-    return {name:b.name, rt:JSON.parse(rt.decodeText()), at:{x:q[0][0], y:q[0][1]}, vbox:{x:Math.min(...xs), y:Math.min(...ys), w:Math.max(...xs) - Math.min(...xs), h:Math.max(...ys) - Math.min(...ys)}};
+    const q = [corner(0, 0), corner(sz[0], 0), corner(0, -sz[1]), corner(sz[0], -sz[1])], xs = q.map(v => v[0]), ys = q.map(v => v[1]), r = JSON.parse(rt.decodeText());
+    const ang = Math.atan2(q[1][1] - q[0][1], q[1][0] - q[0][0]) * 180 / Math.PI, rot = ((Math.round(ang / 90) * 90) % 360 + 360) % 360;
+    const at = r.vert ? {x:q[1][0], y:q[1][1]} : {x:q[0][0], y:q[0][1]};   // vertical text: the editor hangs from the top-right corner
+    return {name:b.name, rt:r, rot, vert:!!r.vert, at, vbox:{x:Math.min(...xs), y:Math.min(...ys), w:Math.max(...xs) - Math.min(...xs), h:Math.max(...ys) - Math.min(...ys)}};
   } catch (e) { console.warn(e); return null; }
 }
 async function pdfeBlocks(i){   // (for tests) the blocks on page i and their plain text
@@ -4034,6 +4098,16 @@ async function pdfeBlocks(i){   // (for tests) the blocks on page i and their pl
 
 /* ---------------- picking text on the page ---------------- */
 const TXT_CACHE = new Map();
+// turn a screen point by -deg / +deg (clockwise on screen): text turned by deg then reads left to right
+const unturn = (p, deg) => { const r = deg * Math.PI / 180, c = Math.cos(r), s = Math.sin(r); return {x:p.x * c + p.y * s, y:-p.x * s + p.y * c}; };
+const returnTurn = (p, deg) => { const r = deg * Math.PI / 180, c = Math.cos(r), s = Math.sin(r); return {x:p.x * c - p.y * s, y:p.x * s + p.y * c}; };
+const CJK_RE = /[⺀-鿿豈-﫿＀-￯]/;
+/* the text on page i, one entry per piece pdf.js reports:
+   rot  - which way it reads on screen (0 / 90 / 180 / 270, clockwise); text at other angles is left out
+   vert - written top to bottom (a vertical font, or characters stacked one per line)
+   in the "reading frame" (the screen turned back by rot): base = baseline (horizontal) or column centre (vertical),
+   a0..a1 = where it starts and ends along the reading direction
+   v = box on screen, u = box in PDF user space (what removePageText takes out) */
 function pageTextItems(i){
   const key = S.version + ':' + i;
   if (TXT_CACHE.has(key)) return TXT_CACHE.get(key);
@@ -4041,39 +4115,76 @@ function pageTextItems(i){
   const pg = S.pages[i];
   const p = pg.page.getTextContent({includeMarkedContent:true}).then(tc => {
     const out = []; let hide = 0, depth = 0, blk = -1, blkAt = 0, nblk = 0;   // blk: which of our text blocks (in page order) we are in
+    const vp = (x, y) => { const q = pg.vp1.convertToViewportPoint(x, y); return {x:q[0], y:q[1]}; };
     for (const it of tc.items) {
       if (it.type === 'beginMarkedContent' || it.type === 'beginMarkedContentProps') { depth++; if (it.tag === 'PDFE_Text' && blk < 0) { blk = nblk++; blkAt = depth; } if (hide || it.tag === 'PDFE_Hide') hide++; continue; }
       if (it.type === 'endMarkedContent') { if (blk >= 0 && depth === blkAt) blk = -1; depth--; if (hide) hide--; continue; }
       if (hide || !it.str || !it.str.trim()) continue;
-      const [a, b, c, d, e, f] = it.transform;
-      if (Math.abs(b) > Math.abs(a) * .02 || Math.abs(c) > Math.abs(d) * .02 || a <= 0 || d <= 0) continue;   // horizontal text only
-      const fs = Math.abs(d), sty = tc.styles[it.fontName] || {}, asc = sty.ascent || .88, desc = sty.descent != null ? sty.descent : -.22;
-      const w = it.width || it.str.length * fs * .5;
-      const q = [pg.vp1.convertToViewportPoint(e, f + fs * desc), pg.vp1.convertToViewportPoint(e + w, f + fs * asc)], b0 = pg.vp1.convertToViewportPoint(e, f), b1 = pg.vp1.convertToViewportPoint(e + w, f);
-      if (Math.abs(b0[1] - b1[1]) > 1) continue;   // shows vertical on a rotated page
-      out.push({str:it.str, fs, font:it.fontName, base:f, x0:e, x1:e + w, y0:f + fs * desc, y1:f + fs * asc, blk:blk >= 0 ? blk : null,
-        v:{x:Math.min(q[0][0], q[1][0]), y:Math.min(q[0][1], q[1][1]), w:Math.abs(q[1][0] - q[0][0]), h:Math.abs(q[1][1] - q[0][1])}, vb:b0[1]});
+      const [a, b, c, d, e, f] = it.transform, fs = Math.hypot(c, d) || Math.hypot(a, b); if (!fs) continue;
+      const sty = tc.styles[it.fontName] || {}, vert = !!sty.vertical || it.dir === 'ttb', asc = sty.ascent || .88, desc = sty.descent != null ? sty.descent : -.22;
+      const ux = {x:a / Math.hypot(a, b), y:b / Math.hypot(a, b)}, uy = {x:c / fs, y:d / fs}, P = (dx, dy) => ({x:e + dx, y:f + dy});
+      const s0 = vp(e, f), sx = vp(e + ux.x, f + ux.y), sy = vp(e + uy.x, f + uy.y);
+      const ang = Math.atan2(sx.y - s0.y, sx.x - s0.x) * 180 / Math.PI, rot = ((Math.round(ang / 90) * 90) % 360 + 360) % 360;
+      if (Math.abs(normDeg(ang - rot)) > 3) continue;   // text at another angle
+      if ((sx.x - s0.x) * (sy.y - s0.y) - (sx.y - s0.y) * (sy.x - s0.x) > 0) continue;   // mirrored text
+      let pts, A0, A1;
+      if (vert) {   // origin at the top of the column, in its middle; it runs down by `height`
+        const h = it.height || [...it.str].length * fs, half = (it.width || fs) / 2;
+        pts = [P(-ux.x * half, -ux.y * half), P(ux.x * half, ux.y * half), P(-ux.x * half - uy.x * h, -ux.y * half - uy.y * h), P(ux.x * half - uy.x * h, ux.y * half - uy.y * h)];
+        A0 = vp(e, f); A1 = vp(e - uy.x * h, f - uy.y * h);
+      } else {
+        const w = it.width || [...it.str].length * fs * .5;
+        pts = [P(uy.x * fs * desc, uy.y * fs * desc), P(uy.x * fs * asc, uy.y * fs * asc), P(ux.x * w + uy.x * fs * desc, ux.y * w + uy.y * fs * desc), P(ux.x * w + uy.x * fs * asc, ux.y * w + uy.y * fs * asc)];
+        A0 = vp(e, f); A1 = vp(e + ux.x * w, f + ux.y * w);
+      }
+      const sp = pts.map(q => vp(q.x, q.y)), xs = sp.map(q => q.x), ys = sp.map(q => q.y);
+      const r0 = unturn(A0, rot), r1 = unturn(A1, rot);
+      out.push({str:it.str, fs, font:it.fontName, blk:blk >= 0 ? blk : null, rot, vert,
+        base:vert ? r0.x : r0.y, a0:vert ? r0.y : r0.x, a1:vert ? r1.y : r1.x,
+        v:{x:Math.min(...xs), y:Math.min(...ys), w:Math.max(...xs) - Math.min(...xs), h:Math.max(...ys) - Math.min(...ys)},
+        u:{x0:Math.min(...pts.map(q => q.x)), x1:Math.max(...pts.map(q => q.x)), y0:Math.min(...pts.map(q => q.y)), y1:Math.max(...pts.map(q => q.y))}});
     }
+    findStackedText(out);
     return out;
-  }).catch(() => []);
+  }).catch(e => { console.warn(e); return []; });
   TXT_CACHE.set(key, p); return p;
+}
+// "vertical" text made of single characters placed one under another: treat each column as vertical text
+function findStackedText(items){
+  const single = items.filter(t => !t.vert && t.blk == null && [...t.str.trim()].length === 1);
+  const used = new Set();
+  single.sort((a, b) => a.rot - b.rot || a.base - b.base).forEach(t0 => {
+    if (used.has(t0)) return;
+    const mid = t => (t.a0 + t.a1) / 2, col = [t0];
+    for (let last = t0; ;) {
+      const nx = single.find(t => !used.has(t) && !col.includes(t) && t.rot === last.rot && Math.abs(t.fs - last.fs) < last.fs * .15 &&
+        Math.abs(mid(t) - mid(last)) < last.fs * .3 && t.base - last.base > last.fs * .85 && t.base - last.base < last.fs * 1.9);
+      if (!nx) break; col.push(nx); last = nx;
+    }
+    // a real column: several CJK characters, none of them part of a horizontal line
+    const alone = t => !items.some(o => o !== t && !o.vert && o.rot === t.rot && Math.abs(o.base - t.base) < t.fs * .35 && Math.min(Math.abs(o.a0 - t.a1), Math.abs(t.a0 - o.a1)) < t.fs * 1.6);
+    if (col.length < 2 || col.filter(t => CJK_RE.test(t.str)).length < 2 || !col.every(alone)) return;
+    col.forEach(t => { used.add(t); const top = t.base - t.fs * .88, c = mid(t); t.vert = true; t.stacked = true; t.base = c; t.a0 = top; t.a1 = top + t.fs; });
+  });
 }
 const inBox = (p, v, pad = 0) => p.x >= v.x - pad && p.x <= v.x + v.w + pad && p.y >= v.y - pad && p.y <= v.y + v.h + pad;
 const boxHit = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-// the line around one piece of text: same baseline, no big gap
+// the line around one piece of text: same baseline (or column), no big gap
+const sameWay = (a, b) => a.rot === b.rot && !!a.vert === !!b.vert;
 function lineOf(items, it){
-  const same = items.filter(o => Math.abs(o.base - it.base) < it.fs * .35 && Math.abs(o.fs - it.fs) < it.fs * .35).sort((a, b) => a.x0 - b.x0);
+  const same = items.filter(o => sameWay(o, it) && Math.abs(o.base - it.base) < it.fs * .35 && Math.abs(o.fs - it.fs) < it.fs * .35).sort((a, b) => a.a0 - b.a0);
   let k = same.indexOf(it), lo = k, hi = k;
-  while (lo > 0 && same[lo].x0 - same[lo - 1].x1 < it.fs * 1.6) lo--;
-  while (hi < same.length - 1 && same[hi + 1].x0 - same[hi].x1 < it.fs * 1.6) hi++;
+  while (lo > 0 && same[lo].a0 - same[lo - 1].a1 < it.fs * 1.6) lo--;
+  while (hi < same.length - 1 && same[hi + 1].a0 - same[hi].a1 < it.fs * 1.6) hi++;
   return same.slice(lo, hi + 1);
 }
+// lines in reading order: rows top to bottom, or columns right to left for vertical text
 function groupLines(items){
-  const rows = [];
-  [...items].sort((a, b) => b.base - a.base || a.x0 - b.x0).forEach(it => {
+  const rows = [], vert = items.length && items[0].vert;
+  [...items].sort((a, b) => (vert ? b.base - a.base : a.base - b.base) || a.a0 - b.a0).forEach(it => {
     const r = rows.find(r => Math.abs(r.base - it.base) < it.fs * .35); if (r) r.items.push(it); else rows.push({base:it.base, items:[it]});
   });
-  rows.forEach(r => r.items.sort((a, b) => a.x0 - b.x0));
+  rows.forEach(r => r.items.sort((a, b) => a.a0 - b.a0));
   return rows;
 }
 let TXH = null;   // hover / selection highlight layer
@@ -4112,8 +4223,10 @@ async function editPageText(i, items, {selectAll = false, all = null, plain = fa
     if (ks.length) { items = [...new Set([...items, ...all.filter(t => ks.includes(t.blk))])]; blocks = ks; }
   }
   await realFontsReady();
-  const rows = groupLines(items), pg = S.pages[i];
-  const U = {x0:Math.min(...items.map(t => t.x0)) - .5, x1:Math.max(...items.map(t => t.x1)) + .5, y0:Math.min(...items.map(t => t.y0)) - .5, y1:Math.max(...items.map(t => t.y1)) + .5};
+  const way = items.find(t => !t.stacked) || items[0];   // text running different ways: keep to one of them
+  items = items.filter(t => sameWay(t, way));
+  const rows = groupLines(items), pg = S.pages[i], {rot, vert} = way;
+  const U = {x0:Math.min(...items.map(t => t.u.x0)) - .5, x1:Math.max(...items.map(t => t.u.x1)) + .5, y0:Math.min(...items.map(t => t.u.y0)) - .5, y1:Math.max(...items.map(t => t.u.y1)) + .5};
   const vx = Math.min(...items.map(t => t.v.x)), vy = Math.min(...items.map(t => t.v.y));
   const vU = {x:vx, y:vy, w:Math.max(...items.map(t => t.v.x + t.v.w)) - vx, h:Math.max(...items.map(t => t.v.y + t.v.h)) - vy};
   const col = sampleTextColors(i, vU);
@@ -4123,12 +4236,16 @@ async function editPageText(i, items, {selectAll = false, all = null, plain = fa
   const bold = /bold|black|heavy|semibold|demi|w[6-9]\b/i.test(fontName), italic = /italic|oblique/i.test(fontName);
   const lines = rows.map(r => {
     let text = '';
-    r.items.forEach((t, k) => { if (k && t.x0 - r.items[k - 1].x1 > t.fs * .2 && !/\s$/.test(text) && !/^\s/.test(t.str)) text += ' '; text += t.str; });
+    r.items.forEach((t, k) => { if (k && !t.stacked && t.a0 - r.items[k - 1].a1 > t.fs * .2 && !/\s$/.test(text) && !/^\s/.test(t.str)) text += ' '; text += t.str; });
     return [{text, size, color:col.fg, bg:'', bold, italic, underline:false}];
   });
-  const top = Math.min(...rows[0].items.map(t => t.vb));   // the editor's first baseline lands on the old one
-  openTextEditor(i, vU.x - TB_PAD, top - TB_PAD - realBaseline(size), {lines, box:{boxBg:'', border:false}, veilBox:{x:vU.x - 1, y:vU.y - 1, w:vU.w + 2, h:vU.h + 2}, veilColor:col.bg,
-    edit:{U, bg:col.bg, orig:JSON.stringify(lines), blocks}, selectAll, real:true});
+  // the editor (turned like the text) sits so its first line lands on the old one: the first baseline, or for vertical
+  // text the first column's centre and top; for vertical text the anchor is its top-right corner
+  const a0 = Math.min(...items.map(t => t.a0)), fsz = rows[0].items[0].fs;
+  const anchor = vert ? {x:rows[0].base + fsz * REAL_LH / 2 + TB_PAD, y:a0 - TB_PAD} : {x:a0 - TB_PAD, y:Math.min(...rows[0].items.map(t => t.base)) - TB_PAD - realBaseline(size)};
+  const at = returnTurn(anchor, rot);
+  openTextEditor(i, at.x, at.y, {lines, box:{boxBg:'', border:false}, veilBox:{x:vU.x - 1, y:vU.y - 1, w:vU.w + 2, h:vU.h + 2}, veilColor:col.bg,
+    edit:{U, bg:col.bg, orig:JSON.stringify(lines), blocks, rot, vert}, selectAll, real:true, rot, vert});
   clearTextMarks();
 }
 // edit text this app wrote into the page: the editor comes back with its formatting, at its place
@@ -4139,7 +4256,7 @@ async function editOwnText(i, k, items, {selectAll = false} = {}){
   await realFontsReady();
   const col = sampleTextColors(i, b.vbox);
   openTextEditor(i, b.at.x, b.at.y, {lines:b.rt.lines, box:b.rt.box, veilBox:{x:b.vbox.x - 1, y:b.vbox.y - 1, w:b.vbox.w + 2, h:b.vbox.h + 2}, veilColor:col.bg,
-    edit:{block:b.name, bg:col.bg, orig:JSON.stringify(b.rt.lines), origBox:JSON.stringify(b.rt.box)}, selectAll, real:true});
+    edit:{block:b.name, bg:col.bg, orig:JSON.stringify(b.rt.lines), origBox:JSON.stringify(b.rt.box), rot:b.rot, vert:b.vert}, selectAll, real:true, rot:b.rot, vert:b.vert});
   clearTextMarks();
 }
 // textbox mode: click text to edit its line, drag across text to pick several lines, click empty space for a new box
@@ -7230,7 +7347,7 @@ function showThemeMenu(){
 document.addEventListener('pointerdown', e => { const m = $('#themeMenu'); if (m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('#bTheme')) m.style.display = 'none'; }, true);
 if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyTheme();
 paintSplitButtons();
-window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat};
+window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i)};
 </script>
 </body>
 </html>
