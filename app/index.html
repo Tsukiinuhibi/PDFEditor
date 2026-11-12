@@ -3592,6 +3592,79 @@ async function deleteAnnot(i, id){
 }
 
 /* ====================================================================
+   System fonts (字型清單): every font family installed on this computer (queryLocalFonts), with the name a
+   Taiwanese user knows it by (read from the font file: 微軟正黑體, not Microsoft JhengHei) and whether it is a
+   Chinese font. Reading a font file can take a while (Chinese fonts are 10–30 MB), so it happens in the
+   background, one file at a time, and the result is cached in localStorage.
+   ==================================================================== */
+const FONTCAT = {ok:null, fams:[], busy:false, subs:new Set()};
+const FONTCAT_KEY = 'pdfeditor.fontcat.v1';
+const FONT_LANGS = ['zh-TW', 'zh-HK', 'zh-MO', 'zh', 'zh-SG', 'en'];
+let fontListing = null, fontAnalysing = Promise.resolve(), fontNotify = 0;
+const fontCache = () => { try { return JSON.parse(localStorage.getItem(FONTCAT_KEY)) || {}; } catch (_) { return {}; } };
+function fontChanged(){
+  if (fontNotify) return;
+  fontNotify = requestAnimationFrame(() => { fontNotify = 0; FONTCAT.subs.forEach(fn => { try { fn(); } catch (e) { console.error(e); } }); });
+}
+// the family name in the preferred language: typographic family (name ID 16) first, then the family (name ID 1)
+function fontFileName(font, fallback){
+  const rec = font.name && font.name.records || {};
+  for (const ids of [rec.preferredFamily, rec.fontFamily]) {
+    if (!ids) continue;
+    for (const l of FONT_LANGS) if (ids[l] && String(ids[l]).trim()) return String(ids[l]).trim();
+  }
+  return fallback;
+}
+async function analyseFont(fam, face){
+  try {
+    const bytes = new Uint8Array(await (await face.blob()).arrayBuffer());
+    const font = fontkit.create(bytes, fam.ps || undefined);
+    if (!font || !font.name) throw new Error('not a single font');
+    return {name:fontFileName(font, fam.family), cjk:[...'中文字體'].every(ch => font.hasGlyphForCodePoint(ch.codePointAt(0)))};
+  } catch (_) { return {name:fam.family, cjk:false}; }
+}
+// list the fonts (resolves as soon as the list is known; the files are read afterwards)
+function loadFontCatalog(){
+  if (fontListing) return fontListing;
+  fontListing = (async () => {
+    let faces = [];
+    try {
+      if (typeof window.queryLocalFonts !== 'function') throw new Error('no queryLocalFonts');
+      faces = await window.queryLocalFonts();
+    } catch (e) { FONTCAT.ok = false; FONTCAT.fams = []; fontChanged(); return; }
+    const byFam = new Map();
+    for (const f of faces) {
+      if (!f.family) continue;
+      const cur = byFam.get(f.family), regular = /^(regular|normal|book|roman)$/i.test(f.style || '');
+      if (!cur || (regular && !cur.regular)) byFam.set(f.family, {face:f, regular});
+    }
+    const cache = fontCache(), todo = [];
+    FONTCAT.fams = [...byFam.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([family, {face}]) => {
+      const fam = {family, ps:face.postscriptName || '', name:family, cjk:null}, c = cache[family + '|' + fam.ps];
+      if (c) { fam.name = c.name || family; fam.cjk = !!c.cjk; } else todo.push([fam, face]);
+      return fam;
+    });
+    FONTCAT.ok = true; fontChanged();
+    if (todo.length) {
+      FONTCAT.busy = true;
+      fontAnalysing = (async () => {
+        for (const [fam, face] of todo) {
+          Object.assign(fam, await analyseFont(fam, face));
+          const c = fontCache(); c[fam.family + '|' + fam.ps] = {name:fam.name, cjk:fam.cjk};
+          try { localStorage.setItem(FONTCAT_KEY, JSON.stringify(c)); } catch (_) {}
+          fontChanged();
+        }
+        FONTCAT.busy = false; fontChanged();
+      })();
+    }
+  })();
+  return fontListing;
+}
+const fontAnalysisDone = () => (fontListing || Promise.resolve()).then(() => fontAnalysing);
+const fontLabel = family => { const f = family && FONTCAT.fams.find(x => x.family === family); return f ? f.name : family || ''; };
+const fontInstalled = family => !!family && FONTCAT.fams.some(x => x.family === family);
+
+/* ====================================================================
    Inline rich-text boxes (文字方塊) and image insertion (插入圖片)
    ==================================================================== */
 const TB_DEF = {size:14, color:'#1f2328', bg:'', bold:false, italic:false, underline:false, boxBg:'', border:false};
@@ -7800,7 +7873,8 @@ function setTheme(t){
 }
 if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyTheme();
 paintSplitButtons(); paintActionButtons(); applyRibbon();
-window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box, tidyOcr, denoiseCanvas};
+window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box, tidyOcr, denoiseCanvas,
+  fontCat:() => ({ok:FONTCAT.ok, fams:FONTCAT.fams.map(f => ({...f}))}), fontLoad:loadFontCatalog, fontReady:() => loadFontCatalog().then(fontAnalysisDone)};
 </script>
 </body>
 </html>
