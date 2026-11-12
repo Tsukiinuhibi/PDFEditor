@@ -21,10 +21,11 @@ export async function launch(pdfName){
   return launchPath(fixture(pdfName));
 }
 // open a PDF the script made itself (it must live in TMP)
-export async function launchPath(pdf){
+// args: extra Electron switches (e.g. a display scale, as on a high-DPI Windows screen)
+export async function launchPath(pdf, {args = []} = {}){
   const app = await electron.launch({
     executablePath: ELECTRON,
-    args: [...(process.platform === 'linux' ? ['--no-sandbox'] : []), ROOT, pdf],
+    args: [...(process.platform === 'linux' ? ['--no-sandbox'] : []), ...args, ROOT, pdf],
     env: { ...process.env, PDFE_USER_DATA: path.join(TMP, 'profile') },
   });
   return { app, pdf };

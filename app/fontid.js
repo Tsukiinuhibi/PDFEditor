@@ -161,19 +161,32 @@
         let k = 0; while (k < cuts.length && along > cuts[k]) k++;
         sorted[k].mine.push(c);
       }
-      // a Chinese character is about as wide (in a column: as tall) as the line: strokes past that belong to the
-      // neighbour on their side (radicals such as 氵 sit close to the character before them)
+      // a Chinese character is about as wide (in a column: as tall) as the line. When its strokes spread wider (a
+      // radical of the next character, or a character the OCR did not read at all), it keeps a window one line wide
+      // around its centre, the one whose edges lie in the widest gaps (what it leaves out is clearly apart from what
+      // it keeps; then the most ink); strokes outside go to the Chinese neighbour on their side, once — otherwise (or
+      // the second time) they are left out
       const lo = c => ln.vert ? c.y0 : c.x0, hi = c => (ln.vert ? c.y1 : c.x1) + 1, mid = c => ln.vert ? c.sy / c.n : c.sx / c.n;
-      for (let pass = 0, moved = true; moved && pass < 4; pass++) {
+      const em = thick * 1.1, slack = thick * .25;
+      for (let pass = 0, moved = true; moved && pass < 6; pass++) {
         moved = false;
         sorted.forEach((a, k) => {
-          if (!HAN.test(a.s.text || '')) return;
-          while (a.mine.length > 1 && Math.max(...a.mine.map(hi)) - Math.min(...a.mine.map(lo)) > thick * 1.1) {
-            const wc = a.mine.reduce((t, c) => t + mid(c) * c.n, 0) / a.mine.reduce((t, c) => t + c.n, 0);
-            const far = a.mine.reduce((f, c) => Math.max(Math.abs(lo(c) - wc), Math.abs(hi(c) - wc)) > Math.max(Math.abs(lo(f) - wc), Math.abs(hi(f) - wc)) ? c : f);
-            const nb = sorted[k + (mid(far) > wc ? 1 : -1)];
-            if (!nb || !HAN.test(nb.s.text || '')) break;
-            a.mine.splice(a.mine.indexOf(far), 1); nb.mine.push(far); moved = true;
+          if (!HAN.test(a.s.text || '') || a.mine.length < 2 || Math.max(...a.mine.map(hi)) - Math.min(...a.mine.map(lo)) <= em) return;
+          let win = null;
+          for (const [w0, w1] of a.mine.flatMap(c => [[lo(c), lo(c) + em], [hi(c) - em, hi(c)]])) {
+            if (a.c < w0 - slack || a.c > w1 + slack) continue;   // around the character's centre
+            const ins = a.mine.filter(c => lo(c) >= w0 && hi(c) <= w1); if (!ins.length) continue;
+            const iLo = Math.min(...ins.map(lo)), iHi = Math.max(...ins.map(hi)), outs = a.mine.filter(c => !ins.includes(c));
+            const left = outs.filter(c => mid(c) < (iLo + iHi) / 2), right = outs.filter(c => mid(c) >= (iLo + iHi) / 2);
+            const gap = Math.min(left.length ? iLo - Math.max(...left.map(hi)) : em, right.length ? Math.min(...right.map(lo)) - iHi : em);
+            const ink = ins.reduce((t, c) => t + c.n, 0);
+            if (!win || gap > win.gap || (gap === win.gap && ink > win.ink)) win = {w0, w1, gap, ink, ins, left, right};
+          }
+          if (!win) return;
+          a.mine = win.ins;
+          for (const [side, list] of [[-1, win.left], [1, win.right]]) for (const c of list) {
+            const nb = sorted[k + side];
+            if (!c.moved && nb && HAN.test(nb.s.text || '')) { c.moved = true; nb.mine.push(c); moved = true; }
           }
         });
       }

@@ -109,6 +109,11 @@ r = await A(() => { const s = __scan({css:'"WenQuanYi Zen Hei"', text:'中華民
   const rough = s.symbols.map(x => { const h = x.bbox.y1 - x.bbox.y0, c = (x.bbox.y0 + x.bbox.y1) / 2 - h * .12; return {...x, bbox:{...x.bbox, y0:Math.round(c - h * .3), y1:Math.round(c + h * .3)}}; });
   return {exact, got:FontId.glyphsFromImage(s.canvas, rough).cjk.map(g => [g.ch, g.w, g.h])}; });
 check('vertical column, rough boxes: the whole glyph', sameBoxes(r), r);
+r = await A(() => { const s = __scan({css:'"WenQuanYi Zen Hei"', text:'中華民國臺灣字型', px:46, seed:15});
+  const exact = FontId.glyphsFromImage(s.canvas, s.symbols).cjk.map(g => [g.ch, g.w, g.h]).filter(g => g[0] !== '字');
+  // Tesseract missed a character: its strokes must not make the characters next to it wider
+  return {exact, got:FontId.glyphsFromImage(s.canvas, s.symbols.filter(x => x.text !== '字')).cjk.map(g => [g.ch, g.w, g.h])}; });
+check('a character the OCR missed: its neighbours stay whole and alone', sameBoxes(r), r);
 await app.close();
 
 // ---- part 3: matching a scan against the installed fonts ---------------------------------------

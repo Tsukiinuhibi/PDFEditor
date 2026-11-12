@@ -270,6 +270,18 @@ await win.click('#ocrPanel [data-o="byshape"]'); s = await settled();
 check('no page errors (part 3)', pageErrors === 0, pageErrors);
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
 
+// ---- part 4: a high-DPI screen (Windows at 200%): the same results ------------------------------------------
+({ app } = await launchPath(file, {args:['--force-device-scale-factor=2']}));
+win = await app.firstWindow(); watch(win); await win.waitForTimeout(3500);
+await win.evaluate(() => window.__pdfapp.fontReady());
+await win.click('[data-view="single"]'); await win.waitForTimeout(500);
+await win.click('[data-tool="ocr"]'); await win.waitForTimeout(500);
+await win.evaluate(() => window.__pdfapp.fontIdGoogle(async () => ({ok:true, status:200, text:async () => ''})));
+await dragPdfBox({...BOX.mixed, x1:BOX.mixed.x1 + 100}); await win.waitForTimeout(300); await win.click('#ocrPanel [data-ot="font"]'); s = await settled();
+check('200% screen: mixed line, Chinese group right and clear', s.groups.length === 2 && /文泉驛正黑/.test(s.groups[0].rows[0].label) && s.groups[0].rows[0].pct >= 75 && s.groups[1].rows[0].label === 'DejaVu Serif', s.groups.map(g => g.rows.slice(0, 2).map(r => r.label.slice(0, 8) + ' ' + r.pct)));
+check('no page errors (part 4)', pageErrors === 0, pageErrors);
+await app.evaluate(({app}) => app.exit(0)).catch(() => {});
+
 function __checkSorted(urls){
   if (!urls.length) return false;
   return urls.every(u => { const t = [...new URL(u).searchParams.get('text')]; return t.join('') === [...new Set(t)].sort((a, b) => a.codePointAt(0) - b.codePointAt(0)).join(''); });
