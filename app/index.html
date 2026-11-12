@@ -96,7 +96,17 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .ctx button kbd{margin-left:auto}
 .ctx hr{border:0;border-top:1px solid var(--line);margin:4px 2px}
 .ctx .hd{font-size:11px;color:var(--ink3);padding:4px 10px 2px}
-.viewbar{background:var(--bar);border-bottom:1px solid var(--line2);display:flex;align-items:center;gap:6px;padding:5px 10px;flex:none;overflow-x:auto;white-space:nowrap}
+.viewbar{background:var(--bar);border-bottom:1px solid var(--line2);display:flex;align-items:center;gap:6px;padding:5px 10px;flex:none;overflow-x:auto;overflow-y:hidden;white-space:nowrap;scrollbar-width:thin}
+/* the bar never squashes its items; when narrow it sheds words step by step (fitViewbar), then scrolls sideways */
+.viewbar>*{flex-shrink:0}
+.viewbar .vt2{display:none}
+.viewbar.c1 .lbl{display:none}
+.viewbar.c2 [data-zoom] .vt{display:none}
+.viewbar.c3 [data-view] .vt,.viewbar.c3 .chk .vt{display:none}
+.viewbar.c3 .chk .vt2{display:inline}
+.viewbar.c4 #bAids .vt,.viewbar.c4 [data-act="layers"] .vt{display:none}
+.viewbar.c5{gap:3px;padding:5px 6px}
+.viewbar.c5 .sep{margin:0 2px}
 .vb{height:28px;min-width:28px;padding:0 8px;display:inline-flex;align-items:center;justify-content:center;gap:5px;border:1px solid transparent;background:transparent;border-radius:6px;cursor:pointer;font-size:12.5px}
 .vb svg.i{width:17px;height:17px}
 .vb:hover{background:var(--hover)}
@@ -814,19 +824,19 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
   <button class="vb" data-act="zoomOut" data-need title="縮小 (Ctrl+滾輪)"><i data-i="minus"></i></button>
   <span class="zoomsel"><input id="zIn" type="text" value="100%" data-need></span>
   <button class="vb" data-act="zoomIn" data-need title="放大 (Ctrl+滾輪)"><i data-i="plus"></i></button>
-  <button class="vb" data-zoom="actual" data-need title="實際大小 (Ctrl+0)"><i data-i="actual"></i>實際大小</button>
-  <button class="vb" data-zoom="fit-page" data-need title="符合整個頁面"><i data-i="fitPage"></i>符合頁面</button>
-  <button class="vb" data-zoom="fit-width" data-need title="符合頁面寬度"><i data-i="fitWidth"></i>符合寬度</button>
+  <button class="vb" data-zoom="actual" data-need title="實際大小 (Ctrl+0)"><i data-i="actual"></i><span class="vt">實際大小</span></button>
+  <button class="vb" data-zoom="fit-page" data-need title="符合整個頁面"><i data-i="fitPage"></i><span class="vt">符合頁面</span></button>
+  <button class="vb" data-zoom="fit-width" data-need title="符合頁面寬度"><i data-i="fitWidth"></i><span class="vt">符合寬度</span></button>
   <span class="sep"></span>
   <span class="lbl">檢視</span>
-  <button class="vb" data-view="single" data-need title="單頁顯示"><i data-i="vSingle"></i>單頁</button>
-  <button class="vb" data-view="continuous" data-need title="連續頁面顯示"><i data-i="vCont"></i>連續</button>
-  <button class="vb" data-view="two" data-need title="對開雙頁顯示"><i data-i="vTwo"></i>對開</button>
-  <button class="vb" data-view="two-continuous" data-need title="連續雙頁顯示"><i data-i="vTwoCont"></i>連續雙頁</button>
-  <label class="chk" title="雙頁模式時第一頁（封面）單獨顯示"><input type="checkbox" id="coverChk"> 封面單獨</label>
+  <button class="vb" data-view="single" data-need title="單頁顯示"><i data-i="vSingle"></i><span class="vt">單頁</span></button>
+  <button class="vb" data-view="continuous" data-need title="連續頁面顯示"><i data-i="vCont"></i><span class="vt">連續</span></button>
+  <button class="vb" data-view="two" data-need title="對開雙頁顯示"><i data-i="vTwo"></i><span class="vt">對開</span></button>
+  <button class="vb" data-view="two-continuous" data-need title="連續雙頁顯示"><i data-i="vTwoCont"></i><span class="vt">連續雙頁</span></button>
+  <label class="chk" title="雙頁模式時第一頁（封面）單獨顯示"><input type="checkbox" id="coverChk"> <span class="vt">封面單獨</span><span class="vt2">封面</span></label>
   <span class="sep"></span>
-  <button class="vb" id="bAids" data-act="aids" data-need title="網格、輔助線、標尺與貼齊"><i data-i="gridI"></i>輔助工具 ▾</button>
-  <button class="vb" data-act="layers" data-need title="圖層面板：顯示／隱藏、鎖定、排列與管理圖層"><i data-i="layers"></i>圖層</button>
+  <button class="vb" id="bAids" data-act="aids" data-need title="網格、輔助線、標尺與貼齊"><i data-i="gridI"></i><span class="vt">輔助工具</span> ▾</button>
+  <button class="vb" data-act="layers" data-need title="圖層面板：顯示／隱藏、鎖定、排列與管理圖層"><i data-i="layers"></i><span class="vt">圖層</span></button>
 </div>
 
 <div class="updbar" id="updBar"></div>
@@ -7564,12 +7574,23 @@ async function openSettings(tab = 'look'){
   if (keys) keys.stop();
   SET = null; UPD.modalOpen = false;
 }
-// the toolbar scrolls sideways with the mouse wheel when it does not fit
-$('#ribbon').addEventListener('wheel', e => {
+// the toolbars scroll sideways with the mouse wheel when they do not fit
+function wheelSideways(e){
   const r = e.currentTarget; if (r.scrollWidth <= r.clientWidth + 1 || e.ctrlKey) return;
   const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY; if (!d) return;
   e.preventDefault(); r.scrollLeft += d * (e.deltaMode === 1 ? 32 : 1);
-}, {passive:false});
+}
+$('#ribbon').addEventListener('wheel', wheelSideways, {passive:false});
+$('#viewbar').addEventListener('wheel', wheelSideways, {passive:false});
+// a narrow view bar drops its words step by step: the labels, then the zoom buttons', the view modes', the last two;
+// last of all it closes up the gaps
+const VB_STEPS = ['c1', 'c2', 'c3', 'c4', 'c5'];
+function fitViewbar(){
+  const v = $('#viewbar'); v.classList.remove(...VB_STEPS);
+  for (const c of VB_STEPS) { if (v.scrollWidth <= v.clientWidth + 1) break; v.classList.add(c); }
+}
+new ResizeObserver(() => fitViewbar()).observe($('#viewbar'));
+document.fonts.ready.then(fitViewbar);
 
 /* ====================================================================
    Desktop: open-with, updates
