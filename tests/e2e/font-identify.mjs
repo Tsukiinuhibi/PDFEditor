@@ -186,6 +186,55 @@ check('hidden OCR layer: not listed, the picture compared', !s.pdf.length && fir
 check('no page errors (part 2)', pageErrors === 0, pageErrors);
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
 
+// ---- part 3: 套用, 下載 and the font menu's 字型辨識結果 ---------------------------------------------------
+const gfOnly = gf => window.__pdfapp.fontIdGoogle(async url => { const fams = new URL(url).searchParams.getAll('family').map(f => f.split(':')[0]);
+  return {ok:true, status:200, text:async () => fams.filter(f => f === 'Gelasio').map(f => `@font-face {\n  font-family: '${f}';\n  font-weight: 400;\n  src: url(data:font/ttf;base64,${gf}) format('truetype');\n}\n`).join('')}; });
+({ app } = await launchPath(file));
+win = await app.firstWindow(); watch(win); await win.waitForTimeout(3500);
+await win.evaluate(() => window.__pdfapp.fontReady());
+await app.evaluate(({shell}) => { shell.openExternal = async u => { globalThis.__opened = u; }; });   // the browser is not opened
+await win.click('[data-view="single"]'); await win.waitForTimeout(500);
+await win.click('[data-tool="ocr"]'); await win.waitForTimeout(500);
+await win.evaluate(gfOnly, GF);
+await dragPdfBox(BOX.dejavu); await win.waitForTimeout(300); await win.click('#ocrPanel [data-ot="font"]'); s = await settled();
+await win.click('#ocrPanel .fi-img .fi-row[data-key="local:DejaVu Serif"] [data-fa="apply"]');
+check('套用 sets the default font', (await A(() => window.__pdfapp.tbStyle().font)) === 'DejaVu Serif');
+check('套用 says so', await A(() => [...document.querySelectorAll('#toasts .toast')].some(t => t.textContent === '已設為文字方塊的預設字型：DejaVu Serif')));
+await dragPdfBox(BOX.gf); s = await settled();
+await win.click('#ocrPanel .fi-row[data-key="google:Gelasio"] [data-fa="download"]'); await win.waitForTimeout(500);
+check('下載 opens the specimen page', (await app.evaluate(() => globalThis.__opened)) === 'https://fonts.google.com/specimen/Gelasio');
+check('下載 leaves a hint', await A(() => (document.querySelector('#ocrPanel .fi-row[data-key="google:Gelasio"] .fi-hint') || {}).textContent === '安裝後重新開啟 PDF 工作台，再比對一次就能套用'));
+// the font menu offers the installed fonts just found, with their similarity
+await dragPdfBox(BOX.dejavu); s = await settled();
+await win.click('[data-tool="textbox"]'); await win.waitForTimeout(500);
+await win.click('#hint [data-tbfont]'); await win.waitForTimeout(400);
+const fm = await A(() => { const el = [...document.querySelectorAll('#fontMenu .fm-list > *')], k = el.findIndex(e => e.classList.contains('fm-sec') && e.textContent === '字型辨識結果'), it = k >= 0 ? el[k + 1] : null;
+  return {k, f:it && it.dataset.f, text:it && it.textContent, after預設:k > 0 && el[k - 2] && el[k - 2].textContent === '預設'}; });
+check('font menu: 字型辨識結果, right after 預設', fm.k >= 0 && fm.after預設 && fm.f === 'DejaVu Serif' && /DejaVu Serif　\d+%/.test(fm.text), fm);
+await win.keyboard.press('Escape'); await win.waitForTimeout(200);
+await win.click('[data-tool="ocr"]'); await win.waitForTimeout(400);
+await dragPdfBox(BOX.noto); s = await settled();
+await win.click('#ocrPanel .fi-img .fi-row[data-key="builtin"] [data-fa="apply"]');
+check('套用 思源黑體（內建）: back to the default font', (await A(() => window.__pdfapp.tbStyle().font)) === '');
+await app.evaluate(({app}) => app.exit(0)).catch(() => {});
+// the PDF's Helvetica: 套用 takes its stand-in; the PDF's fonts lead the font menu's list
+({ app } = await launchPath(file2));
+win = await app.firstWindow(); watch(win); await win.waitForTimeout(3500);
+await win.evaluate(() => window.__pdfapp.fontReady());
+await win.click('[data-view="single"]'); await win.waitForTimeout(500);
+await win.click('[data-tool="ocr"]'); await win.waitForTimeout(500);
+await win.evaluate(() => window.__pdfapp.fontIdGoogle(async () => ({ok:true, status:200, text:async () => ''})));
+await dragPdfBox(LINE.helv); await win.waitForTimeout(300); await win.click('#ocrPanel [data-ot="font"]'); s = await settled();
+await win.click('#ocrPanel .fi-pdf [data-fa="apply"]');
+check('套用 a stand-in: Liberation Sans', (await A(() => window.__pdfapp.tbStyle().font)) === 'Liberation Sans');
+await dragPdfBox(LINE.dejavu); s = await settled();
+await win.click('#ocrPanel [data-o="byshape"]'); s = await settled();
+{ const rec = await A(() => window.__pdfapp.fontIdRecent()), famOf = k => k === 'builtin' ? '' : k.slice(6);
+  const next = s.groups[0].rows.find(x => (x.key.startsWith('local:') || x.key === 'builtin') && x.key !== 'local:DejaVu Serif');
+  check('font menu list: the PDF\'s font first at 100%, then the shapes found', rec.length <= 5 && rec[0].family === 'DejaVu Serif' && rec[0].pct === 100 && !!next && rec[1].family === famOf(next.key) && rec[1].pct === next.pct && rec.filter(r => r.family === 'DejaVu Serif').length === 1, rec); }
+check('no page errors (part 3)', pageErrors === 0, pageErrors);
+await app.evaluate(({app}) => app.exit(0)).catch(() => {});
+
 function __checkSorted(urls){
   if (!urls.length) return false;
   return urls.every(u => { const t = [...new URL(u).searchParams.get('text')]; return t.join('') === [...new Set(t)].sort((a, b) => a.codePointAt(0) - b.codePointAt(0)).join(''); });

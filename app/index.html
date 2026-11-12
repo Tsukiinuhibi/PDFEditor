@@ -4085,6 +4085,8 @@ function fontMenuList(){
     return `<button class="fm-it${f === cur ? ' on' : ''}${why ? ' off' : ''}" data-f="${esc(f)}"${why ? ' aria-disabled="true"' : ''} title="${esc((f && label !== f ? `${label}（${f}）` : label) + (why ? `：${why}` : ''))}">${esc(label)}${why ? `<small class="fm-why">${why}</small>` : ''}</button>`;
   };
   let h = sec('預設') + item('', '思源黑體');
+  const found = FONTID.recent.filter(r => !r.family || fontInstalled(r.family));
+  if (found.length) h += sec('字型辨識結果') + found.map(r => item(r.family, `${r.family ? fontLabel(r.family) : '思源黑體'}　${r.pct}%`)).join('');
   const rec = recentFonts().filter(fontInstalled);
   if (rec.length) h += sec('最近用過') + rec.map(f => item(f, fontLabel(f))).join('');
   const zh = FONTCAT.fams.filter(f => f.cjk).sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant')), other = FONTCAT.fams.filter(f => !f.cjk);
@@ -7369,6 +7371,8 @@ function ocrPanel(i, box){
       if (b.dataset.ot) showOcrTab(b.dataset.ot);
       if (b.dataset.o === 'refont') fontIdStart();
       if (b.dataset.o === 'byshape') { b.parentNode.remove(); fontIdImage(OCR.job); }
+      if (b.dataset.fa === 'apply') applyIdentifiedFont(b.dataset.family || '');
+      if (b.dataset.fa === 'download') openFontPage(b.dataset.gf, b.closest('.fi-row'));
     });
     p.addEventListener('change', e => { if (e.target.dataset.o === 'gf') { FONTID.google = e.target.checked; try { localStorage.setItem(FONTID_KEY, JSON.stringify({google:FONTID.google})); } catch (_) {} } });
   }
@@ -7418,7 +7422,7 @@ function closeOcr(){
    (installed) or 下載 (Google Fonts). Nothing here changes the document.
    ==================================================================== */
 const FONTID_KEY = 'pdfeditor.fontid.v1';
-const FONTID = {tab:'text', job:-1, busy:false, recent:[], fetchCss:null, timeout:8000,
+const FONTID = {tab:'text', job:-1, busy:false, recent:[], pdfRecent:[], fetchCss:null, timeout:8000,
   google:(() => { try { const v = JSON.parse(localStorage.getItem(FONTID_KEY)); return !(v && v.google === false); } catch (_) { return true; } })()};
 // the window shows the tab FONTID.tab says (a new window opens on the tab last used)
 function paintOcrTab(){
@@ -7444,13 +7448,16 @@ function fiStatus(msg, progress = null){
 async function fontIdStart(){
   const p = OCR.panel; if (!p) return;
   const job = FONTID.job = OCR.job;
-  p.querySelector('.fi-pdf').innerHTML = ''; p.querySelector('.fi-img').innerHTML = ''; p.querySelector('.fi-note').hidden = true;
+  p.querySelector('.fi-pdf').innerHTML = ''; p.querySelector('.fi-img').innerHTML = ''; p.querySelector('.fi-note').hidden = true; FONTID.pdfRecent = [];
   // the PDF's own text: the fonts the file records (exact); comparing shapes only when asked
   FONTID.busy = true; fiStatus('讀取中…');
   let pf = {fonts:[], hidden:0};
   try { pf = await pdfFontsIn(OCR.i, OCR.box); } catch (e) { console.error(e); }
   if (job !== OCR.job || !OCR.panel) return;
-  if (pf.fonts.length) { renderPdfFonts(pf.fonts); fiStatus(''); FONTID.busy = false; return; }
+  if (pf.fonts.length) {
+    FONTID.recent = FONTID.pdfRecent = [...new Set(pf.fonts.filter(f => f.local).map(f => f.local.family))].slice(0, 5).map(family => ({family, pct:100}));
+    renderPdfFonts(pf.fonts); fiStatus(''); FONTID.busy = false; return;
+  }
   await fontIdImage(job);
 }
 function renderPdfFonts(fonts){
@@ -7515,16 +7522,28 @@ async function fontIdImage(job){
       }
       if (grp.results.length) any = true; else el.remove();
     }
-    // the installed fonts found, for the font menu's 字型辨識結果
-    const seen = new Set();
-    FONTID.recent = groups.flatMap(x => x.results).filter(r => r.cand.source !== 'google').sort((a, b) => b.score - a.score)
-      .filter(r => !seen.has(r.cand.family) && seen.add(r.cand.family)).slice(0, 5).map(r => ({family:r.cand.family, pct:r.pct}));
+    // the installed fonts found, for the font menu's 字型辨識結果 (the PDF's own fonts of this box first)
+    const seen = new Set(FONTID.pdfRecent.map(r => r.family));
+    FONTID.recent = [...FONTID.pdfRecent, ...groups.flatMap(x => x.results).filter(r => r.cand.source !== 'google').sort((a, b) => b.score - a.score)
+      .filter(r => !seen.has(r.cand.family) && seen.add(r.cand.family)).map(r => ({family:r.cand.family, pct:r.pct}))].slice(0, 5);
     p.querySelector('.fi-note').hidden = !any;
     fiStatus(!any ? '這台電腦沒有可以比對的字型' : offline ? '連不上 Google Fonts，只比對了這台電腦的字型' : '');
   } catch (e) {
     console.error(e);
     if (!stop()) fiStatus('辨識失敗：' + (e && e.message || e));
   } finally { if (!stop()) FONTID.busy = false; }
+}
+// 套用: the font becomes the default of new text boxes; while editing, the font menu's 字型辨識結果 applies it to the
+// highlighted text ('' = the bundled 思源黑體)
+function applyIdentifiedFont(family){
+  TB_STYLE.font = family || ''; saveTB();
+  toast(`已設為文字方塊的預設字型：${family ? fontLabel(family) : '思源黑體'}`);
+}
+// 下載: the font's Google Fonts page in the browser; a font installed while the program runs is seen after a restart
+function openFontPage(family, row){
+  const url = FontId.specimenUrl(family);
+  if (DESK) DESK.openExternal(url); else window.open(url, '_blank', 'noopener');
+  if (row && !row.querySelector('.fi-hint')) { const h = document.createElement('div'); h.className = 'fi-hint'; h.textContent = '安裝後重新開啟 PDF 工作台，再比對一次就能套用'; row.appendChild(h); placeOcrPanel(); }
 }
 // one row per font: the box's characters in that font, its name (fonts drawn the same way together), where it is
 // from, the similarity, and 套用 or 下載
@@ -8640,6 +8659,7 @@ window.__pdfapp = {
     return {tab:FONTID.tab, busy:FONTID.busy, msg:p.querySelector('.fi-msg').textContent, pdf:[...p.querySelectorAll('.fi-pdf .fi-row')].map(row),
       groups:[...p.querySelectorAll('.fi-img .fi-grp')].map(g => ({title:(g.querySelector('.fi-h') || {}).textContent || '', rows:[...g.querySelectorAll('.fi-row')].map(row)}))}; },
   fontIdGoogle:(fn, {timeout = 8000} = {}) => { FONTID.fetchCss = fn || null; FONTID.timeout = timeout; },
+  fontIdRecent:() => FONTID.recent.map(r => ({...r})),
   S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box, tidyOcr, denoiseCanvas,
   fontCat:() => ({ok:FONTCAT.ok, fams:FONTCAT.fams.map(f => ({...f}))}), fontLoad:loadFontCatalog,
   registerTestFont,
