@@ -4376,6 +4376,59 @@ function removePageText(doc, i, U){
   return hits.length;
 }
 
+/* ---------------- embedding system fonts ----------------
+   The bytes of an installed font (or a test font), ready for pdf-lib: the regular or bold face of a family (no bold
+   face: the regular one, drawn bold by the writer), a face of a .ttc collection taken out as a font of its own. */
+const SYS_BYTES = new Map();   // 'family|Regular' / 'family|Bold' → Promise<{bytes, synthetic}>
+async function systemFontBytes(family, bold){
+  const key = family + '|' + (bold ? 'Bold' : 'Regular');
+  if (TEST_FONTS.has(key)) return {bytes:TEST_FONTS.get(key), synthetic:false};
+  if (TEST_FONTS.has(family + '|Regular')) return {bytes:TEST_FONTS.get(family + '|Regular'), synthetic:bold};
+  if (!SYS_BYTES.has(key)) SYS_BYTES.set(key, (async () => {
+    if (!FONT_FACES.size) await loadFontCatalog();
+    const faces = FONT_FACES.get(family) || []; if (!faces.length) throw new Error('沒有這個字型');
+    const upright = faces.filter(f => !/italic|oblique/i.test(f.style || ''));
+    const boldFace = bold ? upright.find(f => /^bold$/i.test(f.style || '')) || upright.find(f => /bold/i.test(f.style || '') && !/semi|demi|extra|ultra/i.test(f.style || '')) : null;
+    const face = boldFace || upright.find(f => /^(regular|normal|book|roman)$/i.test(f.style || '')) || upright[0] || faces[0];
+    let bytes = new Uint8Array(await (await face.blob()).arrayBuffer());
+    if (bytes[0] === 0x74 && bytes[1] === 0x74 && bytes[2] === 0x63 && bytes[3] === 0x66) bytes = sfntFromCollection(bytes, face.postscriptName || '');   // 'ttcf'
+    return {bytes, synthetic:bold && !boldFace};
+  })());
+  try { return await SYS_BYTES.get(key); } catch (e) { SYS_BYTES.delete(key); throw e; }
+}
+// one face of a .ttc collection as a font file of its own: its table directory, with the tables copied after it
+function sfntFromCollection(bytes, ps){
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let idx = 0;
+  try { const k = fontkit.create(bytes).fonts.findIndex(f => f.postscriptName === ps); if (k >= 0) idx = k; } catch (_) {}
+  const at = dv.getUint32(12 + 4 * idx), n = dv.getUint16(at + 4), recs = [];
+  for (let k = 0; k < n; k++) { const o = at + 12 + 16 * k; recs.push({tag:dv.getUint32(o), sum:dv.getUint32(o + 4), off:dv.getUint32(o + 8), len:dv.getUint32(o + 12)}); }
+  let size = 12 + 16 * n; const pos = recs.map(r => { const p = size; size += (r.len + 3) & ~3; return p; });
+  const out = new Uint8Array(size), ov = new DataView(out.buffer);
+  ov.setUint32(0, dv.getUint32(at)); for (let k = 4; k < 12; k += 2) ov.setUint16(k, dv.getUint16(at + k));
+  recs.forEach((r, k) => { const o = 12 + 16 * k; ov.setUint32(o, r.tag); ov.setUint32(o + 4, r.sum); ov.setUint32(o + 8, pos[k]); ov.setUint32(o + 12, r.len); out.set(bytes.subarray(r.off, r.off + r.len), pos[k]); });
+  return out;
+}
+// fontkit writes a TrueType subset with the short 'loca' format (offsets ÷ 2) whenever it is small enough, which
+// breaks every glyph after one whose record has an odd length: pad such records by one byte
+let fkPatched = false, fkPatchOn = true;
+async function patchFontkitSubset(){
+  if (fkPatched) return;
+  const proto = Object.getPrototypeOf((await realFont(false)).createSubset());
+  if (fkPatched) return;
+  fkPatched = true;
+  const orig = proto._addGlyph;
+  proto._addGlyph = function(gid){
+    const k = orig.call(this, gid), b = this.glyf[k];
+    if (fkPatchOn && b && b.length % 2) {
+      const B = b.constructor, p = typeof B.alloc === 'function' ? B.alloc(b.length + 1) : new Uint8Array(b.length + 1);
+      for (let j = 0; j < b.length; j++) p[j] = b[j];
+      this.glyf[k] = p; this.offset += 1;
+    }
+    return k;
+  };
+}
+
 /* ---------------- writing text into the page itself (真正的文字) ----------------
    Edited text goes into the page's content stream, in Noto Sans TC (bundled in app/fonts; only the characters
    used are embedded), so every reader can show, find, select and copy it. Each piece is one block
@@ -8070,6 +8123,34 @@ paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box, tidyOcr, denoiseCanvas,
   fontCat:() => ({ok:FONTCAT.ok, fams:FONTCAT.fams.map(f => ({...f}))}), fontLoad:loadFontCatalog,
   registerTestFont,
+  fontBytesInfo:async (family, bold) => { const r = await systemFontBytes(family, bold); return {bytes:r.bytes.length, synthetic:r.synthetic}; },
+  fontkitPatch:on => { fkPatchOn = !!on; },
+  embedCheck:async ({family, bold = false, text, b64}) => {
+    await patchFontkitSubset();
+    const bytes = b64 ? Uint8Array.from(atob(b64), c => c.charCodeAt(0)) : (await systemFontBytes(family, bold)).bytes;
+    const doc = await PDFDocument.create(); doc.registerFontkit(fontkit);
+    const f = await doc.embedFont(bytes, {subset:true}), pg = doc.addPage([400, 120]);
+    pg.drawText(text, {x:20, y:50, size:28, font:f});
+    const out = await doc.save(), d = await PDFDocument.load(out), res = {};
+    d.context.enumerateIndirectObjects().forEach(([, o]) => {
+      if (!(o instanceof PDFDict) || String(o.get(PDFName.of('Type'))) !== '/FontDescriptor') return;
+      res.baseFont = String(o.get(PDFName.of('FontName'))).replace(/^\//, '');
+      const f2 = o.lookup(PDFName.of('FontFile2')), f3 = o.lookup(PDFName.of('FontFile3'));
+      if (f3) { res.cff = true; return; }
+      if (!f2) return;
+      const fk = fontkit.create(PDFLib.decodePDFRawStream(f2).decode()); let broken = 0, empty = 0;
+      for (let g = 1; g < fk.numGlyphs; g++) { try { if (!fk.getGlyph(g).path.commands.length) empty++; } catch (_) { broken++; } }
+      Object.assign(res, {glyphs:fk.numGlyphs - 1, broken, empty});
+    });
+    const pdf = await pdfjsLib.getDocument({...PDF_OPTS, data:out}).promise, p1 = await pdf.getPage(1);
+    res.text = (await p1.getTextContent()).items.map(i => i.str).join('');
+    const vp = p1.getViewport({scale:1}), c = document.createElement('canvas'); c.width = vp.width; c.height = vp.height;
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+    await p1.render({canvasContext:g, viewport:vp}).promise;
+    const px = g.getImageData(0, 0, c.width, c.height).data; let ink = 0; for (let k = 0; k < px.length; k += 4) if (px[k] < 128) ink++;
+    res.ink = ink; pdf.destroy();
+    return res;
+  },
   fontCatFake:(n, ok = true) => { FONTCAT.ok = ok; FONTCAT.busy = false; FONTCAT.gen++; FONTCAT.fams = ok ? Array.from({length:n}, (_, k) => { const f = 'Fake Font ' + String(k).padStart(3, '0'); return {family:f, ps:'', name:f, cjk:k % 5 === 0}; }) : []; fontChanged(); },
   fontAnalyse:({family, ps, b64}) => { const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0)); return analyseFont({family, ps}, {blob:async () => new Blob([bytes])}); },
   fontCatBusySim:ms => { const end = performance.now() + ms; FONTCAT.busy = true; FONTCAT.done = 0; FONTCAT.total = 100;
