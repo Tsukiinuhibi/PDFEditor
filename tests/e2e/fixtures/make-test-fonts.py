@@ -8,10 +8,16 @@ under its own family name, changed in one way:
   nosubset-test.ttf    OS/2 fsType = 0x0100 (no subsetting: embed it whole)    family "PDFE NoSubset Test"
   restricted-test.ttf  OS/2 fsType = 0x0002 (restricted: must not be embedded) family "PDFE Restricted Test"
   oddglyph-test.ttf    glyph records of odd length (glyf padding 1)            family "PDFE Odd Test"
+  var-test.ttf         a variable font (wght 400–700), default instance 400    family "PDFE Var Test"
+  varbold-test.ttf     a variable font (wght 400–700), default instance 700    family "PDFE VarBold Test"
+                       (masters: subsets of app/fonts/NotoSansTC-Regular.ttf and NotoSansTC-Bold.ttf, which come from
+                       the same variable font and so interpolate)
 """
 import struct
 from fontTools import subset
 from fontTools.ttLib import TTFont
+from fontTools.designspaceLib import DesignSpaceDocument, AxisDescriptor, SourceDescriptor
+from fontTools import varLib
 
 SRC = 'app/fonts/NotoSansTC-Regular.ttf'
 OUT = 'tests/e2e/fixtures/'
@@ -80,7 +86,33 @@ def make(name, family, text, fs_type=None, padding=4, features=()):
     print(f'{name}: {len(g.getGlyphOrder())} glyphs, loca format {g["head"].indexToLocFormat}, odd-length glyphs {odd}, '
           f'fsType {g["OS/2"].fsType:#06x}, vhea {"vhea" in g}, vert {"GSUB" in g and any(fr.FeatureTag == "vert" for fr in g["GSUB"].table.FeatureList.FeatureRecord)}')
 
+def make_variable(name, family, text, default):
+    masters = {}
+    for w, src in ((400, 'app/fonts/NotoSansTC-Regular.ttf'), (700, 'app/fonts/NotoSansTC-Bold.ttf')):
+        opts = subset.Options(); opts.name_IDs = ['*']; opts.name_languages = ['*']; opts.notdef_outline = True; opts.layout_features = []
+        f = TTFont(src, recalcTimestamp=False)
+        s = subset.Subsetter(opts); s.populate(text=text); s.subset(f)
+        masters[w] = f
+    ds = DesignSpaceDocument()
+    ax = AxisDescriptor(); ax.tag = 'wght'; ax.name = 'Weight'; ax.minimum = 400; ax.maximum = 700; ax.default = default
+    ds.addAxis(ax)
+    for w, f in masters.items():
+        src = SourceDescriptor(); src.font = f; src.location = {'Weight': w}; src.name = f'w{w}'; ds.addSource(src)
+    vf, _, _ = varLib.build(ds)
+    n = vf['name']
+    for rec in list(n.names):
+        if rec.nameID in (1, 2, 3, 4, 6, 16, 17): n.names.remove(rec)
+    ps = family.replace(' ', '') + '-Regular'
+    n.setName(family, 1, 3, 1, 0x409); n.setName('Regular', 2, 3, 1, 0x409); n.setName(ps, 3, 3, 1, 0x409)
+    n.setName(family + ' Regular', 4, 3, 1, 0x409); n.setName(ps, 6, 3, 1, 0x409)
+    vf['glyf'].padding = 4
+    vf.save(OUT + name)
+    g = TTFont(OUT + name)
+    print(f'{name}: fvar {"fvar" in g}, usWeightClass {g["OS/2"].usWeightClass}, glyphs {len(g.getGlyphOrder())}')
+
 make('vert-test.ttf', 'PDFE Vert Test', '直書測試字型，。「」ABC', features=('vert', 'vrt2'))
 make('nosubset-test.ttf', 'PDFE NoSubset Test', '無子集測試ABC', fs_type=0x0100)
 make('restricted-test.ttf', 'PDFE Restricted Test', '禁止嵌入測試ABC', fs_type=0x0002)
 make('oddglyph-test.ttf', 'PDFE Odd Test', '奇數長度測試ABCDEFGH', padding=1)
+make_variable('var-test.ttf', 'PDFE Var Test', '可變字型測試粗體ABC', 400)
+make_variable('varbold-test.ttf', 'PDFE VarBold Test', '可變字型測試粗體ABC', 700)

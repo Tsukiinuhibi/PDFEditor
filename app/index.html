@@ -653,7 +653,7 @@ body.autoscrolling[data-autodir=e],body.autoscrolling[data-autodir=e] *{cursor:e
 /* editing the PDF's own text: the editor uses the font the text is written with, so what you see is what is saved */
 @font-face{font-family:"PDFE Sans";src:url(fonts/NotoSansTC-Regular.ttf) format("truetype");font-weight:100 600;font-display:block}
 @font-face{font-family:"PDFE Sans";src:url(fonts/NotoSansTC-Bold.ttf) format("truetype");font-weight:601 900;font-display:block}
-.tbed.real{font-family:"PDFE Sans";font-kerning:none;font-synthesis:style}
+.tbed.real{font-family:"PDFE Sans";font-kerning:none;font-synthesis:weight style}
 .tbed.vert{writing-mode:vertical-rl;text-orientation:upright}
 .tbed.vert div{min-height:0;min-width:1em}
 .tbed:focus{outline-color:#1c64d9}
@@ -1173,7 +1173,7 @@ function docField(d, k){ return d === activeDoc() ? S[k] : d[k]; }
 
 function switchTab(i){
   if (i === active || !docs[i]) return;
-  if (PEN.strokes.length || PEN.busy || NP || TBE) { (async () => { await closeNote(true); await flushPen(); await commitTextEditor(); switchTab(i); })(); return; }
+  if (PEN.strokes.length || PEN.busy || NP || TBE) { (async () => { await closeNote(true); await flushPen(); await commitTextEditor(); if (!TBE) switchTab(i); })(); return; }
   stashActive(); hideCtx(); hideTip(); pop.style.display = 'none';
   active = i; applyDoc(docs[i]);
   mountDoc({scroll:'restore', scrollTop:docs[i].scrollTop, scrollLeft:docs[i].scrollLeft});
@@ -1745,6 +1745,10 @@ function setTool(t){
   if (t !== 'extract') cancelXSel();
   if (t !== 'ocr') closeOcr();
   if (t !== 'select') deselectAnnot();
+  if (t !== S.tool && S.tool === 'textbox' && TBE) {   // the text is saved first; when its check keeps the editor open (回去修改) the tool stays
+    const done = commitTextEditor();
+    if (TBE) { done.then(() => { if (!TBE && S.tool === 'textbox') setTool(t); }); return; }
+  }
   if (t !== S.tool) { cancelPoly(); cancelFillPoly(); clearTextMarks(); if (S.tool === 'pen') flushPen(); if (S.tool === 'textbox') commitTextEditor(); }
   if (t === 'image' && !PENDING_IMG) { chooseImage(); return; }
   S.tool = t; updateUI();
@@ -2456,6 +2460,7 @@ async function settleEdits(){
   try { await closeNote(true); } catch (_) {}
   try { await flushPen(); } catch (_) {}
   try { await commitTextEditor(); await tbSaving; } catch (_) {}
+  return !TBE;   // false: the text editor stays open (回去修改)
 }
 async function renderForExport(i, dpi, {transparent, annots = true}){
   const pg = S.pages[i], {scale} = exportSize(i, dpi);
@@ -2570,7 +2575,7 @@ const SEPS = {us:'_', dash:'-', space:' ', none:''};
 
 async function openExportImages(){
   if (!S.pdf) return;
-  await settleEdits();
+  if (!(await settleEdits())) return;
   const n = S.pages.length, pr = loadExpPrefs();
   const st = {
     sel:new Set(selectedPages()), custom:new Map(),
@@ -3504,6 +3509,7 @@ const actions = {
   async save(){
     if (!S.pdf) return;
     await closeNote(true); await flushPen(); await commitTextEditor();
+    if (TBE) return;   // the text editor stays open (回去修改): nothing is saved
     await saveAsNew(S.bytes, '_已編輯');
   },
   async undo(){
@@ -3651,7 +3657,8 @@ async function analyseFont(fam, face){
     const fsType = (font['OS/2'] && font['OS/2'].fsType) || {}, tb = font.directory.tables;
     let vertForms = false; try { vertForms = !!(font.GSUB && font.GSUB.featureList.some(f => f.tag === 'vert')); } catch (_) {}
     return {name:fontFileName(font, fam.family), cjk:[...'中文字體'].every(ch => font.hasGlyphForCodePoint(ch.codePointAt(0))),
-      embed:fsType.noEmbedding || fsType.bitmapOnly ? 'no' : fsType.noSubsetting ? 'full' : 'ok', vert:!!(tb.vhea && tb.vmtx) && vertForms, bytes:size};
+      embed:fsType.noEmbedding || fsType.bitmapOnly ? 'no' : fsType.noSubsetting ? 'full' : 'ok', vert:!!(tb.vhea && tb.vmtx) && vertForms, bytes:size,
+      variable:!!tb.fvar, weight:(font['OS/2'] && font['OS/2'].usWeightClass) || 400};
   } catch (_) { return null; }
 }
 // (tests) a font given as bytes behaves like an installed one: the page can draw it, the catalogue lists it, and
@@ -3838,6 +3845,7 @@ function richTextXHTML(lines){
 }
 function openTextEditor(i, x, y, {id = null, lines = null, box = null, veilBox = null, veilColor = null, edit = null, selectAll = false, real = false, rot = 0, vert = false} = {}){
   commitTextEditor();
+  if (TBE) return;   // the open editor is still being checked (or was kept open): it stays
   const pg = S.pages[i], el = document.createElement('div');
   el.className = 'tbed' + (real ? ' real' : '') + (vert ? ' vert' : ''); el.contentEditable = 'true'; el.spellcheck = false;
   const bx = box || {boxBg:TB_STYLE.boxBg, border:TB_STYLE.border};
@@ -4021,6 +4029,7 @@ let FM = null;   // the open font menu: {cur, real, vert, …}
 function fontBlockReason(fam, {real, vert}){
   if (!real || !fam) return '';
   if (fam.embed === 'no') return '授權不允許嵌入';
+  if (fam.variable && Math.abs((fam.weight || 400) - 400) > 100) return '可變字型，無法嵌入';   // only the file's default instance can be embedded
   if (vert && fam.vert === false) return '沒有直書資料';
   return '';
 }
@@ -4141,7 +4150,7 @@ function commitTextEditor(){
   // the PDF's own text in a font that lacks some characters: ask first, with the editor still open
   if (TBE.edit && !TBE.checked) {
     const T = TBE, lines0 = htmlToRuns(T.el);
-    if (lines0.some(l => l.some(r => r.font))) {
+    if (lines0.some(l => l.some(r => r.font)) && JSON.stringify(lines0) !== T.edit.orig) {
       T.checking = true;
       return (tbSaving = (async () => {
         let back = false;
@@ -4193,9 +4202,9 @@ function commitTextEditor(){
 async function commitPageTextEdit(i, x, y, lines, box, edit, empty, strut){
   if (JSON.stringify(lines) === edit.orig && (edit.block ? JSON.stringify(box) === edit.origBox : !box.boxBg && !box.border)) return false;   // nothing changed
   // written as real page text when the bundled font has every character; otherwise as before, a picture in a text box
-  if (!empty) lines = await resolveRealFonts(lines);   // a font that cannot be read: 思源黑體, with a message
+  if (!empty) lines = await trialEmbedFonts(await resolveRealFonts(lines), !!edit.vert);   // a font that cannot be read or embedded: 思源黑體, with a message
   let chk = empty ? {image:false, missing:[]} : await realTextCheck(lines);
-  if (chk.missing.length) { lines = await missingToDefault(lines); chk = await realTextCheck(lines); }
+  if (chk.missing.length) { lines = mergeRuns(await missingToDefault(lines)); chk = await realTextCheck(lines); }
   const real = !empty && !chk.image;
   if (!empty && !real && (edit.rot || edit.vert)) { toast('有字型裡沒有的字（例如表情符號），轉向或直書的文字無法這樣修改', 'err'); return false; }
   let r = empty || real ? null : await renderTextBox(lines, box, strut), removed = 0;
@@ -4467,16 +4476,20 @@ async function systemFontBytes(family, bold){
     const boldFace = bold ? upright.find(f => /^bold$/i.test(f.style || '')) || upright.find(f => /bold/i.test(f.style || '') && !/semi|demi|extra|ultra/i.test(f.style || '')) : null;
     const face = boldFace || upright.find(f => /^(regular|normal|book|roman)$/i.test(f.style || '')) || upright[0] || faces[0];
     let bytes = new Uint8Array(await (await face.blob()).arrayBuffer());
-    if (bytes[0] === 0x74 && bytes[1] === 0x74 && bytes[2] === 0x63 && bytes[3] === 0x66) bytes = sfntFromCollection(bytes, face.postscriptName || '');   // 'ttcf'
+    if (bytes[0] === 0x74 && bytes[1] === 0x74 && bytes[2] === 0x63 && bytes[3] === 0x66) bytes = sfntFromCollection(bytes, face.postscriptName || '', family);   // 'ttcf'
     return {bytes, synthetic:bold && !boldFace};
   })());
   try { return await SYS_BYTES.get(key); } catch (e) { SYS_BYTES.delete(key); throw e; }
 }
 // one face of a .ttc collection as a font file of its own: its table directory, with the tables copied after it
-function sfntFromCollection(bytes, ps){
+function sfntFromCollection(bytes, ps, family = ''){
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let idx = 0;
-  try { const k = fontkit.create(bytes).fonts.findIndex(f => f.postscriptName === ps); if (k >= 0) idx = k; } catch (_) {}
+  try {
+    const fonts = fontkit.create(bytes).fonts; let k = fonts.findIndex(f => f.postscriptName === ps);
+    if (k < 0 && family) k = fonts.findIndex(f => f.familyName === family);
+    if (k >= 0) idx = k;
+  } catch (_) {}
   const at = dv.getUint32(12 + 4 * idx), n = dv.getUint16(at + 4), recs = [];
   for (let k = 0; k < n; k++) { const o = at + 12 + 16 * k; recs.push({tag:dv.getUint32(o), sum:dv.getUint32(o + 4), off:dv.getUint32(o + 8), len:dv.getUint32(o + 12)}); }
   let size = 12 + 16 * n; const pos = recs.map(r => { const p = size; size += (r.len + 3) & ~3; return p; });
@@ -4527,21 +4540,51 @@ function realFontInfo(font, bold){
   const key = (font || '') + '|' + (bold ? 'b' : 'r');
   if (!RFI.has(key)) RFI.set(key, (async () => {
     if (!font) return {fk:await realFont(bold), bytes:await realFontBytes(bold), key, synthetic:false, full:false, sys:false};
-    const {bytes, synthetic} = await systemFontBytes(font, bold), fk = fontkit.create(bytes);
-    if (!fk || Array.isArray(fk.fonts) || !fk.unitsPerEm) throw new Error('not a font');
-    const fam = FONTCAT.fams.find(f => f.family === font);
-    return {fk, bytes, key, synthetic, full:!!fam && fam.embed === 'full', sys:true};
+    let {bytes, synthetic} = await systemFontBytes(font, bold); const fk = fontkit.create(bytes), tb = fk && fk.directory && fk.directory.tables;
+    if (!fk || Array.isArray(fk.fonts) || !fk.unitsPerEm || !(tb.glyf || tb['CFF '])) throw new Error('not a font this PDF can hold');   // (e.g. CFF2)
+    const fsType = (fk['OS/2'] && fk['OS/2'].fsType) || {}, weight = (fk['OS/2'] && fk['OS/2'].usWeightClass) || 400;
+    if (fsType.noEmbedding || fsType.bitmapOnly) throw Object.assign(new Error('licence'), {why:'licence'});
+    if (tb.fvar) {   // a variable font embeds as its default instance only
+      if (!bold && Math.abs(weight - 400) > 100) throw Object.assign(new Error('variable'), {why:'variable'});
+      if (bold) synthetic = weight < 600;
+    }
+    return {fk, bytes, key, synthetic, full:!!fsType.noSubsetting, sys:true};
   })());
   RFI.get(key).catch(() => RFI.delete(key));
   return RFI.get(key);
 }
 // a font whose file cannot be read is replaced by 思源黑體, with a message
+const fontFallbackMsg = (f, why) => why === 'licence' ? `字型${fontLabel(f)}的授權不允許嵌入，這段文字改用思源黑體`
+  : why === 'variable' ? `字型${fontLabel(f)}是可變字型，無法嵌入這種粗細，這段文字改用思源黑體` : `讀不到字型${fontLabel(f)}，這段文字改用思源黑體`;
+const dropFonts = (lines, bad) => bad.size ? lines.map(l => l.map(r => { if (!bad.has(r.font)) return r; const {font, ...rest} = r; return rest; })) : lines;
 async function resolveRealFonts(lines, {quiet = false} = {}){
-  const bad = new Set();
-  for (const r of lines.flat()) if (r.font && !bad.has(r.font)) { try { await realFontInfo(r.font, r.bold); } catch (_) { bad.add(r.font); } }
-  if (!quiet) bad.forEach(f => toast(`讀不到字型${fontLabel(f)}，這段文字改用思源黑體`, 'err'));
-  return bad.size ? lines.map(l => l.map(r => { if (!bad.has(r.font)) return r; const {font, ...rest} = r; return rest; })) : lines;
+  const bad = new Map();
+  for (const r of lines.flat()) if (r.font && !bad.has(r.font)) { try { await realFontInfo(r.font, r.bold); } catch (e) { bad.set(r.font, e && e.why || ''); } }
+  if (!quiet) bad.forEach((why, f) => toast(fontFallbackMsg(f, why), 'err'));
+  return dropFonts(lines, bad);
 }
+// a trial embedding of each system font before the document is touched (it is otherwise only written when saving,
+// when the editor is gone): one that fails is replaced by 思源黑體, with a message, and the text is kept
+const EMBED_FAIL = new Set();   // (tests) families whose embedding fails
+async function trialEmbedFonts(lines, vert){
+  const groups = new Map(), bad = new Map();
+  for (const r of lines.flat()) if (r.font) { const k = r.font + '|' + (r.bold ? 'b' : 'r'), g = groups.get(k) || {r, text:''}; g.text += r.text; groups.set(k, g); }
+  for (const g of groups.values()) {
+    if (bad.has(g.r.font)) continue;
+    try {
+      if (EMBED_FAIL.has(g.r.font)) throw new Error('embedding failed (test)');
+      const fi = await realFontInfo(g.r.font, g.r.bold), base = fi.synthetic ? await realFontInfo(g.r.font, false) : fi;
+      const d = await PDFDocument.create(); d.registerFontkit(fontkit);
+      const f = await d.embedFont(base.bytes, {subset:!base.full && await subsetIsSound(base.fk, g.text), ...(vert ? {features:{vert:true}} : {})});
+      f.encodeText(g.text); await f.embed();
+    } catch (e) { bad.set(g.r.font, e && e.why || ''); }
+  }
+  bad.forEach((why, f) => toast(fontFallbackMsg(f, why), 'err'));
+  return dropFonts(lines, bad);
+}
+// neighbouring runs with the same look become one (as the editor merges them)
+const mergeRuns = lines => lines.map(l => l.reduce((acc, r) => { const p = acc[acc.length - 1];
+  if (p && ['size', 'color', 'bg', 'bold', 'italic', 'underline'].every(k => p[k] === r[k]) && (p.font || '') === (r.font || '')) p.text += r.text; else acc.push({...r}); return acc; }, []));
 // which characters cannot be written: missing = a run's own font lacks them but 思源黑體 has them (by font);
 // image = some character not even 思源黑體 has (then the text goes in as a picture, as before)
 async function realTextCheck(lines){
@@ -4663,16 +4706,18 @@ async function writePageText(doc, i, x, y, lines, box, {rot = 0, vert = false, s
   const M = [px[0] - o[0], px[1] - o[1], py[0] - o[0], py[1] - o[1], o[0], o[1]];   // local (from the box top-left, x right, y up) → page
   // each (font, weight) is embedded once: as a subset (only the characters used), or whole when its licence asks for
   // that or when the subset would come out broken
+  // (a fake bold draws the regular embedding, so both share it)
+  const baseOf = async r => { const fi = await realFontInfo(r.font || '', r.bold); return {fi, base:fi.synthetic ? await realFontInfo(r.font || '', false) : fi}; };
   const textOf = new Map();
-  for (const r of lines.flat()) { const k = (r.font || '') + '|' + (r.bold ? 'b' : 'r'); textOf.set(k, (textOf.get(k) || '') + r.text); }
+  for (const r of lines.flat()) { const {base} = await baseOf(r); textOf.set(base.key, (textOf.get(base.key) || '') + r.text); }
   const used = {}, fontOf = async r => {
-    const fi = await realFontInfo(r.font || '', r.bold), k = fi.key + (vert ? '|v' : '');
+    const {fi, base} = await baseOf(r), k = base.key + (vert ? '|v' : '');
     if (!used[k]) {
-      const subset = !fi.full && (!fi.sys || await subsetIsSound(fi.fk, textOf.get(fi.key) || r.text));
-      const f = await doc.embedFont(fi.bytes, {subset, ...(vert ? {features:{vert:true}} : {})});
-      used[k] = {f, fi, name:page.node.newFontDictionary(fi.sys ? 'PDFE_F' : r.bold ? 'PDFE_B' : 'PDFE_R', f.ref).toString()};
+      const subset = !base.full && (!base.sys || await subsetIsSound(base.fk, textOf.get(base.key) || r.text));
+      const f = await doc.embedFont(base.bytes, {subset, ...(vert ? {features:{vert:true}} : {})});
+      used[k] = {f, fi:base, name:page.node.newFontDictionary(base.sys ? 'PDFE_F' : base.key.endsWith('|b') ? 'PDFE_B' : 'PDFE_R', f.ref).toString()};
     }
-    return used[k];
+    return {...used[k], synthetic:fi.synthetic};
   };
   const gs = page.node.newExtGState('PDFE_GS', ctx.register(ctx.obj({Type:'ExtGState', ca:1, CA:1, BM:'Normal', SMask:'None'}))).toString();
   if (vert) return writeVertical();
@@ -4683,7 +4728,7 @@ async function writePageText(doc, i, x, y, lines, box, {rot = 0, vert = false, s
   ops.push('BT 0 Tc 0 Tw 100 Tz 0 Ts 0 Tr');
   for (const row of L.rows) for (const {r, x:rx} of row.items) {
     if (!r.text) continue;
-    const u = await fontOf(r), col = hexRgb(r.color || '#000000'), fake = u.fi.synthetic;   // no bold face: fill and stroke (0.03 em)
+    const u = await fontOf(r), col = hexRgb(r.color || '#000000'), fake = u.synthetic;   // no bold face: fill and stroke (0.03 em)
     ops.push(`${col} rg ${fake ? `2 Tr ${f2(r.size * .03)} w ${col} RG ` : ''}${u.name} ${f2(r.size)} Tf 1 0 ${r.italic ? REAL_SKEW : 0} 1 ${f2(rx)} ${f2(-row.base)} Tm ${u.f.encodeText(r.text).toString()} Tj${fake ? ' 0 Tr' : ''}`);
   }
   ops.push('ET');
@@ -4700,7 +4745,8 @@ async function writePageText(doc, i, x, y, lines, box, {rot = 0, vert = false, s
     for (const col of L.cols) for (const {r, y:ry} of col.items) {
       if (!r.text) continue;
       const u = await fontOf(r);
-      ops.push(`${hexRgb(r.color || '#000000')} rg ${u.name} ${f2(r.size)} Tf 1 0 0 1 ${f2(L.w - col.mid)} ${f2(-ry)} Tm ${u.f.encodeText(r.text).toString()} Tj`);
+      const vc = hexRgb(r.color || '#000000'), fake = u.synthetic;
+      ops.push(`${vc} rg ${fake ? `2 Tr ${f2(r.size * .03)} w ${vc} RG ` : ''}${u.name} ${f2(r.size)} Tf 1 0 0 1 ${f2(L.w - col.mid)} ${f2(-ry)} Tm ${u.f.encodeText(r.text).toString()} Tj${fake ? ' 0 Tr' : ''}`);
     }
     ops.push('ET');
     L.cols.forEach(col => col.items.forEach(({r, y:ry, l}) => { if (r.underline && r.text) ops.push(`${hexRgb(r.color || '#000000')} rg ${f2(L.w - col.mid + r.size * .58)} ${f2(-(ry + l))} ${f2(REAL_ULW * r.size)} ${f2(l)} re f`); }));
@@ -4742,9 +4788,22 @@ function cutPageBlock(doc, i, name){
   page.node.set(PDFName.of('Contents'), doc.context.register(doc.context.flateStream(concatBytes([bytes.subarray(0, b.s), bytes.subarray(b.e)]))));
   const res = page.node.Resources(), p = blockProps(doc, i, name);
   const fonts = p && p.lookupMaybe(PDFName.of('PDFE_Fonts'), PDFArray);
-  if (fonts) fonts.asArray().forEach(n => ['Font', 'ExtGState'].forEach(k => { const d = res.lookupMaybe(PDFName.of(k), PDFDict); if (d) d.delete(n); }));
+  if (fonts) fonts.asArray().forEach(n => ['Font', 'ExtGState'].forEach(k => {
+    const d = res.lookupMaybe(PDFName.of(k), PDFDict); if (!d) return;
+    const ref = d.get(n); d.delete(n);
+    if (ref instanceof PDFRef && !doc.getPages().some(pg => { const r = pg.node.Resources(), dd = r && r.lookupMaybe(PDFName.of(k), PDFDict); return dd && dd.values().some(v => v === ref); })) dropObjectGraph(doc.context, ref);
+  }));
   const props = res.lookupMaybe(PDFName.of('Properties'), PDFDict); if (props) props.delete(PDFName.of(name));
   return true;
+}
+// remove an object and everything only it leads to (a font: its CIDFont, descriptor, font program, ToUnicode, …)
+function dropObjectGraph(ctx, ref){
+  const seen = new Set(), visit = o => {
+    if (o instanceof PDFRef) { if (seen.has(o)) return; seen.add(o); const x = ctx.lookup(o); ctx.delete(o); visit(x); return; }
+    const d = o instanceof PDFLib.PDFStream ? o.dict : o;
+    if (d instanceof PDFDict) d.values().forEach(visit); else if (d instanceof PDFArray) d.asArray().forEach(visit);
+  };
+  visit(ref);
 }
 // what the editor needs to edit block k (in page order) again
 async function readPageBlock(i, k){
@@ -4849,10 +4908,15 @@ function lineOf(items, it){
   return same.slice(lo, hi + 1);
 }
 // one line's pieces as a string, with a space where there is a gap between them
-function joinRow(items){
-  let text = '';
-  items.forEach((t, k) => { if (k && !t.stacked && t.a0 - items[k - 1].a1 > t.fs * .2 && !/\s$/.test(text) && !/^\s/.test(t.str)) text += ' '; text += t.str; });
-  return text;
+function joinRow(items){ return joinRowPieces(items).map(p => p.text).join(''); }
+// the row's text piece by piece (each piece one pdf.js item, so one font); a gap becomes a space on the piece before it
+function joinRowPieces(items){
+  const out = []; let text = '';
+  items.forEach((t, k) => {
+    if (k && !t.stacked && t.a0 - items[k - 1].a1 > t.fs * .2 && !/\s$/.test(text) && !/^\s/.test(t.str)) { out[out.length - 1].text += ' '; text += ' '; }
+    out.push({text:t.str, font:t.font}); text += t.str;
+  });
+  return out;
 }
 // lines in reading order: rows top to bottom, or columns right to left for vertical text
 function groupLines(items){
@@ -4907,13 +4971,28 @@ async function editPageText(i, items, {selectAll = false, all = null, plain = fa
   const vU = {x:vx, y:vy, w:Math.max(...items.map(t => t.v.x + t.v.w)) - vx, h:Math.max(...items.map(t => t.v.y + t.v.h)) - vy};
   const col = sampleTextColors(i, vU);
   const sizes = items.map(t => t.fs).sort((a, b) => a - b), size = Math.round(sizes[sizes.length >> 1] * 10) / 10;
-  let fontName = '', pdfFont = '';
-  try { const f = pg.page.commonObjs.has(items[0].font) && pg.page.commonObjs.get(items[0].font); pdfFont = f ? f.name || '' : ''; fontName = f ? pdfFont + (f.bold ? ' bold' : '') + (f.italic ? ' italic' : '') : ''; } catch (_) {}
-  const bold = /bold|black|heavy|semibold|demi|w[6-9]\b/i.test(fontName), italic = /italic|oblique/i.test(fontName);
+  // each piece in the font it was written in: bold / italic from that font's name, and the installed family it stands
+  // for when that may be embedded and can be read (else 思源黑體)
   await loadFontCatalog();
-  let sys = matchSystemFont(pdfFont);
-  if (sys) { const fam = await ensureFontInfo(FONTCAT.fams.find(f => f.family === sys)); if (!fam || fam.embed !== 'ok' || (vert && !fam.vert)) sys = ''; }
-  const lines = rows.map(r => [{text:joinRow(r.items), size, color:col.fg, bg:'', bold, italic, underline:false, ...(sys ? {font:sys} : {})}]);
+  const styles = new Map(), styleOf = async key => {
+    if (!styles.has(key)) styles.set(key, (async () => {
+      let name = '', flags = '';
+      try { const f = pg.page.commonObjs.has(key) && pg.page.commonObjs.get(key); name = f ? f.name || '' : ''; flags = f ? (f.bold ? ' bold' : '') + (f.italic ? ' italic' : '') : ''; } catch (_) {}
+      const bold = /bold|black|heavy|semibold|demi|w[6-9]\b/i.test(name + flags), italic = /italic|oblique/i.test(name + flags);
+      let sys = matchSystemFont(name);
+      if (sys) { const fam = await ensureFontInfo(FONTCAT.fams.find(f => f.family === sys)); if (!fam || fam.embed !== 'ok' || fontBlockReason(fam, {real:true, vert})) sys = ''; }
+      if (sys) { try { await realFontInfo(sys, bold); } catch (_) { sys = ''; } }
+      return {bold, italic, ...(sys ? {font:sys} : {})};
+    })());
+    return styles.get(key);
+  };
+  let lines = [];
+  for (const r of rows) {
+    const runs = [];
+    for (const piece of joinRowPieces(r.items)) runs.push({text:piece.text, size, color:col.fg, bg:'', underline:false, ...(await styleOf(piece.font))});
+    lines.push(runs);
+  }
+  lines = mergeRuns(await missingToDefault(mergeRuns(lines)));   // a matched font that lacks a character of its own piece: that character in 思源黑體
   // the editor (turned like the text) sits so its first line lands on the old one: the first baseline, or for vertical
   // text the first column's centre and top; for vertical text the anchor is its top-right corner
   const a0 = Math.min(...items.map(t => t.a0)), fsz = rows[0].items[0].fs;
@@ -6757,7 +6836,7 @@ async function removeAttachment(name){
    Image crop dialog
    ==================================================================== */
 async function openCrop(i, box, k){
-  await settleEdits();
+  if (!(await settleEdits())) return;
   busy(true, '擷取圖片中…');
   let src;
   try { src = await renderRegion(i, box, nativeScale(box)); }
@@ -7292,7 +7371,7 @@ async function buildImagesPanel(){
   const zb = $('#zipAll'); if (all.length) { zb.disabled = false; zb.onclick = () => zipAll(all); } else zb.remove();
 }
 async function zipAll(all){
-  await settleEdits();
+  if (!(await settleEdits())) return;
   busy(true, '打包圖片中…');
   try {
     const files = [];
@@ -8304,8 +8383,11 @@ window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageC
   fontCat:() => ({ok:FONTCAT.ok, fams:FONTCAT.fams.map(f => ({...f}))}), fontLoad:loadFontCatalog,
   registerTestFont,
   fontCatAdd:fams => { fams.forEach(f => FONTCAT.fams.push({faces:[], ps:'', ...f})); FONTCAT.fams.sort((a, b) => a.family.localeCompare(b.family)); FONTCAT.gen++; fontChanged(); },
-  fontBytesInfo:async (family, bold) => { const r = await systemFontBytes(family, bold); return {bytes:r.bytes.length, synthetic:r.synthetic}; },
+  fontBytesInfo:async (family, bold) => { const r = await realFontInfo(family, bold); return {bytes:r.bytes.length, synthetic:r.synthetic}; },
+  failEmbed:family => { EMBED_FAIL.add(family); },
   fontkitPatch:on => { fkPatchOn = !!on; },
+  fontCatPatch:(family, fields) => { const f = FONTCAT.fams.find(x => x.family === family); if (f) Object.assign(f, fields); for (const k of [...RFI.keys()]) if (k.startsWith(family + '|')) RFI.delete(k); },
+  collectionFace:(b64, ps, family) => { const out = sfntFromCollection(Uint8Array.from(atob(b64), c => c.charCodeAt(0)), ps, family); return fontkit.create(out).postscriptName; },
   breakTestFont:family => { for (const k of [...TEST_FONTS.keys()]) if (k.startsWith(family + '|')) TEST_FONTS.set(k, new Uint8Array([0, 1, 0, 0, 0, 0])); for (const k of [...RFI.keys()]) if (k.startsWith(family + '|')) RFI.delete(k); },
   embedCheck:async ({family, bold = false, text, b64}) => {
     await patchFontkitSubset();

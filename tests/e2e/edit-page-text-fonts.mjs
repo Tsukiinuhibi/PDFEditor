@@ -12,6 +12,8 @@ const require = createRequire(import.meta.url);
 const { PDFDocument, StandardFonts } = require('pdf-lib');
 const fontkitNode = require('@pdf-lib/fontkit');
 const b64Of = f => fs.readFileSync(f).toString('base64');
+// (in the page) the first family of a CSS font-family list
+const FIRST_FAMILY = `window.firstFamilyOf = s => { s = String(s).trim(); if (s[0] === '"') return s.slice(1, s.indexOf('"', 1)); return s.split(',')[0].trim(); };`;
 let failed = 0;
 const check = (name, ok, detail = '') => { console.log(`${ok ? '✔' : '✘'} ${name}${detail !== '' ? '  ' + (typeof detail === 'string' ? detail : JSON.stringify(detail)) : ''}`); if (!ok) { failed++; process.exitCode = 1; } };
 const open = async (name, file = null) => {
@@ -278,6 +280,108 @@ const vtext = execFileSync('pdftotext', ['-raw', '-f', '1', '-l', '1', await (as
 check('vertical text readable by other programs', /直書測試/.test(vtext.replace(/\s/g, '')), vtext.slice(0, 80));
 gc = await glyphCheck();
 check('vertical font glyphs intact', gc.filter(g => /PDFEVertTest/.test(g.font)).every(g => g.broken === 0), gc.filter(g => /PDFEVertTest/.test(g.font)));
+
+// ---- part 6: what the branch review found ----------------------------------------------------------------
+const contentsHas = re => contents().then(c => re.test(c));
+// (vertical) a bold run in a font without a bold face is drawn bold (2 Tr) in vertical text too
+check('(vertical block again)', await clickText('直書'));
+await win.keyboard.press('Control+a'); await fmt('bold', true); await commit();
+check('vertical fake bold', await contentsHas(/\b2 Tr\b[^\n]*PDFE_F/) || await contentsHas(/PDFE_F[^\n]*\b2 Tr\b/) || await contentsHas(/2 Tr [\d.]+ w/), (await contents()).match(/.{0,40}2 Tr.{0,40}/g));
+await app.evaluate(({app}) => app.exit(0)).catch(() => {});
+{ // mixed-font line (digits in DejaVu Serif, Chinese in 文泉驛), a line in the odd-glyph font, two plain lines
+  const d = await PDFDocument.create(); d.registerFontkit(fontkitNode);
+  const pg = d.addPage([595, 842]), helv = await d.embedFont(StandardFonts.Helvetica);
+  const dvf = await d.embedFont(fs.readFileSync(DV), {subset:true});
+  const vtf = await d.embedFont(fs.readFileSync(path.join(FIX, 'vert-test.ttf')), {subset:true});
+  const odd = await d.embedFont(fs.readFileSync(path.join(FIX, 'oddglyph-test.ttf')), {subset:false});
+  pg.drawText('2026 ', {x:60, y:760, size:20, font:dvf});
+  pg.drawText('直書測試', {x:60 + dvf.widthOfTextAtSize('2026 ', 20), y:760, size:20, font:vtf});
+  pg.drawText('奇數長度測試', {x:60, y:700, size:20, font:odd});
+  pg.drawText('Edit me', {x:60, y:640, size:20, font:helv});
+  pg.drawText('Second line', {x:60, y:580, size:20, font:helv});
+  fs.writeFileSync(path.join(TMP, 'rf6.pdf'), await d.save());
+}
+({ app, win, A } = await open('', path.join(TMP, 'rf6.pdf')));
+await win.click('[data-view="single"]'); await win.waitForTimeout(500);
+await win.click('[data-tool="textbox"]'); await win.waitForTimeout(400);
+await A(() => window.__pdfapp.fontReady());
+await app.evaluate(({dialog}) => { global.__saves = 0; dialog.showSaveDialog = async () => { global.__saves++; return {canceled:true}; }; });
+// (1) a line in two fonts: each piece keeps its own font, and opening it and pressing Esc asks nothing
+await A(b64 => window.__pdfapp.registerTestFont({family:'PDFE Vert Test', b64}), b64Of(path.join(FIX, 'vert-test.ttf')));
+check('(mixed line editor)', await clickText('2026'));
+await A(FIRST_FAMILY);
+const mixed = await A(() => [...document.querySelectorAll('.tbed span')].map(sp => [sp.textContent, firstFamilyOf(getComputedStyle(sp).fontFamily)]));
+check('each piece keeps its own font', JSON.stringify(mixed).includes('"2026') && mixed.some(([t, f]) => /2026/.test(t) && f === 'DejaVu Serif') && mixed.some(([t, f]) => /直書測試/.test(t) && f === 'PDFE Vert Test'), mixed);
+await win.keyboard.press('Escape'); await win.waitForTimeout(1500);
+check('opening and closing unchanged asks nothing', !(await modalText()) && !(await A(() => window.__pdfapp.TBE())), await modalText());
+if (await modalText()) { await win.click('#modal button:has-text("這些字改用思源黑體")'); await win.waitForTimeout(2500); }
+// (3) the matched font cannot be read: the editor still opens (in 思源黑體)
+await A(b64 => window.__pdfapp.registerTestFont({family:'PDFE Odd Test', b64}), b64Of(path.join(FIX, 'oddglyph-test.ttf')));
+await A(() => window.__pdfapp.breakTestFont('PDFE Odd Test'));
+check('unreadable matched font: the editor still opens', await clickText('奇數長度') && !!(await A(() => window.__pdfapp.TBE())));
+await win.keyboard.press('Escape'); await win.waitForTimeout(2000);
+// (2) 回去修改 really keeps the editing: no tool switch, no save
+check('(plain line editor)', await clickText('Edit me'));
+await win.keyboard.press('Control+a'); await win.keyboard.type('Edit 中文'); await win.keyboard.press('Control+a'); await fmt('font', 'DejaVu Serif');
+await win.click('[data-tool="select"]'); await win.waitForTimeout(1200);
+check('(prompt on tool switch)', /字型裡沒有這些字/.test(await modalText()), await modalText());
+await win.click('#modal button:has-text("回去修改")'); await win.waitForTimeout(500);
+check('回去修改 keeps the text tool and the editor', await A(() => window.__pdfapp.S.tool) === 'textbox' && !!(await A(() => window.__pdfapp.TBE())), await A(() => window.__pdfapp.S.tool));
+if (await A(() => window.__pdfapp.S.tool) !== 'textbox') { await win.click('[data-tool="textbox"]'); await win.waitForTimeout(400); }   // (so the next checks still run)
+await A(() => { window.__pdfapp.actions.save(); }); await win.waitForTimeout(1200);   // (Ctrl+S inside the editor stays in the editor)
+if (/字型裡沒有這些字/.test(await modalText())) { await win.click('#modal button:has-text("回去修改")'); await win.waitForTimeout(800); }
+check('回去修改 stops the save', await app.evaluate(() => global.__saves) === 0 && !!(await A(() => window.__pdfapp.TBE())), await app.evaluate(() => global.__saves));
+await win.keyboard.press('Control+a'); await win.keyboard.type('Edit me'); await win.keyboard.press('Control+a'); await fmt('font', 'DejaVu Serif');
+await commit();
+// (4) re-editing leaves no stale font programs behind; regular and fake bold of one font share one embedding
+const fontFiles = () => A(async () => { const P = PDFLib, d = await P.PDFDocument.load(window.__pdfapp.S.bytes); let n = 0; const names = [];
+  d.context.enumerateIndirectObjects().forEach(([, o]) => { if (o instanceof P.PDFDict && String(o.get(P.PDFName.of('Type'))) === '/FontDescriptor') { n++; names.push(String(o.get(P.PDFName.of('FontName')))); } }); return {n, names}; });
+const ff0 = await fontFiles();
+for (let k = 0; k < 3; k++) { await clickText('Edit me'); await win.keyboard.press('End'); await win.keyboard.type(String(k)); await commit(); }
+const ff1 = await fontFiles();
+check('(the block was edited three more times)', !!(await blockOf('Edit me012')), (await blockFonts()).map(b => b.text));
+check('re-editing leaves no stale fonts in the file', ff1.n === ff0.n, [ff0, ff1]);
+await clickText('Second line'); await win.keyboard.press('Control+a'); await win.keyboard.type('文泉 粗'); await win.keyboard.press('Control+a'); await fmt('font', 'WenQuanYi Zen Hei');
+await win.keyboard.press('End'); await win.keyboard.press('Shift+ArrowLeft'); await fmt('bold', true); await commit();
+check('(the bold block was written)', !!(await blockOf('文泉 粗')), (await blockFonts()).map(b => b.text));
+const wqFiles = (await fontFiles()).names.filter(n => /WenQuanYi/.test(n));
+check('regular and fake bold share one embedding', wqFiles.length === 1, wqFiles);
+// (5) an embedding that fails when saving keeps the text (思源黑體, with a message)
+await A(b64 => window.__pdfapp.registerTestFont({family:'PDFE Fail Test', b64}), b64Of(path.join(FIX, 'vert-test.ttf')));
+await A(() => window.__pdfapp.failEmbed('PDFE Fail Test'));
+await clickText('文泉'); await win.keyboard.press('Control+a'); await win.keyboard.type('字型測試'); await win.keyboard.press('Control+a'); await fmt('font', 'PDFE Fail Test');   // (characters the test font has)
+await win.keyboard.press('Escape'); await win.waitForTimeout(500);
+const failToast = await A(() => [...document.querySelectorAll('#toasts .toast')].map(t => t.textContent).join(' | '));
+await win.waitForTimeout(2500);
+bk = await blockOf('字型測試');
+check('failed embedding: text kept in 思源黑體 with a message', !!bk && bk.fonts.every(f => /Noto/.test(f)) && /改用思源黑體/.test(failToast), [bk, failToast]);
+// (8) the licence is read from the font that is embedded: a restricted font is never embedded; a no-subsetting font
+// whose catalogue entry is not read yet still goes in whole
+await A(b64 => window.__pdfapp.registerTestFont({family:'PDFE Restricted Test', b64}), b64Of(path.join(FIX, 'restricted-test.ttf')));
+await clickText('字型測試'); await win.keyboard.press('Control+a'); await win.keyboard.type('禁止嵌入'); await win.keyboard.press('Control+a'); await fmt('font', 'PDFE Restricted Test'); await commit();
+bk = await blockOf('禁止嵌入');
+check('restricted font never embedded', !!bk && !bk.fonts.some(f => /Restricted/.test(f)), bk);
+await A(b64 => window.__pdfapp.registerTestFont({family:'PDFE NoSubset Test', b64}), b64Of(path.join(FIX, 'nosubset-test.ttf')));
+await A(() => window.__pdfapp.fontCatPatch('PDFE NoSubset Test', {embed:null}));
+await clickText('禁止嵌入'); await win.keyboard.press('Control+a'); await win.keyboard.type('無子'); await win.keyboard.press('Control+a'); await fmt('font', 'PDFE NoSubset Test'); await commit();
+gc = await glyphCheck();
+const ns = gc.find(g => /PDFENoSubsetTest/.test(g.font));
+check('no-subsetting font goes in whole', !!ns && ns.glyphs >= 8, ns);
+// (9) a collection face is found by its family when the PostScript name does not match
+check('collection face by family', await A(b64 => window.__pdfapp.collectionFace(b64, 'NoSuchPostScriptName', 'WenQuanYi Zen Hei Mono'), b64Of('/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc')) === 'WenQuanYiZenHeiMono');
+// (6) variable fonts: bold from a default-regular file is a fake bold; a file whose default is not regular is greyed
+await A(b64 => window.__pdfapp.registerTestFont({family:'PDFE Var Test', b64}), b64Of(path.join(FIX, 'var-test.ttf')));
+await A(b64 => window.__pdfapp.registerTestFont({family:'PDFE Var Test', b64, style:'Bold'}), b64Of(path.join(FIX, 'var-test.ttf')));
+check('variable font: bold is drawn bold', (await A(() => window.__pdfapp.fontBytesInfo('PDFE Var Test', true))).synthetic === true);
+await A(b64 => window.__pdfapp.registerTestFont({family:'PDFE VarBold Test', b64}), b64Of(path.join(FIX, 'varbold-test.ttf')));
+await clickText('無子');
+await win.click('#hint [data-tbfont]'); await win.waitForTimeout(300);
+const vb = await menuItem('PDFE VarBold Test');
+check('variable font with a bold default: greyed', !!vb && vb.off && /可變字型/.test(vb.text), vb);
+await win.keyboard.press('Escape'); await win.waitForTimeout(200);
+// (10) the editor shows a fake bold for fonts without a bold face
+check('editor can draw a fake bold', await A(() => getComputedStyle(document.querySelector('.tbed')).fontSynthesisWeight) === 'auto');
+await win.keyboard.press('Escape'); await win.waitForTimeout(1500);
 
 // ---- end --------------------------------------------------------------------------------------
 console.log(failed ? `${failed} check(s) failed` : 'all checks passed');
