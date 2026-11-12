@@ -22,10 +22,14 @@
   }
 
   /* ---- the glyphs to compare, out of the scanned picture -------------------------------------------------
-     Each glyph is fitted (keeping its shape) into an N×N grid of ink coverage, 0 = paper … 1 = ink. */
+     Each glyph is fitted (keeping its shape) into an N×N grid of ink coverage, 0 = paper … 1 = ink.
+     Tesseract's box for each character is only roughly right (loose for Chinese, and in vertical text only the
+     column and each word are placed well), so a glyph is made of the ink itself: along each text line the strokes
+     (8-connected ink) go to the character whose centre is nearest. */
   const N = 48;
   const HAN = /\p{Script=Han}/u, LATIN = /[A-Za-z0-9]/, SKIP = 'ilI1|';
   const PREFER = 'agekyRGQ235';   // letters whose shapes differ most between fonts come first
+  const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
   function grayOf(img){
     const W = img.width, H = img.height, d = img.getContext('2d', {willReadFrequently:true}).getImageData(0, 0, W, H).data, g = new Uint8Array(W * H);
     for (let k = 0, o = 0; k < g.length; k++, o += 4) g[k] = (d[o] * 77 + d[o + 1] * 150 + d[o + 2] * 29) >> 8;
@@ -37,50 +41,67 @@
     const at = q => { const lim = g.length * q; let n = 0; for (let v = 0; v < 256; v++) { n += hist[v]; if (n > lim) return v; } return 255; };
     return {fg:at(.002), bg:at(.6)};
   }
-  // the grid of a box in a grey picture (bg = paper, fg = ink level)
-  function gridOf(gray, W, box, bg, fg){
+  // the grid of a box, from cov(x, y) = the ink coverage of a pixel
+  function gridFrom(box, cov){
     const w = box.x1 - box.x0, h = box.y1 - box.y0, s = (N - 4) / Math.max(w, h), ox = (N - w * s) / 2, oy = (N - h * s) / 2;
-    const grid = new Float32Array(N * N), span = Math.max(1, bg - fg);
-    const cov = (x, y) => { const v = (bg - gray[(box.y0 + y) * W + box.x0 + x]) / span; return v < 0 ? 0 : v > 1 ? 1 : v; };
+    const grid = new Float32Array(N * N);
     if (s >= 1) {   // a small glyph: each cell takes the nearest pixel
       for (let gy = 0; gy < N; gy++) for (let gx = 0; gx < N; gx++) {
         const x = Math.floor((gx + .5 - ox) / s), y = Math.floor((gy + .5 - oy) / s);
-        if (x >= 0 && y >= 0 && x < w && y < h) grid[gy * N + gx] = cov(x, y);
+        if (x >= 0 && y >= 0 && x < w && y < h) grid[gy * N + gx] = cov(box.x0 + x, box.y0 + y);
       }
     } else {        // a large one: each cell averages the pixels that land in it
       const cnt = new Float32Array(N * N);
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-        const k = Math.min(N - 1, Math.floor(oy + (y + .5) * s)) * N + Math.min(N - 1, Math.floor(ox + (x + .5) * s)); grid[k] += cov(x, y); cnt[k]++;
+        const k = Math.min(N - 1, Math.floor(oy + (y + .5) * s)) * N + Math.min(N - 1, Math.floor(ox + (x + .5) * s)); grid[k] += cov(box.x0 + x, box.y0 + y); cnt[k]++;
       }
       for (let k = 0; k < grid.length; k++) if (cnt[k]) grid[k] /= cnt[k];
     }
     return grid;
   }
-  // the glyph's own ink inside an OCR box: the strokes (8-connected) that lie mostly inside it. Strokes of the
-  // neighbours that reach into the box, and specks, are left out. The strokes are followed up to half the box
-  // height outside it, so a neighbour's stroke is judged as a whole.
-  function cleanBox(gray, W, H, b, T){
-    const m = Math.max(2, Math.round((b.y1 - b.y0) / 2));
-    const X0 = Math.max(0, b.x0 - m), Y0 = Math.max(0, b.y0 - m), X1 = Math.min(W, b.x1 + m), Y1 = Math.min(H, b.y1 + m), w = X1 - X0, h = Y1 - Y0;
-    if (w <= 0 || h <= 0) return null;
-    const seen = new Uint8Array(w * h), stack = [];
-    let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
+  // the grid of a box in a grey picture (bg = paper, fg = ink level)
+  function gridOf(gray, W, box, bg, fg){
+    const span = Math.max(1, bg - fg);
+    return gridFrom(box, (x, y) => clamp01((bg - gray[y * W + x]) / span));
+  }
+  // the text lines the characters sit on: Tesseract's line (s.li, s.line, s.vert) when given, else horizontal lines
+  // made of boxes that overlap side by side
+  function linesOf(symbols){
+    const lines = [], byLi = new Map();
+    for (const s of symbols || []) {
+      if (!s || !s.bbox) continue;
+      if (s.line && s.li != null) {
+        let ln = byLi.get(s.li);
+        if (!ln) { ln = {box:s.line, vert:!!s.vert, syms:[], fixed:true}; byLi.set(s.li, ln); lines.push(ln); }
+        ln.syms.push(s); continue;
+      }
+      const b = s.bbox, h = b.y1 - b.y0;
+      let ln = lines.find(l => !l.fixed && Math.min(l.box.y1, b.y1) - Math.max(l.box.y0, b.y0) > Math.min(h, l.box.y1 - l.box.y0) * .5);
+      if (!ln) { ln = {box:{...b}, vert:false, syms:[], fixed:false}; lines.push(ln); }
+      else ln.box = {x0:Math.min(ln.box.x0, b.x0), y0:Math.min(ln.box.y0, b.y0), x1:Math.max(ln.box.x1, b.x1), y1:Math.max(ln.box.y1, b.y1)};
+      ln.syms.push(s);
+    }
+    return lines;
+  }
+  // the ink strokes in a region R of the picture: a label per pixel (0 = paper) and each stroke's size, box and centre
+  function strokesIn(gray, W, R, T){
+    const w = R.x1 - R.x0, h = R.y1 - R.y0, lab = new Int32Array(w * h), comps = [], stack = [];
     for (let start = 0; start < w * h; start++) {
-      if (seen[start] || gray[(Y0 + ((start / w) | 0)) * W + X0 + start % w] >= T) continue;
-      let n = 0, inside = 0, cx0 = Infinity, cy0 = Infinity, cx1 = -1, cy1 = -1;
-      seen[start] = 1; stack.push(start);
+      if (lab[start] || gray[(R.y0 + ((start / w) | 0)) * W + R.x0 + start % w] >= T) continue;
+      const c = {id:comps.length + 1, n:0, sx:0, sy:0, x0:Infinity, y0:Infinity, x1:-1, y1:-1};
+      lab[start] = c.id; stack.push(start);
       while (stack.length) {
-        const q = stack.pop(), qx = q % w, qy = (q / w) | 0, ax = X0 + qx, ay = Y0 + qy; n++;
-        if (ax >= b.x0 && ax < b.x1 && ay >= b.y0 && ay < b.y1) inside++;
-        if (ax < cx0) cx0 = ax; if (ax > cx1) cx1 = ax; if (ay < cy0) cy0 = ay; if (ay > cy1) cy1 = ay;
+        const q = stack.pop(), qx = q % w, qy = (q / w) | 0, ax = R.x0 + qx, ay = R.y0 + qy;
+        c.n++; c.sx += ax; c.sy += ay;
+        if (ax < c.x0) c.x0 = ax; if (ax > c.x1) c.x1 = ax; if (ay < c.y0) c.y0 = ay; if (ay > c.y1) c.y1 = ay;
         for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
           const nx = qx + dx, ny = qy + dy; if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-          const r = ny * w + nx; if (!seen[r] && gray[(Y0 + ny) * W + X0 + nx] < T) { seen[r] = 1; stack.push(r); }
+          const r = ny * w + nx; if (!lab[r] && gray[(R.y0 + ny) * W + R.x0 + nx] < T) { lab[r] = c.id; stack.push(r); }
         }
       }
-      if (n >= 3 && inside / n > .5) { x0 = Math.min(x0, cx0); y0 = Math.min(y0, cy0); x1 = Math.max(x1, cx1); y1 = Math.max(y1, cy1); }
+      comps.push(c);
     }
-    return x1 < 0 ? null : {x0, y0, x1:x1 + 1, y1:y1 + 1};
+    return {lab, comps, R, w};
   }
   // the glyphs worth comparing: confident, a letter / digit / Han character, not too small, each character once
   // (its most confident reading); Chinese with the most strokes first, Latin with the telling letters first.
@@ -90,17 +111,79 @@
     if (!W || !H) return out;
     const gray = grayOf(img), {fg, bg} = levels(gray);
     if (bg - fg < 40) return out;   // no ink to speak of
-    const T = (fg + bg) / 2, best = new Map();
-    for (const s of symbols || []) {
-      const ch = s && s.text; if (!ch || [...ch].length !== 1 || !(s.confidence >= 75) || SKIP.includes(ch)) continue;
-      const kind = HAN.test(ch) ? 'cjk' : LATIN.test(ch) ? 'latin' : ''; if (!kind) continue;
-      const b = cleanBox(gray, W, H, s.bbox, T); if (!b || b.y1 - b.y0 < 10) continue;
-      out.order += ch;
-      const cur = best.get(ch); if (!cur || s.confidence > cur.conf) best.set(ch, {kind, conf:s.confidence, b});
+    const T = (fg + bg) / 2, span = Math.max(1, bg - fg), best = new Map();
+    for (const ln of linesOf(symbols)) {
+      const B = ln.box, thick = ln.vert ? B.x1 - B.x0 : B.y1 - B.y0; if (!(thick >= 8)) continue;
+      const mx = (ln.vert ? .25 : .5) * thick, my = (ln.vert ? .5 : .25) * thick;
+      const R = {x0:Math.max(0, Math.floor(B.x0 - mx)), y0:Math.max(0, Math.floor(B.y0 - my)), x1:Math.min(W, Math.ceil(B.x1 + mx)), y1:Math.min(H, Math.ceil(B.y1 + my))};
+      if (R.x1 <= R.x0 || R.y1 <= R.y0) continue;
+      const st = strokesIn(gray, W, R, T), minN = Math.max(3, Math.round((thick * .04) ** 2));
+      const usable = s => s.text && [...s.text].length === 1 && s.confidence >= 75 && !SKIP.includes(s.text) && (HAN.test(s.text) || LATIN.test(s.text));
+      // one anchor per character position, at the centre of its box along the line (the same glyph read twice: its
+      // most confident usable reading)
+      const anchors = [];
+      for (const s of ln.syms) {
+        const c = ln.vert ? (s.bbox.y0 + s.bbox.y1) / 2 : (s.bbox.x0 + s.bbox.x1) / 2, same = anchors.find(a => Math.abs(a.c - c) < thick * .1);
+        if (!same) anchors.push({s, c, mine:[]});
+        else if (usable(s) && (!usable(same.s) || s.confidence > same.s.confidence)) same.s = s;
+      }
+      // the line is cut between neighbouring characters in the empty gap nearest their midpoint (else where there is
+      // least ink): the centres from Tesseract are only roughly right, the gaps are where they are
+      const base = ln.vert ? R.y0 : R.x0, L = ln.vert ? R.y1 - R.y0 : R.x1 - R.x0, prof = new Float32Array(L);
+      for (let k = 0; k < st.lab.length; k++) if (st.lab[k]) {
+        const x = R.x0 + k % st.w, y = R.y0 + ((k / st.w) | 0);
+        if (ln.vert ? x >= B.x0 && x < B.x1 : y >= B.y0 && y < B.y1) prof[(ln.vert ? y : x) - base]++;
+      }
+      const sorted = anchors.slice().sort((p, q) => p.c - q.c), cuts = [];
+      for (let k = 0; k + 1 < sorted.length; k++) {
+        const a = sorted[k].c - base, b = sorted[k + 1].c - base, m = (a + b) / 2;
+        const lo = Math.max(0, Math.ceil(a), Math.floor(m - .35 * thick)), hi = Math.min(L - 1, Math.floor(b), Math.ceil(m + .35 * thick));
+        let at = -1, bd = Infinity;
+        for (let x = lo; x <= hi; x++) if (prof[x] === 0 && Math.abs(x - m) < bd) { bd = Math.abs(x - m); at = x; }
+        if (at < 0) { let bv = Infinity; for (let x = lo; x <= hi; x++) { const v = prof[x] + Math.abs(x - m) * .05; if (v < bv) { bv = v; at = x; } } }
+        cuts.push(base + (at < 0 ? m : at));
+      }
+      for (const c of st.comps) {
+        if (c.n < minN) continue;
+        const cx = c.sx / c.n, cy = c.sy / c.n;
+        if (ln.vert ? cx < B.x0 || cx > B.x1 : cy < B.y0 || cy > B.y1) continue;          // a stroke of the next line
+        if ((ln.vert ? c.y1 - c.y0 : c.x1 - c.x0) > thick * 1.6) continue;                 // a rule, an underline
+        const along = ln.vert ? cy : cx;
+        if (!sorted.length || along < sorted[0].c - thick * .75 || along > sorted[sorted.length - 1].c + thick * .75) continue;   // beyond the line's ends
+        let k = 0; while (k < cuts.length && along > cuts[k]) k++;
+        sorted[k].mine.push(c);
+      }
+      // a Chinese character is about as wide (in a column: as tall) as the line: strokes past that belong to the
+      // neighbour on their side (radicals such as 氵 sit close to the character before them)
+      const lo = c => ln.vert ? c.y0 : c.x0, hi = c => (ln.vert ? c.y1 : c.x1) + 1, mid = c => ln.vert ? c.sy / c.n : c.sx / c.n;
+      for (let pass = 0, moved = true; moved && pass < 4; pass++) {
+        moved = false;
+        sorted.forEach((a, k) => {
+          if (!HAN.test(a.s.text || '')) return;
+          while (a.mine.length > 1 && Math.max(...a.mine.map(hi)) - Math.min(...a.mine.map(lo)) > thick * 1.1) {
+            const wc = a.mine.reduce((t, c) => t + mid(c) * c.n, 0) / a.mine.reduce((t, c) => t + c.n, 0);
+            const far = a.mine.reduce((f, c) => Math.max(Math.abs(lo(c) - wc), Math.abs(hi(c) - wc)) > Math.max(Math.abs(lo(f) - wc), Math.abs(hi(f) - wc)) ? c : f);
+            const nb = sorted[k + (mid(far) > wc ? 1 : -1)];
+            if (!nb || !HAN.test(nb.s.text || '')) break;
+            a.mine.splice(a.mine.indexOf(far), 1); nb.mine.push(far); moved = true;
+          }
+        });
+      }
+      for (const a of anchors) {
+        const s = a.s, ch = s.text;
+        if (!usable(s) || !a.mine.length) continue;
+        const kind = HAN.test(ch) ? 'cjk' : 'latin';
+        const box = {x0:Math.min(...a.mine.map(c => c.x0)), y0:Math.min(...a.mine.map(c => c.y0)), x1:Math.max(...a.mine.map(c => c.x1)) + 1, y1:Math.max(...a.mine.map(c => c.y1)) + 1};
+        if (box.y1 - box.y0 < 10) continue;
+        out.order += ch;
+        const cur = best.get(ch); if (!cur || s.confidence > cur.conf) best.set(ch, {kind, conf:s.confidence, box, ids:new Set(a.mine.map(c => c.id)), st});
+      }
     }
-    for (const [ch, {kind, b}] of best) {
-      const grid = gridOf(gray, W, b, bg, fg); let ink = 0; for (let k = 0; k < grid.length; k++) ink += grid[k];
-      out[kind].push({ch, w:b.x1 - b.x0, h:b.y1 - b.y0, ink, grid});
+    for (const [ch, {kind, box, ids, st}] of best) {
+      // the glyph's own strokes; the neighbours' strokes inside its box count as paper
+      const grid = gridFrom(box, (x, y) => { const l = st.lab[(y - st.R.y0) * st.w + x - st.R.x0]; return l && !ids.has(l) ? 0 : clamp01((bg - gray[y * W + x]) / span); });
+      let ink = 0; for (let k = 0; k < grid.length; k++) ink += grid[k];
+      out[kind].push({ch, w:box.x1 - box.x0, h:box.y1 - box.y0, ink, grid});
     }
     const pref = ch => { const k = PREFER.indexOf(ch); return k < 0 ? PREFER.length : k; };
     out.cjk = out.cjk.sort((a, b) => b.ink - a.ink).slice(0, max);

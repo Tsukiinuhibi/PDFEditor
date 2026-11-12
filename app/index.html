@@ -466,6 +466,33 @@ svg.dsvg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;ov
 .ocr-ft button:disabled{opacity:.45;cursor:default}
 .ocr-ft .tsw button{height:24px;border:0;padding:0 9px}
 .ocr-ft .tsw button.on{background:var(--seal);color:#fff}
+/* 字型辨識: the 字型 tab of the 文字辨識 window */
+.ocr-tabs{display:inline-flex;gap:2px;background:var(--surface2);border:1px solid var(--line);border-radius:7px;padding:2px;flex:none}
+.ocr-tabs button{height:22px;padding:0 10px;border:0;border-radius:5px;background:none;color:var(--ink2);cursor:pointer;font-size:12px}
+.ocr-tabs button:hover{background:#fff3bf;color:#1f2328}
+.ocr-tabs button.on,.ocr-tabs button.on:hover{background:var(--seal);color:#fff}
+.ocrp.fonts .ocr-st,.ocrp.fonts .ocr-tx,.ocrp.fonts .ocr-ft:not(.ocr-ft2),.ocrp.fonts .ocr-src,.ocrp:not(.fonts) .ocr-fonts,.ocrp:not(.fonts) .ocr-ft2{display:none!important}
+.ocr-fonts{margin:0 12px;min-height:110px;max-height:52vh;overflow:auto;padding:4px 9px 8px;border:1px solid var(--line);border-radius:7px;background:var(--surface2)}
+.fi-st{display:flex;align-items:center;gap:8px;min-height:20px;padding:2px 0;font-size:12px;color:var(--ink2)}
+.fi-st:empty,.fi-st.idle{display:none}
+.fi-bar{flex:1;height:4px;border-radius:2px;background:var(--line);overflow:hidden}
+.fi-bar i{display:block;height:100%;width:0;background:#1c64d9;transition:width .2s}
+.fi-h{margin:8px 0 0;font-size:11.5px;font-weight:600;color:var(--ink3)}
+.fi-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;column-gap:8px;row-gap:1px;align-items:center;padding:6px 1px;border-bottom:1px solid var(--line)}
+.fi-row:last-child{border-bottom:0}
+.fi-sample{grid-column:1/-1;font-size:20px;line-height:1.35;color:var(--ink);white-space:nowrap;overflow:hidden}
+.fi-name{display:flex;align-items:baseline;min-width:0;font-size:12.5px}
+.fi-label{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fi-src{flex:none;margin-left:6px;font-size:11px;color:var(--ink3);white-space:nowrap}
+.fi-pct{font-size:13px;font-weight:700;color:#1c64d9;font-variant-numeric:tabular-nums}
+.fi-row button,.fi-more{height:24px;padding:0 9px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);cursor:pointer;font-size:12px;white-space:nowrap}
+.fi-row button:hover,.fi-more:hover{background:#fff3bf;color:#1f2328}
+.fi-none{font-size:11.5px;color:var(--ink3);white-space:nowrap}
+.fi-hint{grid-column:1/-1;font-size:11.5px;color:#a85400}
+.fi-note{margin:6px 0 0;font-size:11px;color:var(--ink3)}
+.ocr-gf{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink2);cursor:pointer;user-select:none}
+html[data-theme="dark"] .fi-pct{color:#7fb3ff}
+html[data-theme="dark"] .fi-hint{color:#f2a65a}
 .tool-hand .page{cursor:grab}
 
 .imgbox{position:absolute;display:none;border:2px solid var(--seal);background:rgba(200,55,29,.10);cursor:pointer;border-radius:2px}
@@ -1725,7 +1752,7 @@ function updateUI(){
 
 /* ---------------- tools ---------------- */
 const HINTS = {
-  ocr:'在頁面上拖曳框選要辨識的區塊：PDF 本身的文字會直接取出，掃描檔或圖片會用影像辨識（OCR）；辨識結果可以修改後再複製。',
+  ocr:'在頁面上拖曳框選要辨識的區塊：PDF 本身的文字會直接取出，掃描檔或圖片會用影像辨識（OCR）；辨識結果可以修改後再複製。結果視窗的「字型」頁會比對出可能的字型。',
   extract:'點選紅框的圖片，或在頁面上拖曳框選（按住不放畫面會慢慢拉近）；放開後可拖曳把手慢慢拉大／縮小範圍，按 Enter 或「確定擷取」。',
   note:'在頁面上點一下新增便利貼並直接輸入文字；點頁面上的便利貼圖示可開啟、編輯。',
   hlText:'從文字上拖曳選取要高亮的文字。', strike:'從文字上拖曳選取要加刪除線的文字。', underline:'從文字上拖曳選取要加底線的文字。',
@@ -7189,36 +7216,68 @@ function startOcrDraw(i, e){
 // read the text in box on page i: the PDF's own text unless `image` is asked for; dir 'h' / 'v' forces the writing direction
 async function readRegion(i, box, {image = false, dir = null} = {}){
   const job = ++OCR.job;
-  ocrPanel(i, box);
-  setOcr({status:'讀取中…', progress:null, text:'', busy:true});
-  let res = null;
-  if (!image) {
-    res = await pdfTextIn(i, box); if (job !== OCR.job) return;
-    if (res.text) { OCR.dir = res.vert ? 'v' : 'h'; setOcr({text:res.text, src:'PDF 內的文字（原文，一字不差）', status:'', busy:false, canImage:true}); return; }
-  }
-  const vert = dir ? dir === 'v' : (res && res.vert) || box.h > box.w * 1.8;   // a tall narrow box is probably vertical text
-  OCR.dir = vert ? 'v' : 'h';
-  setOcr({status:OCR.worker ? '辨識中…' : '載入辨識引擎…（第一次需要幾秒鐘）', progress:0, src:''});
+  let finished; OCR.readP = new Promise(r => { finished = r; }); OCR.glyphs = null;   // 字型 waits for this reading
   try {
-    const img = await ocrImage(i, box);
-    // tried on clean scans: English first reads mixed lines best; automatic layout (3) is the only mode that reads vertical columns
-    const w = await ocrWorker(vert ? 'chi_tra_vert' : 'eng+chi_tra'); if (job !== OCR.job) return;
-    await w.setParameters({tessedit_pageseg_mode:'3', preserve_interword_spaces:'1'});
-    // read it twice, as it is and with the specks filtered out, and keep the more confident reading: on poor scans the
-    // filtered one wins by far, on clean ones the original (measured on noisy, small-print and clean samples)
-    const passes = [['', img], ['（已去雜點）', denoiseCanvas(img)]];
-    let best = null;
-    for (let k = 0; k < passes.length; k++) {
-      OCR.progress = m => { if (job === OCR.job && m.status === 'recognizing text') setOcr({status:'辨識中…', progress:(k + m.progress) / passes.length}); };
-      const {data} = await w.recognize(passes[k][1]); if (job !== OCR.job) return;
-      if (!best || (data.confidence || 0) > best.conf) best = {text:data.text || '', conf:data.confidence || 0, note:passes[k][0]};
+    ocrPanel(i, box);
+    setOcr({status:'讀取中…', progress:null, text:'', busy:true});
+    if (FONTID.tab === 'font') fontIdStart();
+    let res = null;
+    if (!image) {
+      res = await pdfTextIn(i, box); if (job !== OCR.job) return;
+      if (res.text) { OCR.dir = res.vert ? 'v' : 'h'; setOcr({text:res.text, src:'PDF 內的文字（原文，一字不差）', status:'', busy:false, canImage:true}); return; }
     }
-    const text = tidyOcr(best.text);
-    setOcr({text, src:`影像辨識・${vert ? '直書' : '橫書'}・信心度 ${Math.round(best.conf)}%${best.note}`, status:text ? '' : '這個範圍沒有辨識出文字', progress:null, busy:false, canImage:false});
-  } catch (err) {
-    console.error(err);
-    if (job === OCR.job) setOcr({status:'辨識失敗：' + (err && err.message || err), progress:null, busy:false});
+    const vert = dir ? dir === 'v' : (res && res.vert) || box.h > box.w * 1.8;   // a tall narrow box is probably vertical text
+    OCR.dir = vert ? 'v' : 'h';
+    setOcr({status:OCR.worker ? '辨識中…' : '載入辨識引擎…（第一次需要幾秒鐘）', progress:0, src:''});
+    try {
+      const best = await ocrPasses(await ocrImage(i, box), vert, job, pr => setOcr({status:'辨識中…', progress:pr}));
+      if (!best) return;   // a newer box
+      OCR.glyphs = {job, img:best.img, symbols:best.symbols};
+      const text = tidyOcr(best.text);
+      setOcr({text, src:`影像辨識・${vert ? '直書' : '橫書'}・信心度 ${Math.round(best.conf)}%${best.note}`, status:text ? '' : '這個範圍沒有辨識出文字', progress:null, busy:false, canImage:false});
+    } catch (err) {
+      console.error(err);
+      if (job === OCR.job) setOcr({status:'辨識失敗：' + (err && err.message || err), progress:null, busy:false});
+    }
+  } finally { finished(); }
+}
+// read the picture twice, as it is and with the specks filtered out, and keep the more confident reading: on poor
+// scans the filtered one wins by far, on clean ones the original (measured on noisy, small-print and clean samples).
+// Returns {text, conf, note, img, symbols} (img: the picture that was read, symbols: Tesseract's box for each
+// character, for 字型) or null when a newer box took over
+async function ocrPasses(img, vert, job, onProgress){
+  // tried on clean scans: English first reads mixed lines best; automatic layout (3) is the only mode that reads vertical columns
+  const w = await ocrWorker(vert ? 'chi_tra_vert' : 'eng+chi_tra'); if (job !== OCR.job) return null;
+  await w.setParameters({tessedit_pageseg_mode:'3', preserve_interword_spaces:'1'});
+  const passes = [['', img], ['（已去雜點）', denoiseCanvas(img)]];
+  let best = null;
+  for (let k = 0; k < passes.length; k++) {
+    OCR.progress = m => { if (job === OCR.job && m.status === 'recognizing text' && onProgress) onProgress((k + m.progress) / passes.length); };
+    const {data} = await w.recognize(passes[k][1], {}, {text:true, blocks:true}); if (job !== OCR.job) return null;
+    if (!best || (data.confidence || 0) > best.conf) best = {text:data.text || '', conf:data.confidence || 0, note:passes[k][0], img:passes[k][1], symbols:ocrSymbols(data, vert)};
   }
+  return best;
+}
+// Tesseract's characters in reading order, each with its box, its line (li, line box) and the writing direction. In
+// vertical text Tesseract's character boxes are wrong (zero width, all at the same place) while each word's box is
+// right: a character whose box lies outside its word gets its share of the word's box instead
+function ocrSymbols(data, vert = false){
+  const out = []; let li = 0;
+  for (const b of data.blocks || []) for (const p of b.paragraphs || []) for (const l of p.lines || []) {
+    li++;
+    for (const w of l.words || []) {
+      const ys = w.symbols || [], W = w.bbox;
+      ys.forEach((y, k) => {
+        let bb = y.bbox;
+        if (!bb || bb.x1 - bb.x0 < 2 || bb.y1 - bb.y0 < 2 || bb.x1 < W.x0 - 2 || bb.x0 > W.x1 + 2 || bb.y1 < W.y0 - 2 || bb.y0 > W.y1 + 2) {
+          const f0 = k / ys.length, f1 = (k + 1) / ys.length;
+          bb = vert ? {x0:W.x0, x1:W.x1, y0:W.y0 + (W.y1 - W.y0) * f0, y1:W.y0 + (W.y1 - W.y0) * f1} : {x0:W.x0 + (W.x1 - W.x0) * f0, x1:W.x0 + (W.x1 - W.x0) * f1, y0:W.y0, y1:W.y1};
+        }
+        out.push({text:y.text, confidence:y.confidence, bbox:bb, li, line:l.bbox, vert});
+      });
+    }
+  }
+  return out;
 }
 // the result window, next to the box (and the box stays marked)
 function ocrPanel(i, box){
@@ -7229,12 +7288,14 @@ function ocrPanel(i, box){
   Object.assign(OCR.mark.style, {left:box.x / pg.w * 100 + '%', top:box.y / pg.h * 100 + '%', width:box.w / pg.w * 100 + '%', height:box.h / pg.h * 100 + '%'});
   if (!OCR.panel) {
     const p = document.createElement('div'); p.className = 'ocrp'; p.id = 'ocrPanel';
-    p.innerHTML = `<div class="ocr-hd"><b>文字辨識</b><span class="ocr-src"></span><span class="sp"></span><button class="ocr-x" data-o="close" title="關閉 (Esc)">✕</button></div>
+    p.innerHTML = `<div class="ocr-hd"><b>文字辨識</b><span class="ocr-tabs"><button data-ot="text">文字</button><button data-ot="font">字型</button></span><span class="ocr-src"></span><span class="sp"></span><button class="ocr-x" data-o="close" title="關閉 (Esc)">✕</button></div>
       <div class="ocr-st"><span class="ocr-msg"></span><i class="ocr-bar"><i></i></i></div>
       <textarea class="ocr-tx" spellcheck="false" placeholder="辨識出的文字會出現在這裡，可以直接修改"></textarea>
       <div class="ocr-ft"><span class="tsw" title="文字的書寫方向"><button data-dir="h">橫書</button><button data-dir="v">直書</button></span>
-        <button data-o="image" title="不用 PDF 內的文字，改用影像辨識">影像辨識</button><span class="sp"></span><button class="pri" data-o="copy">複製文字</button></div>`;
-    document.body.appendChild(p); OCR.panel = p;
+        <button data-o="image" title="不用 PDF 內的文字，改用影像辨識">影像辨識</button><span class="sp"></span><button class="pri" data-o="copy">複製文字</button></div>
+      <div class="ocr-fonts"><div class="fi-st idle"><span class="fi-msg"></span><i class="fi-bar"><i></i></i></div><div class="fi-pdf"></div><div class="fi-img"></div><div class="fi-note" hidden>相似度是逐字比對字形的結果，掃描越清楚越準。</div></div>
+      <div class="ocr-ft ocr-ft2"><label class="ocr-gf" title="需要網路。只會把要比對的幾個字（打散順序、不重複）送到 Google Fonts 下載字形，不會送出整段文字。"><input type="checkbox" data-o="gf">也比對 Google Fonts</label><span class="sp"></span><button data-o="refont">重新比對</button></div>`;
+    document.body.appendChild(p); OCR.panel = p; paintOcrTab();
     p.addEventListener('pointerdown', e => {
       e.stopPropagation();
       if (!e.target.closest('.ocr-hd') || e.target.closest('button')) return;
@@ -7250,12 +7311,16 @@ function ocrPanel(i, box){
       if (b.dataset.o === 'copy') copyOcr();
       if (b.dataset.o === 'image') readRegion(OCR.i, OCR.box, {image:true, dir:OCR.dir});
       if (b.dataset.dir) readRegion(OCR.i, OCR.box, {image:true, dir:b.dataset.dir});
+      if (b.dataset.ot) showOcrTab(b.dataset.ot);
+      if (b.dataset.o === 'refont') fontIdStart();
     });
+    p.addEventListener('change', e => { if (e.target.dataset.o === 'gf') { FONTID.google = e.target.checked; try { localStorage.setItem(FONTID_KEY, JSON.stringify({google:FONTID.google})); } catch (_) {} } });
   }
   placeOcrPanel();
 }
 function placeOcrPanel(){
-  if (!OCR.panel || !OCR.mark || !OCR.mark.isConnected || OCR.moved) return;
+  if (OCR.panel && OCR.moved) { const p = OCR.panel; p.style.top = clamp(p.offsetTop, 8, Math.max(8, innerHeight - p.offsetHeight - 8)) + 'px'; return; }   // moved by hand: only kept in view
+  if (!OCR.panel || !OCR.mark || !OCR.mark.isConnected) return;
   const r = OCR.mark.getBoundingClientRect(), p = OCR.panel, w = p.offsetWidth, h = p.offsetHeight, gap = 12;
   let x = r.right + gap, y = r.top;
   if (x + w > innerWidth - 8) x = r.left - gap - w;                                  // no room on the right: on the left
@@ -7272,7 +7337,7 @@ function setOcr({text, src, status, progress, busy, canImage}){
   if (src != null) p.querySelector('.ocr-src').textContent = src;
   if (status != null) p.querySelector('.ocr-msg').textContent = status;
   if (progress !== undefined) { const bar = p.querySelector('.ocr-bar'); bar.style.display = progress == null ? 'none' : ''; bar.firstChild.style.width = Math.round((progress || 0) * 100) + '%'; }
-  if (busy != null) p.querySelectorAll('.ocr-ft button').forEach(b => b.disabled = busy);
+  if (busy != null) p.querySelectorAll('.ocr-ft:not(.ocr-ft2) button').forEach(b => b.disabled = busy);
   if (canImage != null) p.querySelector('[data-o="image"]').style.display = canImage ? '' : 'none';
   p.querySelectorAll('[data-dir]').forEach(b => b.classList.toggle('on', b.dataset.dir === OCR.dir));
   const st = p.querySelector('.ocr-st'); st.style.display = p.querySelector('.ocr-msg').textContent || p.querySelector('.ocr-bar').style.display !== 'none' ? '' : 'none';   // no status: no empty row
@@ -7286,9 +7351,123 @@ async function copyOcr(){
   toast(`已複製 ${[...t.replace(/\s/g, '')].length} 個字`);
 }
 function closeOcr(){
-  OCR.job++; OCR.moved = false;
+  OCR.job++; OCR.moved = false; OCR.glyphs = null; FONTID.busy = false;
   if (OCR.panel) { OCR.panel.remove(); OCR.panel = null; }
   if (OCR.mark) { OCR.mark.remove(); OCR.mark = null; }
+}
+
+/* ====================================================================
+   字型辨識: the 字型 tab of the 文字辨識 window. A scan's glyphs (Tesseract's box for each character) are compared
+   with the installed fonts, the bundled 思源黑體 and, online, Google Fonts (app/fontid.js); each result has 套用
+   (installed) or 下載 (Google Fonts). Nothing here changes the document.
+   ==================================================================== */
+const FONTID_KEY = 'pdfeditor.fontid.v1';
+const FONTID = {tab:'text', job:-1, busy:false, recent:[], fetchCss:null, timeout:8000,
+  google:(() => { try { const v = JSON.parse(localStorage.getItem(FONTID_KEY)); return !(v && v.google === false); } catch (_) { return true; } })()};
+// the window shows the tab FONTID.tab says (a new window opens on the tab last used)
+function paintOcrTab(){
+  const p = OCR.panel; if (!p) return;
+  p.classList.toggle('fonts', FONTID.tab === 'font');
+  p.querySelectorAll('[data-ot]').forEach(b => b.classList.toggle('on', b.dataset.ot === FONTID.tab));
+  p.querySelector('[data-o="gf"]').checked = FONTID.google;
+}
+function showOcrTab(t){
+  FONTID.tab = t; paintOcrTab();
+  if (t === 'font' && FONTID.job !== OCR.job) fontIdStart();
+  placeOcrPanel();
+}
+function fiStatus(msg, progress = null){
+  const p = OCR.panel; if (!p) return;
+  const st = p.querySelector('.fi-st'), bar = st.querySelector('.fi-bar');
+  st.querySelector('.fi-msg').textContent = msg || '';
+  bar.style.display = progress == null ? 'none' : ''; bar.firstChild.style.width = Math.round((progress || 0) * 100) + '%';
+  st.classList.toggle('idle', !msg && progress == null);
+  placeOcrPanel();
+}
+// identify the font of the current box (again)
+async function fontIdStart(){
+  const p = OCR.panel; if (!p) return;
+  const job = FONTID.job = OCR.job;
+  p.querySelector('.fi-pdf').innerHTML = ''; p.querySelector('.fi-img').innerHTML = ''; p.querySelector('.fi-note').hidden = true;
+  await fontIdImage(job);
+}
+// the candidates on this computer: the bundled 思源黑體 and every installed family
+function localCands(){
+  const out = [{key:'builtin', css:'"PDFE Sans"', label:'思源黑體（內建）', source:'builtin', family:''}];
+  if (FONTCAT.ok) for (const f of FONTCAT.fams) out.push({key:'local:' + f.family, css:cssFamily(f.family), label:f.name || f.family, source:'local', family:f.family});
+  return out;
+}
+// the picture of the box read only for its character boxes (when the 文字 tab showed the PDF's own text)
+async function ocrGlyphsOnly(job){
+  const img = await ocrImage(OCR.i, OCR.box); if (job !== OCR.job) return null;
+  const best = await ocrPasses(img, OCR.dir === 'v', job, pr => fiStatus('辨識字形中…', pr));
+  if (!best) return null;
+  return (OCR.glyphs = {job, img:best.img, symbols:best.symbols});
+}
+// compare the box's glyphs: Chinese and Latin each on their own when both are there, installed fonts first and
+// Google Fonts after them (merged into the same list)
+async function fontIdImage(job){
+  const stop = () => job !== OCR.job, p = OCR.panel; if (!p) return;
+  const out = p.querySelector('.fi-img'); out.innerHTML = '';
+  FONTID.busy = true; fiStatus('讀取中…');
+  try {
+    await OCR.readP; if (stop()) return;
+    let g = OCR.glyphs && OCR.glyphs.job === job ? OCR.glyphs : null;
+    if (!g) { fiStatus(OCR.worker ? '辨識字形中…' : '載入辨識引擎…（第一次需要幾秒鐘）', 0); g = await ocrGlyphsOnly(job); if (stop()) return; }
+    const set = g ? FontId.glyphsFromImage(g.img, g.symbols) : {cjk:[], latin:[], order:''}, groups = [];
+    if (set.cjk.length >= 3) groups.push({title:'中文', script:'cjk', glyphs:set.cjk});
+    if (set.latin.length >= 5) groups.push({title:'英數字', script:'latin', glyphs:set.latin});
+    if (!groups.length) { fiStatus('這個範圍能比對的字太少，請框大一點或框清楚的字'); return; }
+    await loadFontCatalog(); await FontId.ready(); if (stop()) return;
+    const local = localCands(); let offline = false, any = false;
+    for (const grp of groups) {
+      const el = document.createElement('div'); el.className = 'fi-grp';
+      if (groups.length > 1) el.innerHTML = `<div class="fi-h">${grp.title}</div>`;
+      out.appendChild(el);
+      const sample = [...set.order].filter(ch => grp.glyphs.some(x => x.ch === ch)).slice(0, 12).join('');
+      fiStatus('比對本機字型…', 0);
+      const loc = await FontId.identify(grp.glyphs, local, {stop, onProgress:(d, t) => fiStatus(`比對本機字型… ${d}／${t}`, d / t)});
+      if (!loc || stop()) return;
+      grp.results = loc.results; renderFontRows(el, grp.results, sample);
+      if (FONTID.google) {
+        fiStatus('比對 Google Fonts…');
+        const ents = FontId.GOOGLE.filter(e => e.script === grp.script && !fontInstalled(e.family));
+        const gl = await FontId.loadGoogle(ents, FontId.requestChars(grp.glyphs), {fetchCss:FONTID.fetchCss || undefined, timeout:FONTID.timeout, stop});
+        if (stop()) return;
+        if (gl.offline && !gl.cands.length) offline = true;   // fonts downloaded earlier still count: then it is not "only this computer's"
+        if (gl.cands.length) {
+          const gr = await FontId.identify(grp.glyphs, gl.cands, {sigma:loc.sigma, keep:loc.keep, stop, onProgress:(d, t) => fiStatus(`比對 Google Fonts… ${d}／${t}`, d / t)});
+          if (!gr || stop()) return;
+          grp.results = FontId.mergeResults(loc.results, gr.results); renderFontRows(el, grp.results, sample);
+        }
+      }
+      if (grp.results.length) any = true; else el.remove();
+    }
+    // the installed fonts found, for the font menu's 字型辨識結果
+    const seen = new Set();
+    FONTID.recent = groups.flatMap(x => x.results).filter(r => r.cand.source !== 'google').sort((a, b) => b.score - a.score)
+      .filter(r => !seen.has(r.cand.family) && seen.add(r.cand.family)).slice(0, 5).map(r => ({family:r.cand.family, pct:r.pct}));
+    p.querySelector('.fi-note').hidden = !any;
+    fiStatus(!any ? '這台電腦沒有可以比對的字型' : offline ? '連不上 Google Fonts，只比對了這台電腦的字型' : '');
+  } catch (e) {
+    console.error(e);
+    if (!stop()) fiStatus('辨識失敗：' + (e && e.message || e));
+  } finally { if (!stop()) FONTID.busy = false; }
+}
+// one row per font: the box's characters in that font, its name (fonts drawn the same way together), where it is
+// from, the similarity, and 套用 or 下載
+function renderFontRows(el, results, sample){
+  el.querySelectorAll('.fi-row').forEach(r => r.remove());
+  for (const r of results.slice(0, 8)) {
+    const c = r.cand, row = document.createElement('div');
+    row.className = 'fi-row'; row.dataset.key = c.key; row.dataset.bold = r.bold ? '1' : '';
+    const src = (c.source === 'google' ? 'Google Fonts' : c.source === 'builtin' ? '內建' : '本機') + (r.bold ? '・粗體' : '');
+    row.innerHTML = `<div class="fi-sample"></div><div class="fi-name"><span class="fi-label" title="${esc([c, ...r.twins].map(x => x.label).join('／'))}">${esc([c, ...r.twins].slice(0, 3).map(x => x.label).join('／'))}</span><span class="fi-src">${src}</span></div><span class="fi-pct">${r.pct}%</span>`
+      + (c.source === 'google' ? `<button data-fa="download" data-gf="${esc(c.entry.family)}">下載</button>` : `<button data-fa="apply" data-family="${esc(c.family || '')}">套用</button>`);
+    const sm = row.querySelector('.fi-sample'); sm.textContent = sample; sm.style.fontFamily = c.css + ', "PDFE Blank"'; sm.style.fontWeight = r.bold ? '700' : '400';
+    el.appendChild(row);
+  }
+  placeOcrPanel();
 }
 
 /* ====================================================================
@@ -8380,7 +8559,16 @@ function setTheme(t){
 }
 if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyTheme();
 paintSplitButtons(); paintActionButtons(); applyRibbon();
-window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box, tidyOcr, denoiseCanvas,
+window.__pdfapp = {
+  fontIdState:() => { const p = OCR.panel; if (!p) return null;
+    const row = r => { const b = r.querySelector('button[data-fa]'), pct = r.querySelector('.fi-pct');
+      return {key:r.dataset.key || '', label:(r.querySelector('.fi-label') || r.querySelector('.fi-name') || {}).textContent || '', src:(r.querySelector('.fi-src') || {}).textContent || '',
+        tags:(r.querySelector('.fi-src') || {}).textContent || '', name:(r.querySelector('.fi-label') || r.querySelector('.fi-name') || {}).textContent || '',
+        bold:r.dataset.bold === '1', pct:pct ? parseInt(pct.textContent, 10) : null, action:b ? b.dataset.fa : ''}; };
+    return {tab:FONTID.tab, busy:FONTID.busy, msg:p.querySelector('.fi-msg').textContent, pdf:[...p.querySelectorAll('.fi-pdf .fi-row')].map(row),
+      groups:[...p.querySelectorAll('.fi-img .fi-grp')].map(g => ({title:(g.querySelector('.fi-h') || {}).textContent || '', rows:[...g.querySelectorAll('.fi-row')].map(row)}))}; },
+  fontIdGoogle:(fn, {timeout = 8000} = {}) => { FONTID.fetchCss = fn || null; FONTID.timeout = timeout; },
+  S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box, tidyOcr, denoiseCanvas,
   fontCat:() => ({ok:FONTCAT.ok, fams:FONTCAT.fams.map(f => ({...f}))}), fontLoad:loadFontCatalog,
   registerTestFont,
   fontCatAdd:fams => { fams.forEach(f => FONTCAT.fams.push({faces:[], ps:'', ...f})); FONTCAT.fams.sort((a, b) => a.family.localeCompare(b.family)); FONTCAT.gen++; fontChanged(); },
