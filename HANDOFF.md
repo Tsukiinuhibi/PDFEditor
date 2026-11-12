@@ -1,6 +1,6 @@
 # PDF 工作台（PDFEditor）交接文件
 
-這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-12，最新發布版本是 **v1.0.21**。
+這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-12，最新發布版本是 **v1.0.22**。
 
 ---
 
@@ -35,6 +35,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
   - `app/fonts/NotoSansTC-Regular.ttf`、`NotoSansTC-Bold.ttf`：思源黑體（Noto Sans TC，OFL 授權，`OFL.txt`），由 Google Fonts 的可變字型用 fontTools `varLib.instancer --static --update-name-table` 產生 400／700 兩個字重。**每個字形都補齊到 4 位元組（`glyf.padding = 4`）**：fontkit 做子集時會用短格式 `loca`（位移 ÷2），字形長度是奇數的話，子集裡後面的字形會壞掉。換字型時一定要再做一次。
   - `node-forge` 1.4.3：數位簽章（PKCS#7 detached）。
   - `gifenc`：輸出 GIF。
+  - `tesseract.js` 7（全域 `Tesseract`）＋ `tesseract.js-core`：文字辨識（OCR），只打包三個 LSTM 版的 `*-lstm.wasm.js`（其餘在 `build.files` 排除）。語言資料放在 `app/ocr/lang/`：`chi_tra`、`chi_tra_vert`、`eng` 的 best_int 版（取自 `@tesseract.js-data`，MIT）。
   - `electron-updater`：自動更新。
 - `app://` 自訂協定（`protocol.handle` + `net.fetch`）提供 `app/` 和 `node_modules/` 的檔案，有 CSP。`contextIsolation`、`sandbox:true`，渲染端只能透過 `window.desktop`（程式中叫 `DESK`）呼叫主程序。
 - **preload 提供的 API**：`ready, info, openDialog, readFile, writeFile, saveAs(name, bytes, {avoid}), pathForFile, openExternal, setTheme, capture`（滴管用的視窗截圖）、`exportImages{defaultDir, chooseDir, plan, write, openFolder}, onOpenPath, onAppCommand`（滑鼠側鍵）、`update{state, check, install, on}`。
@@ -121,7 +122,13 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 編輯器（`openTextEditor` 的 `rot`、`vert`）用 CSS 轉向；直書用 `writing-mode:vertical-rl; text-orientation:upright`，錨點是右上角（`translateX(-100%)`）。`writePageText` 用同一個方向寫回：直書用 `layoutRealV` 排版、字型加 `vert` 特性（直書標點）並在嵌入後把 Encoding 改成 `/Identity-V`（Noto 的直書原點 880、前進 1000，和 PDF 預設 `DW2 [880 -1000]` 一樣，所以和瀏覽器排出來的位置一致）。區塊的 `PDFE_RT` 會記 `vert`，方向從 `PDFE_M` 算回來。
 - `locateTextOps`／`fontMetrics` 認得直書字型（`-V` 編碼、`W2`／`DW2`），`removePageText` 用每段的方向算範圍；只有 Identity 編碼的 CID 字型才當作寬度可靠。
 
-### 3.9 其他
+### 3.9 文字辨識（v1.0.22）
+- 工具 `ocr`：拖曳框選 → `readRegion(i, box)`。先用 `pdfTextIn`（從 `pageTextItems` 取框內的字，依閱讀方向分行，直書也可以）；框內沒有 PDF 文字才做影像辨識：`ocrImage` 以約 300 dpi 繪出範圍並加白邊，交給 Tesseract。
+- 設定是實測挑的：橫書用 `eng+chi_tra`（英文放前面，中英混排最準），直書用 `chi_tra_vert`；版面模式一律 `3`（自動）——直書用 5、6 都會讀成亂碼。`tidyOcr` 拿掉中文字之間的空格，並把中文之間的半形標點轉回全形。
+- Worker 從 `app://` 網址載入（`workerBlobURL:false`），所以 wasm 不受頁面 CSP 限制；辨識引擎第一次用時才載入，之後重複使用（`OCR.worker`）。
+- 結果視窗 `#ocrPanel`：可修改、「複製文字」、橫書／直書切換（會重新做影像辨識）、PDF 文字時可改用影像辨識；可以拖標題列移動；Esc（任何焦點）關閉但保留工具。
+
+### 3.10 其他
 - 工具：`setTool(t)`，搭配 `HINTS[t]`（上方提示列）。繪圖工具的設定在 `DRAW_TOOLS`、`STYLES`（存 localStorage）、`PRESETS`。新增工具時，這些都要補上，ribbon 也要加按鈕。
 - 圖示：`ICONS` 物件（SVG path）。所有工具列按鈕都是彩色，滑鼠移上去會變黃色，這是使用者的明確要求。
 - 顏色選擇一律用 `openColorPicker({anchor, value, none, title, onPick})`；對話框裡的按鈕用 `bindColorButton`。
@@ -176,6 +183,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 |---|---|
 | textbox-basic / textbox-image-drop | 文字方塊、格式化、右鍵選單、拖入圖片 |
 | edit-page-text | 修改與刪除 PDF 原文、再次編輯 |
+| ocr | 文字辨識：PDF 文字一字不差、剪貼簿內容、乾淨掃描（橫書、直書）與低品質掃描的辨識率、強制影像辨識、Esc 關閉 |
 | rotated-text | 轉 90°／180°、直書、假直書、旋轉頁面上的文字，原位編輯後方向不變、pdftotext 讀得到；編輯器與頁面上字的位置一致（`_rotated_fixture.mjs` 產生測試檔） |
 | edit-page-text-real | 修改後是頁面文字（pdftotext 讀得到）、嵌入的字型子集每個字形都完整、編輯器與頁面寬度一致、帶格式再次編輯、粗體紅字、emoji 退回圖片、復原、框選跨區塊合併 |
 | select-move / rotate-arrow | 選取、移動、旋轉、端點 |
@@ -208,6 +216,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | 1.0.19 | 巢狀圖層：保留並顯示群組與子圖層，整組顯示／隱藏、鎖定，拖曳進出群組 |
 | 1.0.20 | 修改原文時寫成真正的文字（內嵌 Noto Sans TC 子集），其他軟體可搜尋、複製 |
 | 1.0.21 | 直書、轉向（90°／180°／270°）、旋轉頁面上的文字都能修改；逐字排成一欄的假直書也能辨識；新圖示（塗鴉鴨子＋手寫 PDF，`build/icon.png` 1024 px 透明背景） |
+| 1.0.22 | 文字辨識工具（框選 → PDF 文字直接取出，掃描／圖片用離線 OCR → 可修改後複製）；工具列與歡迎畫面的標誌換成新圖示（`app/img/logo.png`） |
 
 ---
 

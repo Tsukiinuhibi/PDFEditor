@@ -1,7 +1,7 @@
 {
   "name": "pdfeditor",
   "productName": "PDF 工作台",
-  "version": "1.0.21",
+  "version": "1.0.22",
   "updateServer": {
     "host": "https://forgejo.taiyopen.com",
     "repo": "tsukiinuhibi/PDFEditor"
@@ -59,7 +59,14 @@
       "!node_modules/node-forge/lib/**",
       "!node_modules/@pdf-lib/fontkit/dist/fontkit.es*.js",
       "!node_modules/@pdf-lib/fontkit/dist/fontkit.umd.js",
-      "!node_modules/@pdf-lib/fontkit/src/**"
+      "!node_modules/@pdf-lib/fontkit/src/**",
+      "!node_modules/tesseract.js-core/*.wasm",
+      "!node_modules/tesseract.js-core/tesseract-core{,-simd,-relaxedsimd}.js",
+      "!node_modules/tesseract.js-core/tesseract-core{,-simd,-relaxedsimd}.wasm.js",
+      "!node_modules/tesseract.js-core/tesseract-core{,-simd,-relaxedsimd}-lstm.js",
+      "!node_modules/tesseract.js/src/**",
+      "!node_modules/tesseract.js/docs/**",
+      "!node_modules/tesseract.js/scripts/**"
     ],
     "fileAssociations": [
       {
