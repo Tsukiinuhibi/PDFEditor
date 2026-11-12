@@ -1,6 +1,6 @@
 # PDF 工作台（PDFEditor）交接文件
 
-這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-12，最新發布版本是 **v1.0.16**。
+這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-12，最新發布版本是 **v1.0.17**。
 
 ---
 
@@ -103,6 +103,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - `mountDoc({prev})`：頁數相同時，新的頁面元素會先沿用舊的 canvas，等新畫面畫好才替換。
 - 剛編輯完的東西會加上 `.hold` class，暫時留在畫面上，等頁面重畫完成時由 `renderPage` 移除。`holdSelection()` 和 `clearHolds(i)` 負責處理這件事；`mutate` 失敗時要記得呼叫 `clearHolds`。
 - `busy()` 一開始只擋住輸入，超過 450ms 才會顯示遮罩。
+- 頁數改變時（v1.0.17）：`matchPages` 用 pdf.js 的 `page.ref`（pdf-lib 存檔後頁面物件編號不變）找出每一頁在修改前是第幾頁，舊畫面跟著頁面走。新頁面和尺寸改變的頁面（例如旋轉）由 `prerenderNew` 先在畫面外畫好，縮圖也先用這張圖縮小顯示。
 
 ### 3.8 其他
 - 工具：`setTool(t)`，搭配 `HINTS[t]`（上方提示列）。繪圖工具的設定在 `DRAW_TOOLS`、`STYLES`（存 localStorage）、`PRESETS`。新增工具時，這些都要補上，ribbon 也要加按鈕。
@@ -142,7 +143,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 
 ```bash
 npm run check                         # 語法檢查：main.js、preload.js、index.html 的 module script
-npm run test:e2e                      # 執行 tests/e2e/ 下全部 13 個腳本
+npm run test:e2e                      # 執行 tests/e2e/ 下全部腳本
 node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 ```
 
@@ -164,6 +165,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | notes / multi-tab | 便利貼、多分頁 |
 | layers / layers-drag-undo | 圖層所有操作、拖曳、復原 |
 | no-flicker | 逐格檢查畫面，確認沒有空白頁或遮罩閃爍 |
+| page-add-delete-flicker | 貼上、剪下、旋轉頁面與復原時逐格檢查畫面不空白，且每頁的畫面屬於正確的頁 |
 | export-images | 轉存圖片包含新增的物件 |
 | save-as-only | 原檔不被覆蓋、選到原檔會被擋下 |
 
@@ -181,6 +183,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | 1.0.14 | 修改時不閃爍 |
 | 1.0.15 | 轉存圖片與擷取圖片會包含新增的物件 |
 | 1.0.16 | 更新來源改為 Forgejo（交接版本） |
+| 1.0.17 | 新增、刪除、旋轉頁面時不閃爍 |
 
 ---
 
@@ -189,7 +192,6 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 - 修改原文時，新文字是 FreeText 註解，外觀是圖片，所以**用其他軟體搜尋不到新文字**。如果要做成真正的頁面文字，需要嵌入中文字型（例如 Noto Sans TC 子集，搭配 fontkit）。
 - 修改原文只支援橫書；旋轉 90°、直書的文字還不能改。Form XObject 裡的文字只能用底色蓋住。
 - 矩形、橢圓、戳記、圖片還不能旋轉，目前只有線條、箭頭、多邊形、畫筆可以旋轉。
-- 新增或刪除頁面時還是會短暫閃一下，因為頁數變了，舊畫面不能沿用。
 - pdf.js 解析文字方塊的 `RC` 時，會印出「XFA rich text」警告。不影響顯示，但 RC 的 XHTML 格式可以再調整。
 - 外部匯入的 PDF 如果有巢狀的圖層分組，會被攤平成單層清單。
 - 安裝檔沒有程式碼簽章，Windows 會顯示 SmartScreen 警告。

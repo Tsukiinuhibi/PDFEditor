@@ -1149,6 +1149,7 @@ async function loadDoc(bytes, {name, keepView = false, scrollToCurrent = false} 
     const p = await pdf.getPage(i); const vp = p.getViewport({scale:1});
     pages.push({page:p, vp1:vp, w:vp.width, h:vp.height, rot:((p.rotate % 360) + 360) % 360});
   }
+  if (prev) { prev.map = matchPages(prev.pages, pages); prev.pre = await prerenderNew(pages, prev); }
   S.pdf = pdf; S.pages = pages; S.bytes = bytes; S.version = ++VSEQ;
   if (name) S.name = name;
   S.imgCache.clear(); S.annCache.clear();
@@ -1159,19 +1160,47 @@ async function loadDoc(bytes, {name, keepView = false, scrollToCurrent = false} 
   mountDoc({...(keepView && !scrollToCurrent ? {scroll:'anchor', anchorOffset} : {scroll:'current'}), prev});
   if (old && old !== pdf) setTimeout(() => old.destroy(), 500);
 }
+// which old page each new page is: pdf-lib keeps a page's object number through an edit, so pages that
+// were only moved by adding or deleting others are recognised; new pages get -1
+function matchPages(olds, pages){
+  const key = p => p.page.ref ? p.page.ref.num + ':' + p.page.ref.gen : null, at = new Map();
+  olds.forEach((p, j) => { const k = key(p); if (k && !at.has(k)) at.set(k, j); });
+  const map = pages.map(p => { const k = key(p); if (!k || !at.has(k)) return -1; const j = at.get(k); at.delete(k); return j; });   // each old picture is used once
+  if (olds.length === pages.length) {   // same number of pages: an unmatched page stands where it stood before
+    const used = new Set(map);
+    map.forEach((j, i) => { if (j < 0 && !used.has(i)) map[i] = i; });
+  }
+  return map;
+}
+const samePic = (a, b) => !!a && !!b && Math.abs(a.w - b.w) < .01 && Math.abs(a.h - b.h) < .01;
+// draw the pages next to the current one whose old picture cannot stand in (new pages, rotated pages)
+// before they are shown, so they never appear empty
+async function prerenderNew(pages, prev){
+  const out = new Map(), dpr = window.devicePixelRatio || 1, map = prev.map;
+  const near = map.map((j, i) => !samePic(prev.pages[j], pages[i]) && i >= S.current - 1 && i <= S.current + 2 ? i : -1).filter(i => i >= 0).slice(0, 4);
+  for (const i of near) {
+    const pg = pages[i]; let rs = S.scale * dpr;
+    if (pg.w * pg.h * rs * rs > 16e6) rs = Math.sqrt(16e6 / (pg.w * pg.h));
+    const vp = pg.page.getViewport({scale:rs}), c = document.createElement('canvas'); c.className = 'pc';
+    c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
+    try { await pg.page.render({canvasContext:c.getContext('2d'), viewport:vp, annotationMode:pdfjsLib.AnnotationMode.ENABLE}).promise; out.set(i, {c, scale:S.scale}); }
+    catch (_) {}
+  }
+  return out;
+}
 function mountDoc({scroll = 'current', anchorOffset = 0, scrollTop = 0, scrollLeft = 0, prev = null} = {}){
   // after an edit the old picture of each page stays up until its new rendering is ready (no blank flash);
-  // only when the pages are the same ones, so nothing shows in the wrong place
-  const reuse = prev && prev.els && prev.pages && prev.pages.length === S.pages.length ? prev : null;
+  // pages are matched by identity, so after adding or deleting pages every picture still sits on its own page
+  const reuse = prev && prev.els && prev.pages && prev.map ? prev : null;
   S.els = S.pages.map((p, i) => {
     const d = document.createElement('div'); d.className = 'page'; d.dataset.i = i;
     d.innerHTML = `<div class="ld">${i + 1}</div><div class="grd"></div><div class="ovl"></div><div class="gdl"></div>`;
-    const o = reuse && reuse.els[i], op = reuse && reuse.pages[i];
-    if (o && Math.abs(op.w - p.w) < .01 && Math.abs(op.h - p.h) < .01) {
+    const j = reuse ? reuse.map[i] : -1, o = j >= 0 && reuse.els[j], op = j >= 0 && reuse.pages[j];
+    if (o && samePic(op, p)) {
       const c = o.querySelector('canvas.pc');
       if (c) { d.querySelector('.ld').remove(); d.insertBefore(c, d.firstChild); }
       o.querySelectorAll('.hold, svg.dsvg').forEach(h => { h.classList.add('hold'); d.appendChild(h); });
-    }
+    } else if (reuse && reuse.pre && reuse.pre.has(i)) { d.querySelector('.ld').remove(); d.insertBefore(reuse.pre.get(i).c, d.firstChild); }
     return d;
   });
   pagesEl.innerHTML = '';
@@ -1180,12 +1209,13 @@ function mountDoc({scroll = 'current', anchorOffset = 0, scrollTop = 0, scrollLe
   $('#welcome').style.display = 'none';
   $$('[data-need]').forEach(b => b.disabled = false);
   if (S.zoomMode !== 'custom') S.scale = fitScale(S.zoomMode);
+  if (reuse && reuse.pre) reuse.pre.forEach((v, i) => { if (v.scale === S.scale) { S.st[i].rendered = v.scale; S.st[i].ver = S.version; } });   // already drawn at this size
   layout();
   if (scroll === 'anchor') viewer.scrollTop = S.pos[S.current] ? S.pos[S.current].y + anchorOffset : 0;
   else if (scroll === 'restore') { viewer.scrollTop = scrollTop; viewer.scrollLeft = scrollLeft; updateCurrentFromScroll(); }
   else scrollToPage(S.current);
   updateUI(); scheduleRender(0);
-  buildThumbs(!!reuse); refreshPanels(); applyViewAids();
+  buildThumbs(reuse ? reuse.map : null, reuse && reuse.pre); refreshPanels(); applyViewAids();
 }
 
 async function openFile(file, handle = null){
@@ -5897,10 +5927,11 @@ function refreshPanels(){
 }
 
 let thumbObs = null;
-function buildThumbs(reuse = false){
+// map: for each page, the index of the same page before the edit (-1 = new); pre: pictures already drawn for new pages
+function buildThumbs(map = null, pre = null){
   const panel = $('#p-thumbs');
-  const olds = reuse ? [...panel.querySelectorAll('.thumb canvas.tc')] : [];
-  if (olds.length !== S.pages.length) olds.length = 0;
+  const shown = map ? [...panel.querySelectorAll('.thumb canvas.tc')] : [];
+  const olds = map ? map.map(j => j >= 0 ? shown[j] : null) : [];
   panel.innerHTML = '';
   thumbObs && thumbObs.disconnect();
   const ver = S.version;
@@ -5921,6 +5952,11 @@ function buildThumbs(reuse = false){
     const W = h > 170 ? Math.round(170 * pg.w / pg.h) : w, H = Math.min(h, 170);
     t.innerHTML = `<canvas class="tc" style="width:${W}px;height:${H}px"></canvas><span class="tn">${i + 1}</span>`;
     const oc = olds[i]; if (oc && oc.style.width === W + 'px' && oc.style.height === H + 'px') t.querySelector('canvas').replaceWith(oc);
+    else if (pre && pre.has(i)) {   // a new page drawn already: shrink that picture until its own thumbnail is ready
+      const c = t.querySelector('canvas'), src = pre.get(i).c, dpr = window.devicePixelRatio || 1;
+      c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
+      try { c.getContext('2d').drawImage(src, 0, 0, c.width, c.height); } catch (_) {}
+    }
     t.onclick = e => thumbClick(e, i);
     t.oncontextmenu = e => { e.preventDefault(); if (!S.thumbSel.has(i)) { S.thumbSel = new Set([i]); S.thumbAnchor = i; scrollToPage(i); paintThumbSel(); } showPageMenu(e, i); };
     panel.appendChild(t); thumbObs.observe(t);
