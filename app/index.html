@@ -490,6 +490,7 @@ svg.dsvg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;ov
 .fi-none{font-size:11.5px;color:var(--ink3);white-space:nowrap}
 .fi-hint{grid-column:1/-1;font-size:11.5px;color:#a85400}
 .fi-note{margin:6px 0 0;font-size:11px;color:var(--ink3)}
+.fi-by{margin:8px 0 2px}
 .ocr-gf{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink2);cursor:pointer;user-select:none}
 html[data-theme="dark"] .fi-pct{color:#7fb3ff}
 html[data-theme="dark"] .fi-hint{color:#f2a65a}
@@ -5041,6 +5042,52 @@ function matchSystemFont(pdfName){
   const byName = FONTCAT.fams.filter(f => flat(f.family) === base);
   return byName.length === 1 ? byName[0].family : '';
 }
+/* 字型辨識 for the PDF's own text: the fonts the file records for the text in a box */
+const STD_FONT_ALIAS = {Helvetica:['Arial', 'Liberation Sans', 'Arimo'], Times:['Times New Roman', 'Liberation Serif', 'Tinos'], Courier:['Courier New', 'Liberation Mono', 'Cousine']};
+const GENERIC_FONT = /^(?:[A-Z]{1,3}\d+|Font\d*|CIDFont\+F\d+)$/i;
+// a font name as the file wrote it: Word on a Chinese Windows writes Chinese names in the system's code page
+// (Big5, GBK, …), which arrive here as one character per byte; the readings that decode cleanly, UTF-8 first
+function decodeFontName(raw){
+  const s = String(raw || '');
+  if (![...s].some(c => c.charCodeAt(0) > 0x7f) || [...s].some(c => c.charCodeAt(0) > 0xff)) return [s];
+  const bytes = Uint8Array.from(s, c => c.charCodeAt(0)), out = [];
+  for (const enc of ['utf-8', 'big5', 'gbk', 'shift_jis']) { try { out.push(new TextDecoder(enc, {fatal:true}).decode(bytes)); } catch (_) {} }
+  return out.length ? out : [s];
+}
+const cleanFontName = n => String(n || '').replace(/^[A-Z]{6}\+/, '').replace(/(.)-\d+$/, '$1').trim();   // subset tag, pdf-lib's number
+// the Google Fonts family a PDF font name stands for ('LXGWWenKaiTC-Regular' → LXGW WenKai TC)
+function googleByName(name){
+  const flat = v => v.replace(/[\s_-]/g, '').toLowerCase(), base = flat(String(name).replace(/[-,_](regular|book|roman|bold|italic|oblique|medium|light|semibold|demibold|black|heavy)\b.*$/i, ''));
+  return FontId.GOOGLE.find(e => flat(e.family) === base) || null;
+}
+// the fonts of the PDF's own text in box, most characters first: {fonts:[{key, name, chars, embedded, generic,
+// local:{family, label, alias}|null, google}], hidden}. An OCR program's invisible text layer (GlyphLessFont) is only
+// counted in hidden: what shows there is the scanned picture
+async function pdfFontsIn(i, box){
+  const pg = S.pages[i], count = new Map(); let hidden = 0;
+  for (const t of await pickTextIn(i, box)) { const n = [...t.str.replace(/\s/g, '')].length; if (n) count.set(t.font, (count.get(t.font) || 0) + n); }
+  if (!count.size) return {fonts:[], hidden:0};
+  await loadFontCatalog();
+  const byName = new Map();
+  for (const [key, chars] of count) {
+    let f = null; try { f = pg.page.commonObjs.has(key) ? pg.page.commonObjs.get(key) : null; } catch (_) {}
+    const names = decodeFontName(f && f.name).map(cleanFontName);
+    if (names.some(n => /^GlyphLessFont$/i.test(n))) { hidden += chars; continue; }
+    const generic = !!(f && f.isType3Font) || !names[0] || GENERIC_FONT.test(names[0]);
+    let name = names[0], local = null, google = null;
+    if (!generic) {
+      for (const n of names) {
+        const fam = matchSystemFont(n) || (FONTCAT.fams.find(x => x.name === n) || {}).family;
+        if (fam) { name = n; local = {family:fam, label:fontLabel(fam), alias:false}; break; }
+      }
+      if (!local) { const alt = (STD_FONT_ALIAS[name.split(/[-,]/)[0]] || []).find(fontInstalled); if (alt) local = {family:alt, label:fontLabel(alt), alias:true}; }
+      if (!local) google = googleByName(name);
+    }
+    const id = generic ? '\0' + key : name, cur = byName.get(id);   // the same font in several font objects: one row
+    if (cur) cur.chars += chars; else byName.set(id, {key, name, chars, embedded:!(f && f.missingFile), generic, local, google});
+  }
+  return {fonts:[...byName.values()].sort((a, b) => b.chars - a.chars), hidden};
+}
 // edit text this app wrote into the page: the editor comes back with its formatting, at its place
 async function editOwnText(i, k, items, {selectAll = false} = {}){
   await tbSaving;
@@ -7139,9 +7186,9 @@ async function ocrWorker(langs){
   OCR.langs = langs;
   return OCR.worker;
 }
-// the PDF's own text inside box (page view coordinates), line by line in reading order
-async function pdfTextIn(i, box){
-  const groups = new Map();
+// the PDF's own text items inside box (page view coordinates): only the characters inside it (str, a0, a1 cut to them)
+async function pickTextIn(i, box){
+  const out = [];
   for (const t of await pageTextItems(i)) {
     if (!boxHit(t.v, box)) continue;
     const q = [{x:box.x, y:box.y}, {x:box.x + box.w, y:box.y}, {x:box.x, y:box.y + box.h}, {x:box.x + box.w, y:box.y + box.h}].map(p => unturn(p, t.rot));
@@ -7151,9 +7198,17 @@ async function pdfTextIn(i, box){
     const lo = Math.min(...along), hi = Math.max(...along), chars = [...t.str], step = (t.a1 - t.a0) / chars.length;
     const ks = chars.map((_, k) => k).filter(k => { const c = t.a0 + step * (k + .5); return c >= lo && c <= hi; });
     if (!ks.length) continue;
+    out.push({...t, str:chars.slice(ks[0], ks[ks.length - 1] + 1).join(''), a0:t.a0 + step * ks[0], a1:t.a0 + step * (ks[ks.length - 1] + 1)});
+  }
+  return out;
+}
+// the PDF's own text inside box, line by line in reading order
+async function pdfTextIn(i, box){
+  const groups = new Map();
+  for (const t of await pickTextIn(i, box)) {
     const key = t.rot + (t.vert ? 'v' : 'h');
     if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push({...t, str:chars.slice(ks[0], ks[ks.length - 1] + 1).join(''), a0:t.a0 + step * ks[0], a1:t.a0 + step * (ks[ks.length - 1] + 1)});
+    groups.get(key).push(t);
   }
   const parts = [...groups.values()].map(list => groupLines(list).map(r => joinRow(r.items)).join('\n'));
   const vert = [...groups.keys()].some(k => k.endsWith('v'));
@@ -7313,6 +7368,7 @@ function ocrPanel(i, box){
       if (b.dataset.dir) readRegion(OCR.i, OCR.box, {image:true, dir:b.dataset.dir});
       if (b.dataset.ot) showOcrTab(b.dataset.ot);
       if (b.dataset.o === 'refont') fontIdStart();
+      if (b.dataset.o === 'byshape') { b.parentNode.remove(); fontIdImage(OCR.job); }
     });
     p.addEventListener('change', e => { if (e.target.dataset.o === 'gf') { FONTID.google = e.target.checked; try { localStorage.setItem(FONTID_KEY, JSON.stringify({google:FONTID.google})); } catch (_) {} } });
   }
@@ -7389,7 +7445,23 @@ async function fontIdStart(){
   const p = OCR.panel; if (!p) return;
   const job = FONTID.job = OCR.job;
   p.querySelector('.fi-pdf').innerHTML = ''; p.querySelector('.fi-img').innerHTML = ''; p.querySelector('.fi-note').hidden = true;
+  // the PDF's own text: the fonts the file records (exact); comparing shapes only when asked
+  FONTID.busy = true; fiStatus('讀取中…');
+  let pf = {fonts:[], hidden:0};
+  try { pf = await pdfFontsIn(OCR.i, OCR.box); } catch (e) { console.error(e); }
+  if (job !== OCR.job || !OCR.panel) return;
+  if (pf.fonts.length) { renderPdfFonts(pf.fonts); fiStatus(''); FONTID.busy = false; return; }
   await fontIdImage(job);
+}
+function renderPdfFonts(fonts){
+  const el = OCR.panel.querySelector('.fi-pdf');
+  el.innerHTML = '<div class="fi-h">PDF 記錄的字型</div>' + fonts.map(f => {
+    if (f.generic) return `<div class="fi-row" data-key="pdf:${esc(f.key)}"><div class="fi-name"><span class="fi-label">PDF 沒有記錄字型名稱</span></div></div>`;
+    const label = !f.local ? f.name : f.local.alias ? `${f.name}，以 ${f.local.label} 代替` : f.local.label + (f.local.label !== f.name ? `（${f.name}）` : '');
+    const act = f.local ? `<button data-fa="apply" data-family="${esc(f.local.family)}">套用</button>` : f.google ? `<button data-fa="download" data-gf="${esc(f.google.family)}">下載</button>` : '<span class="fi-none">這台電腦沒有</span>';
+    return `<div class="fi-row" data-key="pdf:${esc(f.key)}"><div class="fi-name"><span class="fi-label" title="${esc(label)}">${esc(label)}</span><span class="fi-src">${f.embedded ? '已內嵌' : '未內嵌'}</span></div><span class="fi-pct">100%</span>${act}</div>`;
+  }).join('') + '<div class="fi-by"><button class="fi-more" data-o="byshape">用字形比對找相似字型</button></div>';
+  placeOcrPanel();
 }
 // the candidates on this computer: the bundled 思源黑體 and every installed family
 function localCands(){

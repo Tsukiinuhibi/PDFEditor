@@ -6,7 +6,8 @@ import { createRequire } from 'module';
 import path from 'path';
 import fs from 'fs';
 const require = createRequire(import.meta.url);
-const { PDFDocument } = require('pdf-lib');
+const { PDFDocument, StandardFonts, setTextRenderingMode, TextRenderingMode } = require('pdf-lib');
+const fontkit = require('@pdf-lib/fontkit');
 
 let failed = 0, pageErrors = 0;
 const check = (name, ok, detail = '') => { console.log(`${ok ? '✔' : '✘'} ${name}${detail !== '' ? '  ' + (typeof detail === 'string' ? detail : JSON.stringify(detail)) : ''}`); if (!ok) { failed++; process.exitCode = 1; } };
@@ -58,7 +59,7 @@ const file = path.join(TMP, 'fid-scans.pdf'); fs.writeFileSync(file, await doc.s
 // ---- part 1: the 字型 tab on scans -------------------------------------------------------------------------
 ({ app } = await launchPath(file));
 win = await app.firstWindow(); watch(win); await win.waitForTimeout(3500);
-const A = win.evaluate.bind(win);
+let A = win.evaluate.bind(win), A2 = A;
 await A(() => window.__pdfapp.fontReady());   // the Chinese names of the installed fonts are read
 await win.click('[data-view="single"]'); await win.waitForTimeout(500);
 await win.click('[data-tool="ocr"]'); await win.waitForTimeout(500);
@@ -74,6 +75,7 @@ await A(gf => {
   });
 }, GF);
 async function dragPdfBox({x0, y0, x1, y1}){
+  A = win.evaluate.bind(win);
   if (await A(() => !!document.querySelector('#ocrPanel'))) { await win.keyboard.press('Escape'); await win.waitForTimeout(150); }
   const r = await A(({x0, y0, x1, y1}) => { const app = window.__pdfapp, pg = app.S.pages[0], a = pg.vp1.convertToViewportPoint(x0, y1), b = pg.vp1.convertToViewportPoint(x1, y0);
     const vw = document.querySelector('#viewer'), vr = vw.getBoundingClientRect(); let e = app.S.els[0].getBoundingClientRect();
@@ -137,6 +139,51 @@ await A(() => { __gf.mode = 'ok'; });
 await dragPdfBox(BOX.wqy); await win.waitForTimeout(600); await dragPdfBox(BOX.dejavu); s = await settled();
 check('new box while matching: its own result only', first(s).label === 'DejaVu Serif' && s.groups.length === 1, s.groups.map(g => g.rows[0]));
 check('no page errors', pageErrors === 0, pageErrors);
+await app.evaluate(({app}) => app.exit(0)).catch(() => {});
+
+// ---- part 2: the fonts the PDF records for its own text ----------------------------------------------------
+// one line per case; a font's recorded name is set with pdf-lib's customName (BaseFont and FontName)
+const DJV = fs.readFileSync('/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf');
+const d2 = await PDFDocument.create(); d2.registerFontkit(fontkit);
+const p2 = d2.addPage([595, 842]), LINE = {};
+const big5 = String.fromCharCode(0xB7, 0x73, 0xB2, 0xD3, 0xA9, 0xFA, 0xC5, 0xE9);   // 新細明體 in Big5
+const named = customName => d2.embedFont(DJV, {subset:true, customName});
+const line = async (key, y, text, font) => { p2.drawText(text, {x:60, y, size:16, font}); LINE[key] = {x0:50, y0:y - 7, x1:340, y1:y + 19}; };
+await line('dejavu', 780, 'Real DejaVu text 2026', await d2.embedFont(DJV, {subset:true}));
+await line('big5', 740, 'Big5 named font', await named(big5));
+await line('helv', 700, 'Helvetica line', await d2.embedFont(StandardFonts.Helvetica));
+await line('google', 660, 'Google named font', await named('ABCDEF+LXGWWenKaiTC-Regular'));
+await line('generic', 620, 'Generic named font', await named('F1'));
+// a scan with an OCR text layer over it: invisible text (render mode 3) in "GlyphLessFont"
+{ const img = await d2.embedPng(Buffer.from(pics.dejavu.b64, 'base64')), w = pics.dejavu.w / PPT, h = pics.dejavu.h / PPT, ghost = await named('GlyphLessFont');
+  p2.drawImage(img, {x:40, y:520, width:w, height:h});
+  p2.pushOperators(setTextRenderingMode(TextRenderingMode.Invisible)); p2.drawText(LT, {x:52, y:527, size:15, font:ghost}); p2.pushOperators(setTextRenderingMode(TextRenderingMode.Fill));
+  LINE.ghost = {x0:36, y0:516, x1:40 + w + 4, y1:520 + h + 4}; }
+const file2 = path.join(TMP, 'fid-pdffonts.pdf'); fs.writeFileSync(file2, await d2.save());
+({ app } = await launchPath(file2));
+win = await app.firstWindow(); watch(win); await win.waitForTimeout(3500);
+await win.evaluate(() => window.__pdfapp.fontReady());
+await win.click('[data-view="single"]'); await win.waitForTimeout(500);
+await win.click('[data-tool="ocr"]'); await win.waitForTimeout(500);
+await win.evaluate(() => window.__pdfapp.fontIdGoogle(async () => ({ok:true, status:200, text:async () => ''})));   // no network
+A2 = win.evaluate.bind(win);
+await dragPdfBox(LINE.dejavu); await win.waitForTimeout(300); await win.click('#ocrPanel [data-ot="font"]');
+s = await settled();
+check('embedded DejaVu Serif', s.pdf.length === 1 && s.pdf[0].name.includes('DejaVu Serif') && s.pdf[0].pct === 100 && s.pdf[0].tags.includes('已內嵌') && s.pdf[0].action === 'apply' && !s.groups.length, s.pdf);
+check('the PDF\'s own text: no shape matching until asked', !s.groups.length && await A2(() => !!document.querySelector('#ocrPanel [data-o="byshape"]')));
+await win.click('#ocrPanel [data-o="byshape"]'); s = await settled();
+check('用字形比對找相似字型', first(s).label === 'DejaVu Serif' && s.pdf.length === 1, s.groups[0] ? s.groups[0].rows.slice(0, 2) : s);
+await dragPdfBox(LINE.big5); s = await settled();
+check('Big5 name read as 新細明體', s.pdf.length === 1 && s.pdf[0].name.includes('新細明體') && s.pdf[0].action === '' && await A2(() => document.querySelector('#ocrPanel .fi-pdf .fi-none').textContent === '這台電腦沒有'), s.pdf);
+await dragPdfBox(LINE.helv); s = await settled();
+check('standard Helvetica: a stand-in', s.pdf.length === 1 && s.pdf[0].name.includes('Helvetica，以 Liberation Sans 代替') && s.pdf[0].tags.includes('未內嵌') && s.pdf[0].action === 'apply', s.pdf);
+await dragPdfBox(LINE.google); s = await settled();
+check('a Google family: 下載', s.pdf.length === 1 && s.pdf[0].action === 'download', s.pdf);
+await dragPdfBox(LINE.generic); s = await settled();
+check('no usable name', s.pdf.length === 1 && s.pdf[0].name === 'PDF 沒有記錄字型名稱' && s.pdf[0].pct == null && s.pdf[0].action === '', s.pdf);
+await dragPdfBox(LINE.ghost); s = await settled();
+check('hidden OCR layer: not listed, the picture compared', !s.pdf.length && first(s).label === 'DejaVu Serif', {pdf:s.pdf, first:first(s)});
+check('no page errors (part 2)', pageErrors === 0, pageErrors);
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
 
 function __checkSorted(urls){
