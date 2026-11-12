@@ -1,0 +1,46 @@
+name: Sync code to Forgejo
+
+# The code lives on Forgejo (forgejo.taiyopen.com/tsukiinuhibi/PDFEditor); GitHub is the copy
+# that GitHub Actions builds from. Forgejo pushes every new commit here through a push mirror.
+# This job covers the other direction: anything that lands on GitHub's main first is copied to
+# Forgejo, so the two never drift apart. It never overwrites work that exists only on Forgejo.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: sync-forgejo
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push main to Forgejo
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+        run: |
+          set -euo pipefail
+          URL="https://tsukiinuhibi:${FORGEJO_TOKEN}@forgejo.taiyopen.com/tsukiinuhibi/PDFEditor.git"
+          git remote add forgejo "$URL"
+          if ! git fetch -q forgejo main 2>/dev/null; then
+            echo "Forgejo has no main yet."; git push forgejo HEAD:refs/heads/main; exit 0
+          fi
+          THEIRS=$(git rev-parse FETCH_HEAD); OURS=$(git rev-parse HEAD)
+          if [ "$THEIRS" = "$OURS" ]; then echo "Already in sync ($OURS)."; exit 0; fi
+          if git merge-base --is-ancestor "$THEIRS" "$OURS"; then
+            git push forgejo HEAD:refs/heads/main; echo "Forgejo main moved to $OURS."; exit 0
+          fi
+          if git merge-base --is-ancestor "$OURS" "$THEIRS"; then
+            echo "Forgejo is ahead of GitHub (its push mirror will bring the new commits here)."; exit 0
+          fi
+          # first sync only: Forgejo still holds just the README it was created with
+          if [ -z "$(git merge-base "$THEIRS" "$OURS" || true)" ] && [ "$(git rev-list --count "$THEIRS")" -le 1 ]; then
+            git push --force forgejo HEAD:refs/heads/main; echo "Replaced Forgejo's initial README commit with the project history."; exit 0
+          fi
+          echo "::error::GitHub and Forgejo main have diverged; merge them by hand (nothing was overwritten)."
+          exit 1
