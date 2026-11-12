@@ -169,10 +169,10 @@ check('字型… opens the font menu', !!(await menu()));
 await win.keyboard.press('Escape'); await win.waitForTimeout(150); await commit();
 // the PDF's own text: no font control
 p = await at('A test document'); await win.waitForTimeout(250); await win.mouse.click(p.x, p.y); await win.waitForTimeout(800);
-check('page text: no font button', await A(() => !!document.querySelector('.tbed.real')) && await fontBtn() === null);
+check('page text: has the font button (v1.0.27)', await A(() => !!document.querySelector('.tbed.real')) && await fontBtn() !== null);
 const tr = await win.locator('.tbed').boundingBox();
 await win.mouse.click(tr.x + 10, tr.y + tr.height / 2, {button:'right'}); await win.waitForTimeout(250);
-check('page text: no 字型… in the right-click menu', await A(() => document.querySelectorAll('#ctx button').length > 3 && ![...document.querySelectorAll('#ctx button')].some(b => b.textContent.trim().endsWith('字型…'))));
+check('page text: 字型… in the right-click menu (v1.0.27)', await A(() => [...document.querySelectorAll('#ctx button')].some(b => b.textContent.trim().endsWith('字型…'))));
 await win.keyboard.press('Escape'); await win.waitForTimeout(150); await win.keyboard.press('Escape'); await win.waitForTimeout(2000);
 // 600 families: opening and searching stay quick
 await A(() => window.__pdfapp.fontCatFake(600));

@@ -675,6 +675,9 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
 #fontMenu .fm-it{display:block;font-size:15px;padding:5px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #fontMenu .fm-it.on{background:var(--seal-soft);color:var(--seal-ink)}
 .fm-busy,.fm-none{font-size:11.5px;color:var(--ink3);padding:7px 8px}
+#fontMenu .fm-it.off{color:var(--ink3);cursor:not-allowed}
+#fontMenu .fm-it.off:hover{background:transparent;color:var(--ink3)}
+.fm-why{float:right;margin-left:8px;font:11px var(--font);color:var(--ink3);line-height:21px}
 .tfmt.on{background:#d0ebff;border-color:#1c64d9;color:#1c64d9}
 .tm-sizes,.tm-cols{display:flex;gap:4px;padding:4px 10px;flex-wrap:wrap;max-width:290px}
 .tm-sizes button{width:auto;min-width:28px;padding:3px 6px;border:1px solid var(--line);border-radius:4px;justify-content:center}
@@ -3921,9 +3924,20 @@ function applyTextFormat(k, v){
   else if (k === 'underline') document.execCommand('underline');
   saveTBRange(); syncTBBar();
 }
+// the element whose style the caret takes: its text node, or when the caret sits between elements (e.g. at the very
+// end, as when the editor opens) the text just before it (new typing continues that text), else just after it
+function caretStyleNode(range){
+  let n = range.startContainer;
+  if (n.nodeType !== 3) {
+    const kids = n.childNodes, deep = (node, last) => { while (node && node.nodeType !== 3 && node.childNodes.length) node = last ? node.lastChild : node.firstChild; return node; };
+    const before = range.startOffset > 0 ? deep(kids[range.startOffset - 1], true) : null, after = deep(kids[range.startOffset], false);
+    n = before && before.nodeType === 3 ? before : after && after.nodeType === 3 ? after : n;
+  }
+  return n.nodeType === 3 ? n.parentElement : n;
+}
 function currentTBStyle(){
   if (!TBE || !TBE.range) return TB_STYLE;
-  let n = TBE.range.startContainer; if (n.nodeType === 3) n = n.parentElement;
+  const n = caretStyleNode(TBE.range);
   if (!TBE.el.contains(n)) return TB_STYLE;
   const cs = getComputedStyle(n);
   const rgb2hex = v => { const m = v.match(/\d+(\.\d+)?/g); return m ? '#' + m.slice(0, 3).map(x => pad2((+x).toString(16))).join('') : v; };
@@ -3941,7 +3955,7 @@ const tbReal = () => !!(TBE && TBE.el.classList.contains('real'));
 function textBarHTML(){
   const st = currentTBStyle();
   if (FONTCAT.ok === null) loadFontCatalog();
-  return `${tbReal() ? '' : `<span class="sb-h">字型</span><button class="fpick" data-tbfont style="font-family:${esc(fontStack(st.font))}" title="字型">${esc(fontButtonLabel(st.font))}</button>`}
+  return `<span class="sb-h">字型</span><button class="fpick" data-tbfont style="font-family:${esc(fontStack(st.font))}" title="字型">${esc(fontButtonLabel(st.font))}</button>
     <label class="sb-l">字級<select data-tb="size">${TB_SIZES.map(v => `<option value="${v}"${+st.size === v ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
     <span class="sb-h">顏色</span><button class="cpick" data-tbc="color" style="--c:${st.color}"><i></i>▾</button>
     <span class="sb-h">文字底色</span><button class="cpick none" data-tbc="bg" data-none="1" style="--c:transparent"><i></i>▾</button>
@@ -3976,7 +3990,7 @@ function showTextMenu(e){
     <div class="tm-cols">${['#1f2328', '#e03131', '#1c64d9', '#2b8a3e', '#f76707', '#7048e8'].map(c => `<button data-col="${c}" style="background:${c}" title="文字顏色"></button>`).join('')}</div>
     <div class="tm-cols">${['#ffd43b', '#b2f2bb', '#a5d8ff', '#fcc2d7', ''].map(c => `<button data-hl="${c}" style="background:${c || '#fff'}" title="${c ? '文字底色' : '清除底色'}">${c ? '' : '∅'}</button>`).join('')}</div>
     <button data-more="color">🎨　更多文字顏色…</button><button data-more="bg">🎨　更多文字底色…</button>
-    ${tbReal() ? '' : '<button data-font="1">Aa　字型…</button>'}
+    <button data-font="1">Aa　字型…</button>
     <hr><button data-f="bold"><b>B</b>　粗體</button><button data-f="italic"><i>I</i>　斜體</button><button data-f="underline"><u>U</u>　底線</button>
     <hr><button data-f="done">完成編輯</button>`;
   ctx.style.display = 'block'; ctxShownAt = performance.now();
@@ -4001,10 +4015,37 @@ function noteRecentFont(f){
   if (!f) return;
   try { localStorage.setItem(FONT_RECENT_KEY, JSON.stringify([f, ...recentFonts().filter(x => x !== f)].slice(0, 8))); } catch (_) {}
 }
-let FM = null;   // the open font menu: {cur}
+let FM = null;   // the open font menu: {cur, real, vert, …}
+// why a font cannot be used here ('' = it can): the PDF's own text needs a font that may be embedded, and vertical
+// text one with vertical data
+function fontBlockReason(fam, {real, vert}){
+  if (!real || !fam) return '';
+  if (fam.embed === 'no') return '授權不允許嵌入';
+  if (vert && fam.vert === false) return '沒有直書資料';
+  return '';
+}
+// read a family's file now when the background reading has not reached it yet
+async function ensureFontInfo(fam){
+  if (!fam || fam.embed != null) return fam;
+  const face = (FONT_FACES.get(fam.family) || []).find(f => f.postscriptName === fam.ps) || (FONT_FACES.get(fam.family) || [])[0];
+  const r = face && await analyseFont(fam, face);
+  if (r) { Object.assign(fam, r); const c = fontCache(); c[fam.family + '|' + fam.ps] = r; try { localStorage.setItem(FONTCAT_KEY, JSON.stringify(c)); } catch (_) {} }
+  return fam;
+}
+function confirmFullEmbed(fam){
+  return openModal({title:'整個字型會放進檔案', body:`<div style="max-width:420px">${esc(`『${fam.name || fam.family}』的授權要求把整個字型放進 PDF，檔案會增加約 ${((fam.bytes || 0) / 1048576).toFixed(1)} MB。要使用嗎？`)}</div>`,
+    buttons:[{label:'取消', value:false}, {label:'使用', value:true, primary:true}]}).then(v => !!v);
+}
+function missingGlyphDialog(font, chars){
+  return openModal({title:'字型裡沒有這些字', body:`<div style="max-width:440px">${esc(`『${fontLabel(font)}』裡沒有這些字：${chars.slice(0, 20).join('、')}`)}</div>`,
+    buttons:[{label:'回去修改', value:'back'}, {label:'這些字改用思源黑體', value:'default', primary:true}]}).then(v => v || 'back');
+}
 function fontMenuList(){
-  const cur = FM ? FM.cur : '', sec = t => `<div class="fm-sec">${t}</div>`;
-  const item = (f, label) => `<button class="fm-it${f === cur ? ' on' : ''}" data-f="${esc(f)}" title="${esc(f && label !== f ? `${label}（${f}）` : label)}">${esc(label)}</button>`;
+  const cur = FM ? FM.cur : '', sec = t => `<div class="fm-sec">${t}</div>`, ctx = FM || {}, famOf = new Map(FONTCAT.fams.map(f => [f.family, f]));
+  const item = (f, label) => {
+    const why = f ? fontBlockReason(famOf.get(f), ctx) : '';
+    return `<button class="fm-it${f === cur ? ' on' : ''}${why ? ' off' : ''}" data-f="${esc(f)}"${why ? ' aria-disabled="true"' : ''} title="${esc((f && label !== f ? `${label}（${f}）` : label) + (why ? `：${why}` : ''))}">${esc(label)}${why ? `<small class="fm-why">${why}</small>` : ''}</button>`;
+  };
   let h = sec('預設') + item('', '思源黑體');
   const rec = recentFonts().filter(fontInstalled);
   if (rec.length) h += sec('最近用過') + rec.map(f => item(f, fontLabel(f))).join('');
@@ -4042,11 +4083,10 @@ function refreshFontMenu(){
   list.innerHTML = fontMenuList(); filterFontMenu(); styleFontItems(list); list.scrollTop = top;
 }
 function openFontMenu(anchor, at){
-  if (tbReal()) return;
   loadFontCatalog();
   const m = $('#fontMenu');
   if (TBE && document.activeElement === TBE.el) saveTBRange();
-  FM = {cur:currentTBStyle().font || '', gen:FONTCAT.gen, down:false, stale:false};
+  FM = {cur:currentTBStyle().font || '', gen:FONTCAT.gen, down:false, stale:false, real:tbReal(), vert:!!(TBE && TBE.vert)};
   // the search box takes the focus: keep the highlighted text visibly marked meanwhile
   if (TBE && TBE.range && !TBE.range.collapsed && window.Highlight && window.CSS && CSS.highlights) CSS.highlights.set('tb-sel', new Highlight(TBE.range.cloneRange()));
   m.innerHTML = `<input class="fm-q" placeholder="搜尋字型（中文或英文名稱）" spellcheck="false"><div class="fm-list">${fontMenuList()}</div>`;
@@ -4066,14 +4106,24 @@ function openFontMenu(anchor, at){
     if (e.key === 'Enter') {
       e.preventDefault();
       if (e.isComposing || e.keyCode === 229 || !q.value.trim()) return;   // confirming 注音 input, or nothing searched yet
-      const b = [...m.querySelectorAll('.fm-it')].find(b => !b.hidden); if (b) pickFont(b.dataset.f);
+      const b = [...m.querySelectorAll('.fm-it')].find(b => !b.hidden && !b.classList.contains('off')); if (b) pickFont(b.dataset.f);
     }
   };
   m.onpointerdown = e => { FM.down = true; if (e.target.closest('button')) e.preventDefault(); };   // keep the text selection
-  m.onclick = e => { const b = e.target.closest('.fm-it'); if (b) pickFont(b.dataset.f); };
+  m.onclick = e => { const b = e.target.closest('.fm-it'); if (b && !b.classList.contains('off')) pickFont(b.dataset.f); };
   q.focus();
 }
-function pickFont(f){ closeFontMenu(); applyTextFormat('font', f); noteRecentFont(f); }
+// the PDF's own text: a font that may not be embedded is refused, one that goes in whole is asked about first
+async function pickFont(f){
+  const ctx = {real:!!(FM && FM.real), vert:!!(FM && FM.vert)};
+  closeFontMenu();
+  if (ctx.real && f) {
+    const fam = await ensureFontInfo(FONTCAT.fams.find(x => x.family === f)), why = fontBlockReason(fam, ctx);
+    if (why) { toast(why, 'err'); restoreTBRange(); return; }
+    if (fam && fam.embed === 'full' && !(await confirmFullEmbed(fam))) { restoreTBRange(); return; }
+  }
+  applyTextFormat('font', f); noteRecentFont(f);
+}
 function closeFontMenu(){ if (!FM) return; if (FM.io) FM.io.disconnect(); FM = null; if (window.CSS && CSS.highlights) CSS.highlights.delete('tb-sel'); const m = $('#fontMenu'); m.style.display = 'none'; m.innerHTML = ''; }
 document.addEventListener('pointerdown', e => { if (FM && !e.target.closest('#fontMenu,[data-tbfont]')) closeFontMenu(); }, true);
 document.addEventListener('pointerup', () => { if (FM && FM.down) { FM.down = false; if (FM.stale) refreshFontMenu(); } }, true);
@@ -4087,7 +4137,26 @@ FONTCAT.subs.add(() => {
 
 let tbSaving = Promise.resolve();
 function commitTextEditor(){
-  if (!TBE) return tbSaving;
+  if (!TBE || TBE.checking) return tbSaving;
+  // the PDF's own text in a font that lacks some characters: ask first, with the editor still open
+  if (TBE.edit && !TBE.checked) {
+    const T = TBE, lines0 = htmlToRuns(T.el);
+    if (lines0.some(l => l.some(r => r.font))) {
+      T.checking = true;
+      return (tbSaving = (async () => {
+        let back = false;
+        try {
+          const chk = await realTextCheck(await resolveRealFonts(lines0, {quiet:true}));
+          for (const m of chk.missing) if (await missingGlyphDialog(m.font, m.chars) !== 'default') { back = true; break; }
+        } catch (e) { console.error(e); }
+        T.checking = false;
+        if (TBE !== T) return false;
+        if (back) { T.el.focus(); restoreTBRange(); return false; }
+        T.checked = true;
+        return commitTextEditor();
+      })());
+    }
+  }
   const {i, id, x, y, el, veil, orig, edit} = TBE;
   const lines = htmlToRuns(el), box = {boxBg:el.dataset.boxbg || '', border:!!el.dataset.border}, ecs = getComputedStyle(el);
   const strut = {size:parseFloat(ecs.fontSize) || TB_STYLE.size, font:el.classList.contains('real') ? '' : firstFamily(ecs.fontFamily), bold:+ecs.fontWeight >= 600};
@@ -4169,7 +4238,7 @@ async function editTextBox(i, a){
   openTextEditor(i, a.x, a.y, {id:a.id, lines, box:rt ? rt.box : {boxBg:'', border:false}, veilBox:a});
 }
 let tbCommittedAt = 0;
-document.addEventListener('pointerdown', e => { if (TBE && !TBE.el.contains(e.target) && !e.target.closest('#hint,#cpMenu,#ctx,#eyedrop,#fontMenu')) { if (e.button === 0) tbCommittedAt = performance.now(); commitTextEditor(); } }, true);
+document.addEventListener('pointerdown', e => { if (TBE && !TBE.el.contains(e.target) && !e.target.closest('#hint,#cpMenu,#ctx,#eyedrop,#fontMenu,#mask')) { if (e.button === 0) tbCommittedAt = performance.now(); commitTextEditor(); } }, true);
 async function textboxAt(i, e){
   const p = snapPoint(i, pagePoint(i, e), {mark:false});
   await tbSaving;
@@ -4468,10 +4537,10 @@ function realFontInfo(font, bold){
   return RFI.get(key);
 }
 // a font whose file cannot be read is replaced by 思源黑體, with a message
-async function resolveRealFonts(lines){
+async function resolveRealFonts(lines, {quiet = false} = {}){
   const bad = new Set();
   for (const r of lines.flat()) if (r.font && !bad.has(r.font)) { try { await realFontInfo(r.font, r.bold); } catch (_) { bad.add(r.font); } }
-  bad.forEach(f => toast(`讀不到字型${fontLabel(f)}，這段文字改用思源黑體`, 'err'));
+  if (!quiet) bad.forEach(f => toast(`讀不到字型${fontLabel(f)}，這段文字改用思源黑體`, 'err'));
   return bad.size ? lines.map(l => l.map(r => { if (!bad.has(r.font)) return r; const {font, ...rest} = r; return rest; })) : lines;
 }
 // which characters cannot be written: missing = a run's own font lacks them but 思源黑體 has them (by font);
@@ -4822,10 +4891,13 @@ async function editPageText(i, items, {selectAll = false, all = null, plain = fa
   const vU = {x:vx, y:vy, w:Math.max(...items.map(t => t.v.x + t.v.w)) - vx, h:Math.max(...items.map(t => t.v.y + t.v.h)) - vy};
   const col = sampleTextColors(i, vU);
   const sizes = items.map(t => t.fs).sort((a, b) => a - b), size = Math.round(sizes[sizes.length >> 1] * 10) / 10;
-  let fontName = '';
-  try { const f = pg.page.commonObjs.has(items[0].font) && pg.page.commonObjs.get(items[0].font); fontName = f ? (f.name || '') + (f.bold ? ' bold' : '') + (f.italic ? ' italic' : '') : ''; } catch (_) {}
+  let fontName = '', pdfFont = '';
+  try { const f = pg.page.commonObjs.has(items[0].font) && pg.page.commonObjs.get(items[0].font); pdfFont = f ? f.name || '' : ''; fontName = f ? pdfFont + (f.bold ? ' bold' : '') + (f.italic ? ' italic' : '') : ''; } catch (_) {}
   const bold = /bold|black|heavy|semibold|demi|w[6-9]\b/i.test(fontName), italic = /italic|oblique/i.test(fontName);
-  const lines = rows.map(r => [{text:joinRow(r.items), size, color:col.fg, bg:'', bold, italic, underline:false}]);
+  await loadFontCatalog();
+  let sys = matchSystemFont(pdfFont);
+  if (sys) { const fam = await ensureFontInfo(FONTCAT.fams.find(f => f.family === sys)); if (!fam || fam.embed !== 'ok' || (vert && !fam.vert)) sys = ''; }
+  const lines = rows.map(r => [{text:joinRow(r.items), size, color:col.fg, bg:'', bold, italic, underline:false, ...(sys ? {font:sys} : {})}]);
   // the editor (turned like the text) sits so its first line lands on the old one: the first baseline, or for vertical
   // text the first column's centre and top; for vertical text the anchor is its top-right corner
   const a0 = Math.min(...items.map(t => t.a0)), fsz = rows[0].items[0].fs;
@@ -4835,6 +4907,16 @@ async function editPageText(i, items, {selectAll = false, all = null, plain = fa
   openTextEditor(i, at.x, at.y, {lines, box:{boxBg:'', border:false}, veilBox:{x:vU.x - 1, y:vU.y - 1, w:vU.w + 2, h:vU.h + 2}, veilColor:col.bg,
     edit:{U, bg:col.bg, orig:JSON.stringify(lines), blocks, rot, vert}, selectAll, real:true, rot, vert});
   clearTextMarks();
+}
+// the installed family a PDF font name stands for ('ABCDEF+DejaVuSerif-Bold', 'DejaVuSerif-2000' → 'DejaVu Serif'): the face with that
+// PostScript name, else the family whose name without spaces is the name without its style; only an unambiguous match
+function matchSystemFont(pdfName){
+  const n = String(pdfName || '').replace(/^[A-Z]{6}\+/, '').replace(/(.)-\d+$/, '$1').trim(); if (!n) return '';   // subset tag / pdf-lib's number
+  const byPs = FONTCAT.fams.filter(f => f.ps === n || (f.faces || []).some(x => x.ps === n));
+  if (byPs.length) return byPs.length === 1 ? byPs[0].family : '';
+  const flat = v => v.replace(/[\s_-]/g, '').toLowerCase(), base = flat(n.replace(/[-,_](regular|book|roman|bold|italic|oblique|medium|light|semibold|demibold|black|heavy)\b.*$/i, ''));
+  const byName = FONTCAT.fams.filter(f => flat(f.family) === base);
+  return byName.length === 1 ? byName[0].family : '';
 }
 // edit text this app wrote into the page: the editor comes back with its formatting, at its place
 async function editOwnText(i, k, items, {selectAll = false} = {}){
@@ -8205,6 +8287,7 @@ paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box, tidyOcr, denoiseCanvas,
   fontCat:() => ({ok:FONTCAT.ok, fams:FONTCAT.fams.map(f => ({...f}))}), fontLoad:loadFontCatalog,
   registerTestFont,
+  fontCatAdd:fams => { fams.forEach(f => FONTCAT.fams.push({faces:[], ps:'', ...f})); FONTCAT.fams.sort((a, b) => a.family.localeCompare(b.family)); FONTCAT.gen++; fontChanged(); },
   fontBytesInfo:async (family, bold) => { const r = await systemFontBytes(family, bold); return {bytes:r.bytes.length, synthetic:r.synthetic}; },
   fontkitPatch:on => { fkPatchOn = !!on; },
   breakTestFont:family => { for (const k of [...TEST_FONTS.keys()]) if (k.startsWith(family + '|')) TEST_FONTS.set(k, new Uint8Array([0, 1, 0, 0, 0, 0])); for (const k of [...RFI.keys()]) if (k.startsWith(family + '|')) RFI.delete(k); },

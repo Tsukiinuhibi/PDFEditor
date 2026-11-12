@@ -1,16 +1,21 @@
 // 修改原文選系統字型: the font catalogue knows each font's embedding rights and vertical data, system fonts (single
 // files, collections, bold faces, CFF) embed cleanly, and edited page text is written in the chosen font.
-import { launch, TMP, ROOT } from './_env.mjs';
+import { launch, launchPath, TMP, ROOT } from './_env.mjs';
+import { buildRotatedFixture } from './_rotated_fixture.mjs';
+import { createRequire } from 'module';
 import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
 
 const FIX = path.join(ROOT, 'tests', 'e2e', 'fixtures');
+const require = createRequire(import.meta.url);
+const { PDFDocument, StandardFonts } = require('pdf-lib');
+const fontkitNode = require('@pdf-lib/fontkit');
 const b64Of = f => fs.readFileSync(f).toString('base64');
 let failed = 0;
 const check = (name, ok, detail = '') => { console.log(`${ok ? '✔' : '✘'} ${name}${detail !== '' ? '  ' + (typeof detail === 'string' ? detail : JSON.stringify(detail)) : ''}`); if (!ok) { failed++; process.exitCode = 1; } };
-const open = async name => {
-  const { app } = await launch(name);
+const open = async (name, file = null) => {
+  const { app } = file ? await launchPath(file) : await launch(name);
   const win = await app.firstWindow(); win.on('pageerror', e => console.log('PAGEERR', e.message)); win.on('console', m => { if (m.type() === 'error') console.log('C', m.text().slice(0, 300)); });
   await win.waitForTimeout(3000);
   return { app, win, A:win.evaluate.bind(win) };
@@ -65,7 +70,10 @@ const commit = async (ms = 3000) => { await win.keyboard.press('Escape'); await 
 // screen point on the first piece of page text containing `str` (scrolled into view)
 const at = str => A(async str => { const app = window.__pdfapp, pg = app.S.pages[0], tc = await pg.page.getTextContent(), it = tc.items.find(i => i.str.includes(str)); if (!it) return null;
   const vw = document.querySelector('#viewer'), vr = vw.getBoundingClientRect();
-  const [x, y] = pg.vp1.convertToViewportPoint(it.transform[4] + Math.min(it.width / 2, 40), it.transform[5] + Math.abs(it.transform[3]) * .3);
+  // half an em into the first character, whichever way the text runs (as rotated-text.mjs does)
+  const [a, b, c, d, e, f] = it.transform, fs = Math.hypot(c, d), ux = [a / fs, b / fs], uy = [c / fs, d / fs];
+  const k = it.dir === 'ttb' ? [-uy[0] * fs * .5, -uy[1] * fs * .5] : [ux[0] * Math.min(it.width / 2, 40) + uy[0] * fs * .3, ux[1] * Math.min(it.width / 2, 40) + uy[1] * fs * .3];
+  const [x, y] = pg.vp1.convertToViewportPoint(e + k[0], f + k[1]);
   let r = app.S.els[0].getBoundingClientRect(); vw.scrollTop += r.top + y * app.S.scale - (vr.top + vr.height / 2); r = app.S.els[0].getBoundingClientRect();
   return {x:r.left + x * app.S.scale, y:r.top + y * app.S.scale}; }, str);
 const clickText = async str => { const p = await at(str); if (!p) { console.log('   (no text "' + str + '")'); return false; } await win.waitForTimeout(250); await win.mouse.click(p.x, p.y); await win.waitForTimeout(900); return true; };
@@ -169,6 +177,78 @@ await A(() => window.__pdfapp.fontkitPatch(true));
 gc = await glyphCheck();
 const odd = gc.find(g => /PDFEOddTest/.test(g.font));
 check('broken subset: the whole font is embedded instead', !!odd && odd.glyphs >= 14 && odd.broken === 0 && odd.empty === 0, odd);
+
+// ---- part 4: the font menu for page text, its prompts, and the original font picked up -------------------
+await app.evaluate(({app}) => app.exit(0)).catch(() => {});
+{ // a page with a plain line and a line in an embedded DejaVu Serif
+  const d = await PDFDocument.create(); d.registerFontkit(fontkitNode);
+  const pg = d.addPage([595, 842]), helv = await d.embedFont(StandardFonts.Helvetica), dvf = await d.embedFont(fs.readFileSync(DV), {subset:true});
+  pg.drawText('Plain line here', {x:60, y:760, size:20, font:helv});
+  pg.drawText('Match me', {x:60, y:700, size:20, font:dvf});
+  fs.writeFileSync(path.join(TMP, 'rf4.pdf'), await d.save());
+}
+({ app, win, A } = await open('', path.join(TMP, 'rf4.pdf')));
+await win.click('[data-view="single"]'); await win.waitForTimeout(500);
+await win.click('[data-tool="textbox"]'); await win.waitForTimeout(400);
+await A(() => window.__pdfapp.fontReady());
+const menuItem = f => A(f => { const b = document.querySelector(`#fontMenu .fm-it[data-f="${CSS.escape(f)}"]`); return b ? {off:b.classList.contains('off'), text:b.textContent.trim()} : null; }, f);
+const modalText = () => A(() => document.querySelector('#mask').classList.contains('show') ? document.querySelector('#modal').innerText.replace(/\s+/g, ' ') : '');
+const tbFont = () => A(() => window.__pdfapp.tbStyle().font);
+check('(plain page text editor)', await clickText('Plain line here') && await A(() => !!document.querySelector('.tbed.real')));
+check('page text has the font button', await A(() => !!document.querySelector('#hint [data-tbfont]')));
+await A(() => window.__pdfapp.fontCatAdd([
+  {family:'Fake Restricted', name:'Fake Restricted', cjk:false, embed:'no', vert:false, bytes:1e6, faces:[]},
+  {family:'Fake Full', name:'Fake Full', cjk:true, embed:'full', vert:true, bytes:23.4e6, faces:[]}]));
+await win.keyboard.press('Control+a');
+await win.click('#hint [data-tbfont]'); await win.waitForTimeout(300);
+let mi = await menuItem('Fake Restricted');
+check('restricted font greyed with its reason', !!mi && mi.off && /授權不允許嵌入/.test(mi.text), mi);
+await win.click('#fontMenu .fm-it[data-f="Fake Restricted"]', {force:true}); await win.waitForTimeout(300);   // (it is marked disabled: force the click)
+check('a greyed font cannot be picked', await tbFont() === '', await tbFont());
+if (!(await A(() => getComputedStyle(document.querySelector('#fontMenu')).display !== 'none'))) { await win.click('#hint [data-tbfont]'); await win.waitForTimeout(300); }
+await win.click('#fontMenu .fm-it[data-f="Fake Full"]'); await win.waitForTimeout(400);
+check('whole-font prompt', (await modalText()).includes('『Fake Full』的授權要求把整個字型放進 PDF，檔案會增加約 22.3 MB。要使用嗎？'), await modalText());
+await win.click('#modal button:has-text("取消")'); await win.waitForTimeout(300);
+check('取消 keeps the font', await tbFont() === '' && !!(await A(() => window.__pdfapp.TBE())), await tbFont());
+await win.click('#hint [data-tbfont]'); await win.waitForTimeout(300);
+await win.click('#fontMenu .fm-it[data-f="Fake Full"]'); await win.waitForTimeout(400);
+await win.click('#modal button:has-text("使用")'); await win.waitForTimeout(300);
+check('使用 applies it', await tbFont() === 'Fake Full', await tbFont());
+// characters the font lacks: asked first; 回去修改 keeps the editor; 改用思源黑體 saves
+await win.keyboard.press('Control+a'); await win.keyboard.type('Serif中文'); await win.keyboard.press('Control+a'); await fmt('font', 'DejaVu Serif');
+await win.keyboard.press('Escape'); await win.waitForTimeout(1200);
+let mt = await modalText();
+check('missing characters prompt', /字型裡沒有這些字/.test(mt) && mt.includes('『DejaVu Serif』裡沒有這些字：中、文'), mt);
+await win.click('#modal button:has-text("回去修改")'); await win.waitForTimeout(400);
+check('回去修改 keeps the editor open', !!(await A(() => window.__pdfapp.TBE())) && !(await modalText()));
+await win.keyboard.press('Escape'); await win.waitForTimeout(1200);
+await win.click('#modal button:has-text("這些字改用思源黑體")'); await win.waitForTimeout(3000);
+bk = await blockOf('Serif中文');
+check('改用思源黑體: saved with both fonts', !!bk && bk.fonts.includes('DejaVuSerif') && bk.fonts.some(f => /Noto/.test(f)), bk);
+// the original font is installed: the editor starts in it
+await clickText('Match me');
+console.log('   pdf.js font name:', await A(async () => { const app = window.__pdfapp, pg = app.S.pages[0], tc = await pg.page.getTextContent(), it = tc.items.find(i => i.str.includes('Match')); try { return pg.page.commonObjs.get(it.fontName).name; } catch (e) { return String(e); } }));
+const om = await A(() => ({btn:(document.querySelector('#hint [data-tbfont]') || {}).textContent, html:((window.__pdfapp.TBE() || {}).html || '').slice(0, 200)}));
+check('original font picked up', om.btn === 'DejaVu Serif' && /DejaVu Serif/.test(om.html), om);
+await win.keyboard.press('End'); await win.keyboard.type(' now'); await commit();
+bk = await blockOf('Match me now');
+check('written in the original font', !!bk && bk.fonts.includes('DejaVuSerif'), bk);
+const overlap = await A(async () => { const tc = await window.__pdfapp.S.pages[0].page.getTextContent(), its = tc.items.filter(i => i.str.trim() && Math.abs(i.transform[5] - 700) < 8).sort((a, b) => a.transform[4] - b.transform[4]);
+  for (let k = 1; k < its.length; k++) if (its[k].transform[4] < its[k - 1].transform[4] + its[k - 1].width - .5) return its.map(i => [i.str, Math.round(i.transform[4]), Math.round(i.width)]); return null; });
+check('nothing on that line overlaps', overlap === null, overlap);
+await app.evaluate(({app}) => app.exit(0)).catch(() => {});
+// vertical page text: fonts without vertical data are greyed
+{ const f = path.join(TMP, 'rf4v.pdf'); await buildRotatedFixture(ROOT, f); ({ app, win, A } = await open('', f)); }
+await win.click('[data-view="single"]'); await win.waitForTimeout(500);
+await win.click('[data-tool="textbox"]'); await win.waitForTimeout(400);
+await A(() => window.__pdfapp.fontReady());
+await A(b64 => window.__pdfapp.registerTestFont({family:'PDFE Vert Test', b64}), b64Of(path.join(FIX, 'vert-test.ttf')));
+check('(vertical editor)', await clickText('直書') && await A(() => !!document.querySelector('.tbed.vert')));
+await win.click('#hint [data-tbfont]'); await win.waitForTimeout(300);
+const vDv = await menuItem('DejaVu Serif'), vWq = await menuItem('WenQuanYi Zen Hei'), vOk = await menuItem('PDFE Vert Test');
+check('vertical: no vertical data, greyed', !!vDv && vDv.off && /沒有直書資料/.test(vDv.text) && !!vWq && vWq.off, [vDv, vWq]);
+check('vertical: a font with vertical data can be picked', !!vOk && !vOk.off, vOk);
+await win.keyboard.press('Escape'); await win.waitForTimeout(200); await win.keyboard.press('Escape'); await win.waitForTimeout(1500);
 
 // ---- end --------------------------------------------------------------------------------------
 console.log(failed ? `${failed} check(s) failed` : 'all checks passed');
