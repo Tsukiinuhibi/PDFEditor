@@ -31,7 +31,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 /* ---------- ribbon ---------- */
 .ribbon{background:var(--paper);border-bottom:1px solid var(--line);display:flex;align-items:stretch;gap:0;padding:4px 8px;overflow-x:auto;overflow-y:hidden;flex:none;scrollbar-width:thin}
 .brand{display:flex;align-items:center;gap:9px;padding:0 14px 0 4px;margin-right:4px;border-right:1px solid var(--line);white-space:nowrap}
-.seal{width:30px;height:30px;border-radius:6px;background:var(--seal);color:#fff;display:grid;place-items:center;font-weight:700;font-size:16px;letter-spacing:0;box-shadow:inset 0 0 0 2px rgba(255,255,255,.25)}
+.logo{width:32px;height:32px;display:block;flex:none;-webkit-user-drag:none;user-select:none}
 .brand b{font-size:15px;letter-spacing:.04em}
 .grp{display:flex;flex-direction:column;padding:0 6px;border-right:1px solid var(--line)}
 .grp:last-child{border-right:0}
@@ -417,7 +417,7 @@ svg.dsvg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;ov
 .welcome{position:absolute;inset:0;display:grid;place-items:center;padding:20px}
 .wcard{background:var(--paper);border-radius:14px;padding:34px 38px;max-width:520px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.12);text-align:center;border:2px dashed transparent;transition:border-color .15s}
 .drop .wcard{border-color:var(--seal)}
-.wcard .seal{width:56px;height:56px;font-size:28px;margin:0 auto 16px;border-radius:12px}
+.wcard .logo{width:76px;height:76px;margin:0 auto 14px}
 .wcard h1{font-size:21px;margin:0 0 8px;letter-spacing:.03em}
 .wcard p{color:var(--ink2);margin:0 0 22px;line-height:1.7}
 .wcard .acts{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
@@ -709,7 +709,7 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
 
 <!-- ribbon -->
 <div class="ribbon" id="ribbon">
-  <div class="brand"><div class="seal">印</div><b>PDF 工作台</b></div>
+  <div class="brand"><img class="logo" src="img/logo.png" alt=""><b>PDF 工作台</b></div>
   <div class="grp"><div class="btns">
     <button class="rb" data-act="open" title="開啟 (Ctrl+O)"><i data-i="open"></i>開啟</button>
     <button class="rb primary" data-act="save" data-need title="另存新檔 (Ctrl+S)：修改後的內容一律存成新檔案，不會覆蓋原檔"><i data-i="save"></i>另存新檔</button>
@@ -810,7 +810,7 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
     <div class="pages" id="pages"></div>
     <div class="welcome" id="welcome">
       <div class="wcard">
-        <div class="seal">印</div>
+        <img class="logo" src="img/logo.png" alt="">
         <h1>開啟 PDF 開始閱讀與編輯</h1>
         <p>把 PDF 拖曳到這裡，或點下方按鈕選擇檔案。<br>檔案只在你的瀏覽器內處理，不會上傳。</p>
         <div class="acts">
