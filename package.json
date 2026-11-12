@@ -27,7 +27,8 @@
     "gifenc": "1.0.3",
     "node-forge": "1.4.3",
     "pdf-lib": "1.17.1",
-    "pdfjs-dist": "4.10.38"
+    "pdfjs-dist": "4.10.38",
+    "tesseract.js": "7.0.0"
   },
   "devDependencies": {
     "electron": "45.2.3",
