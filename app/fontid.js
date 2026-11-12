@@ -263,5 +263,104 @@
     return {results:mergeResults(res), sigma, keep:kept.map(g => g.ch)};
   }
 
-  window.FontId = {ready, fontString, hasGlyph, N, glyphsFromImage, identify, mergeResults};
+  /* ---- Google Fonts: free fonts compared online. Only the characters being compared are downloaded (the CSS2
+     API's text= subset: a few KB), as web fonts under names of our own ("PDFE GF n") so an installed font of the
+     same name cannot stand in for them. ----------------------------------------------------------------
+     [family, Chinese name or '', 'cjk' | 'latin', 1 = has a bold (700) weight]; names and weights are checked
+     against Google by scripts/check-google-fonts.mjs. Noto Sans TC is left out: it is the bundled 思源黑體. */
+  // google-fonts-list:start
+  const GOOGLE_LIST = [
+    ['Noto Serif TC', '思源宋體', 'cjk', 1], ['Noto Sans HK', '思源黑體 香港', 'cjk', 1], ['Noto Serif HK', '思源宋體 香港', 'cjk', 1],
+    ['LXGW WenKai TC', '霞鶩文楷 TC', 'cjk', 1], ['LXGW WenKai Mono TC', '霞鶩文楷等寬 TC', 'cjk', 1], ['Cactus Classical Serif', '仙人掌明體', 'cjk', 0],
+    ['Chiron Hei HK', '昭源黑體', 'cjk', 1], ['Chiron Sung HK', '昭源宋體', 'cjk', 1], ['Chiron GoRound TC', '昭源甜圓體', 'cjk', 1],
+    ['Huninn', '粉圓', 'cjk', 0], ['Iansui', '芫荽', 'cjk', 0], ['Noto Sans JP', '思源黑體 日文', 'cjk', 1], ['Noto Serif JP', '思源宋體 日文', 'cjk', 1],
+    ['Zen Maru Gothic', '', 'cjk', 1], ['Zen Kaku Gothic New', '', 'cjk', 1], ['Zen Old Mincho', '', 'cjk', 1], ['Shippori Mincho', '', 'cjk', 1],
+    ['Kaisei Decol', '', 'cjk', 1], ['Kaisei Opti', '', 'cjk', 1], ['Kaisei Tokumin', '', 'cjk', 1], ['Klee One', '', 'cjk', 0],
+    ['Kosugi', '', 'cjk', 0], ['Kosugi Maru', '', 'cjk', 0], ['M PLUS 1p', '', 'cjk', 1], ['M PLUS Rounded 1c', '', 'cjk', 1], ['Murecho', '', 'cjk', 1],
+    ['Sawarabi Mincho', '', 'cjk', 0], ['Sawarabi Gothic', '', 'cjk', 0], ['BIZ UDGothic', '', 'cjk', 1], ['BIZ UDPGothic', '', 'cjk', 1],
+    ['BIZ UDMincho', '', 'cjk', 1], ['BIZ UDPMincho', '', 'cjk', 1], ['Yuji Syuku', '', 'cjk', 0], ['Hina Mincho', '', 'cjk', 0],
+    ['Kiwi Maru', '', 'cjk', 0], ['Dela Gothic One', '', 'cjk', 0], ['Yomogi', '', 'cjk', 0],
+    ['Roboto', '', 'latin', 1], ['Open Sans', '', 'latin', 1], ['Noto Sans', '', 'latin', 1], ['Noto Serif', '', 'latin', 1], ['Lato', '', 'latin', 1],
+    ['Montserrat', '', 'latin', 1], ['Poppins', '', 'latin', 1], ['Inter', '', 'latin', 1], ['Roboto Condensed', '', 'latin', 1], ['Source Sans 3', '', 'latin', 1],
+    ['Oswald', '', 'latin', 1], ['Raleway', '', 'latin', 1], ['Nunito', '', 'latin', 1], ['Nunito Sans', '', 'latin', 1], ['Ubuntu', '', 'latin', 1],
+    ['Rubik', '', 'latin', 1], ['Merriweather', '', 'latin', 1], ['Merriweather Sans', '', 'latin', 1], ['Playfair Display', '', 'latin', 1],
+    ['Roboto Mono', '', 'latin', 1], ['Roboto Slab', '', 'latin', 1], ['PT Sans', '', 'latin', 1], ['PT Serif', '', 'latin', 1], ['Lora', '', 'latin', 1],
+    ['Work Sans', '', 'latin', 1], ['Mulish', '', 'latin', 1], ['DM Sans', '', 'latin', 1], ['DM Serif Display', '', 'latin', 0], ['DM Serif Text', '', 'latin', 0],
+    ['Fira Sans', '', 'latin', 1], ['Fira Code', '', 'latin', 1], ['Quicksand', '', 'latin', 1], ['Barlow', '', 'latin', 1], ['Barlow Condensed', '', 'latin', 1],
+    ['Kanit', '', 'latin', 1], ['Titillium Web', '', 'latin', 1], ['IBM Plex Sans', '', 'latin', 1], ['IBM Plex Serif', '', 'latin', 1], ['IBM Plex Mono', '', 'latin', 1],
+    ['Heebo', '', 'latin', 1], ['Karla', '', 'latin', 1], ['Libre Franklin', '', 'latin', 1], ['Josefin Sans', '', 'latin', 1], ['Manrope', '', 'latin', 1],
+    ['Archivo', '', 'latin', 1], ['Archivo Narrow', '', 'latin', 1], ['Cabin', '', 'latin', 1], ['Bitter', '', 'latin', 1], ['Libre Baskerville', '', 'latin', 1],
+    ['EB Garamond', '', 'latin', 1], ['Cormorant Garamond', '', 'latin', 1], ['Crimson Text', '', 'latin', 1], ['Crimson Pro', '', 'latin', 1],
+    ['Source Serif 4', '', 'latin', 1], ['Source Code Pro', '', 'latin', 1], ['Anton', '', 'latin', 0], ['Bebas Neue', '', 'latin', 0], ['Abril Fatface', '', 'latin', 0],
+    ['Pacifico', '', 'latin', 0], ['Dancing Script', '', 'latin', 1], ['Caveat', '', 'latin', 1], ['Lobster', '', 'latin', 0], ['Great Vibes', '', 'latin', 0],
+    ['Satisfy', '', 'latin', 0], ['Shadows Into Light', '', 'latin', 0], ['Indie Flower', '', 'latin', 0], ['Permanent Marker', '', 'latin', 0], ['Amatic SC', '', 'latin', 1],
+    ['Courier Prime', '', 'latin', 1], ['Space Mono', '', 'latin', 1], ['Space Grotesk', '', 'latin', 1], ['Inconsolata', '', 'latin', 1], ['JetBrains Mono', '', 'latin', 1],
+    ['Zilla Slab', '', 'latin', 1], ['Arvo', '', 'latin', 1], ['Old Standard TT', '', 'latin', 1], ['Cinzel', '', 'latin', 1], ['Spectral', '', 'latin', 1],
+    ['Alegreya', '', 'latin', 1], ['Alegreya Sans', '', 'latin', 1], ['Vollkorn', '', 'latin', 1], ['Cardo', '', 'latin', 1], ['Domine', '', 'latin', 1],
+    ['Noticia Text', '', 'latin', 1], ['Sora', '', 'latin', 1], ['Outfit', '', 'latin', 1], ['Lexend', '', 'latin', 1], ['Plus Jakarta Sans', '', 'latin', 1],
+    ['Figtree', '', 'latin', 1], ['Public Sans', '', 'latin', 1], ['Red Hat Display', '', 'latin', 1], ['Red Hat Text', '', 'latin', 1], ['Overpass', '', 'latin', 1],
+    ['Assistant', '', 'latin', 1], ['Hind', '', 'latin', 1], ['Mukta', '', 'latin', 1], ['Exo 2', '', 'latin', 1], ['Prompt', '', 'latin', 1],
+    ['Signika', '', 'latin', 1], ['Asap', '', 'latin', 1], ['Varela Round', '', 'latin', 0], ['Comfortaa', '', 'latin', 1], ['Righteous', '', 'latin', 0],
+    ['Fredoka', '', 'latin', 1], ['Baloo 2', '', 'latin', 1], ['Questrial', '', 'latin', 0], ['Maven Pro', '', 'latin', 1], ['Encode Sans', '', 'latin', 1],
+    ['Chivo', '', 'latin', 1], ['Saira', '', 'latin', 1], ['Rajdhani', '', 'latin', 1], ['Teko', '', 'latin', 1], ['Orbitron', '', 'latin', 1],
+    ['Alfa Slab One', '', 'latin', 0], ['Russo One', '', 'latin', 0], ['Special Elite', '', 'latin', 0], ['Arimo', '', 'latin', 1], ['Tinos', '', 'latin', 1],
+    ['Cousine', '', 'latin', 1], ['Carlito', '', 'latin', 1], ['Caladea', '', 'latin', 1], ['Gelasio', '', 'latin', 1], ['Libre Caslon Text', '', 'latin', 1],
+    ['Frank Ruhl Libre', '', 'latin', 1], ['Prata', '', 'latin', 0], ['Noto Sans Mono', '', 'latin', 1], ['Ubuntu Mono', '', 'latin', 1], ['Libre Bodoni', '', 'latin', 1],
+    ['Bodoni Moda', '', 'latin', 1], ['Instrument Serif', '', 'latin', 0], ['Newsreader', '', 'latin', 1], ['Fraunces', '', 'latin', 1], ['Literata', '', 'latin', 1],
+  ];
+  // google-fonts-list:end
+  const GOOGLE = GOOGLE_LIST.map(([family, zh, script, bold]) => ({family, zh, script, bold:!!bold}));
+  // the characters asked of Google: each once, in code point order (not the order of the text)
+  const requestChars = glyphs => [...new Set(glyphs.map(g => g.ch))].sort((a, b) => a.codePointAt(0) - b.codePointAt(0)).join('');
+  const specimenUrl = family => 'https://fonts.google.com/specimen/' + String(family).replace(/ /g, '+');
+  const familyParam = e => 'family=' + encodeURIComponent(e.family).replace(/%20/g, '+') + (e.bold ? ':wght@400;700' : '');
+  const gfCache = new Map();   // 'family|chars' → its candidate, for the rest of this run
+  let gfAlias = 0;
+  const withTimeout = (p, ms) => new Promise((res, rej) => { const t = setTimeout(() => rej(new Error('timeout')), ms); p.then(v => { clearTimeout(t); res(v); }, e => { clearTimeout(t); rej(e); }); });
+  // the @font-face rules of a CSS2 answer: [{family, weight, src}]
+  function parseFaces(css){
+    const out = [];
+    for (const m of String(css).matchAll(/@font-face\s*\{([^}]*)\}/g)) {
+      const fam = /font-family:\s*['"]?([^;'"]+)['"]?\s*;/.exec(m[1]), w = /font-weight:\s*(\d+)/.exec(m[1]), src = /src:\s*url\(\s*['"]?([^)'"]+)['"]?\s*\)/.exec(m[1]);
+      if (fam && src) out.push({family:fam[1].trim(), weight:w ? +w[1] : 400, src:src[1]});
+    }
+    return out;
+  }
+  // load these Google families for these characters: candidates for identify(). offline = no request reached Google
+  async function loadGoogle(entries, chars, {fetchCss = url => fetch(url), timeout = 8000, stop = null} = {}){
+    const cands = [], failed = [], todo = []; let answered = 0;
+    for (const e of entries) { const c = gfCache.get(e.family + '|' + chars); if (c) cands.push(c); else todo.push(e); }
+    if (!todo.length) return {cands, failed, offline:false};
+    const byFamily = new Map(todo.map(e => [e.family, e]));
+    // one request for a batch of families; a batch Google refuses (a bad name) is asked again one family at a time
+    const ask = async batch => {
+      if (stop && stop()) return;
+      const url = 'https://fonts.googleapis.com/css2?' + batch.map(familyParam).join('&') + '&text=' + encodeURIComponent(chars);
+      let res; try { res = await withTimeout(Promise.resolve(fetchCss(url)), timeout); } catch (_) { batch.forEach(e => failed.push(e.family)); return; }
+      if (!res || res.status >= 500) { batch.forEach(e => failed.push(e.family)); return; }
+      answered++;
+      if (!res.ok) { if (batch.length > 1) { for (const e of batch) await ask([e]); } else failed.push(batch[0].family); return; }
+      let css = ''; try { css = await withTimeout(Promise.resolve(res.text()), timeout); } catch (_) { batch.forEach(e => failed.push(e.family)); return; }
+      const faces = parseFaces(css), got = new Set();
+      for (const e of batch) {
+        const mine = faces.filter(f => f.family === e.family); if (!mine.length) { failed.push(e.family); continue; }
+        const alias = 'PDFE GF ' + (++gfAlias); let ok = 0;
+        for (const f of mine) {
+          try { const ff = new FontFace(alias, `url(${f.src})`, {weight:String(f.weight)}); await withTimeout(ff.load(), timeout); document.fonts.add(ff); ok++; } catch (_) {}
+        }
+        if (!ok) { failed.push(e.family); continue; }
+        const c = {key:'google:' + e.family, css:`"${alias}"`, label:e.zh ? `${e.zh}（${e.family}）` : e.family, source:'google', entry:byFamily.get(e.family)};
+        gfCache.set(e.family + '|' + chars, c); got.add(e.family); cands.push(c);
+      }
+    };
+    const batches = []; for (let k = 0; k < todo.length; k += 10) batches.push(todo.slice(k, k + 10));
+    let next = 0;
+    await Promise.all(Array.from({length:Math.min(6, batches.length)}, async () => { while (next < batches.length) await ask(batches[next++]); }));
+    // keep the list's order
+    const pos = new Map(entries.map((e, k) => [e.family, k]));
+    cands.sort((a, b) => pos.get(a.entry.family) - pos.get(b.entry.family));
+    return {cands, failed, offline:!answered};
+  }
+
+  window.FontId = {ready, fontString, hasGlyph, N, glyphsFromImage, identify, mergeResults, GOOGLE, requestChars, specimenUrl, loadGoogle};
 })();

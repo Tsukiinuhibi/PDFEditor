@@ -122,4 +122,47 @@ r = await A(async c => { const many = []; for (let k = 0; k < 25; k++) for (cons
 check('500+ candidates: < 8 s, never stalls > 100 ms', r.n >= 500 && r.ms < 8000 && r.gap < 100 && r.first.startsWith('DejaVu Serif|'), r);
 await app.close();
 
+// ---- part 4: Google Fonts (a fake source serving local font files, no network) -------------------
+({ app, win, A } = await open('fid4.pdf'));
+await A(SCAN_JS); await A(() => FontId.ready());
+const LIB = f => fs.readFileSync('/usr/share/fonts/truetype/liberation/' + f).toString('base64');
+await A(fonts => {
+  window.__gf = {urls:[], mode:'ok', fonts};
+  // answers like fonts.googleapis.com/css2: one @font-face per family and weight, the files as data: URLs
+  window.__gfFetch = async url => {
+    __gf.urls.push(url);
+    if (__gf.mode === 'throw') throw new TypeError('Failed to fetch');
+    if (__gf.mode === 'hang') return new Promise(() => {});
+    const fams = new URL(url).searchParams.getAll('family').map(f => f.split(':')[0]);
+    if (fams.includes('Bad Family')) return {ok:false, status:400, text:async () => ''};
+    const css = fams.map(f => (__gf.fonts[f] || __gf.fonts.Arimo).map(([w, b64]) =>
+      `@font-face {\n  font-family: '${f}';\n  font-style: normal;\n  font-weight: ${w};\n  src: url(data:font/ttf;base64,${b64}) format('truetype');\n}\n`).join('')).join('');
+    return {ok:true, status:200, text:async () => css};
+  };
+}, {Tinos:[[400, LIB('LiberationSerif-Regular.ttf')], [700, LIB('LiberationSerif-Bold.ttf')]], Arimo:[[400, LIB('LiberationSans-Regular.ttf')]]});
+const E = (family, bold = false) => ({family, zh:'', script:'latin', bold});
+r = await A(async ents => { __gf.urls = []; __gf.mode = 'ok';
+  const res = await FontId.loadGoogle(ents, 'ARag', {fetchCss:__gfFetch});
+  return {urls:__gf.urls, n:res.cands.length, offline:res.offline, failed:res.failed, cands:res.cands.map(c => ({key:c.key, css:c.css, label:c.label, src:c.source, hasR:FontId.hasGlyph(c.css, 'R')}))}; },
+  [E('Tinos', true), E('Arimo'), ...Array.from({length:10}, (_, k) => E('Fake Latin ' + k))]);
+check('2 batched requests', r.urls.length === 2, r.urls.map(u => u.slice(0, 120)));
+check('text= is the characters given', r.urls.every(u => new URL(u).searchParams.get('text') === 'ARag'), r.urls[0].slice(-40));
+check('bold entries ask for 400;700', r.urls[0].includes('family=Tinos:wght@400;700') && r.urls[0].includes('family=Arimo&') && !/Fake\+Latin\+0:wght/.test(r.urls[0]), r.urls[0].slice(0, 160));
+check('12 candidates usable', r.n === 12 && r.cands.every(c => /^"PDFE GF \d+"$/.test(c.css) && c.hasR && c.src === 'google' && c.key === 'google:' + c.label), r.cands.slice(0, 2));
+r = await A(async ents => { const n0 = __gf.urls.length; const res = await FontId.loadGoogle(ents, 'ARag', {fetchCss:__gfFetch}); return {more:__gf.urls.length - n0, n:res.cands.length}; }, [E('Tinos', true), E('Arimo')]);
+check('same family and characters: from the cache', r.more === 0 && r.n === 2, r);
+r = await A(async ents => { __gf.urls = []; const res = await FontId.loadGoogle(ents, 'BRag', {fetchCss:__gfFetch}); return {urls:__gf.urls.length, failed:res.failed, n:res.cands.length, offline:res.offline}; }, [E('Tinos', true), E('Bad Family'), E('Arimo')]);
+check('a bad name: retried one by one, the others load', r.urls === 4 && JSON.stringify(r.failed) === '["Bad Family"]' && r.n === 2 && !r.offline, r);
+r = await A(async ents => { __gf.mode = 'throw'; const res = await FontId.loadGoogle(ents, 'CRag', {fetchCss:__gfFetch}); __gf.mode = 'ok'; return {offline:res.offline, n:res.cands.length}; }, [E('Tinos', true), E('Arimo')]);
+check('no network: offline', r.offline && r.n === 0, r);
+r = await A(async ents => { __gf.mode = 'hang'; const t0 = performance.now(); const res = await FontId.loadGoogle(ents, 'DRag', {fetchCss:__gfFetch, timeout:300}); __gf.mode = 'ok'; return {offline:res.offline, n:res.cands.length, ms:Math.round(performance.now() - t0)}; }, [E('Tinos', true), E('Arimo')]);
+check('a request that never answers: offline after the timeout', r.offline && r.n === 0 && r.ms < 2000, r);
+check('request characters: unique, in code point order', (await A(() => FontId.requestChars([...'RagRag2025'].map(ch => ({ch}))))) === '025Rag');
+check('specimen page', (await A(() => FontId.specimenUrl('Noto Serif TC'))) === 'https://fonts.google.com/specimen/Noto+Serif+TC');
+r = await A(async ents => { const sc = __scan({css:'"Liberation Serif"', text:'Quick brown fox Rag 2025', px:42, seed:11}), set = FontId.glyphsFromImage(sc.canvas, sc.symbols);
+  const g = await FontId.loadGoogle(ents, FontId.requestChars(set.latin), {fetchCss:__gfFetch}); const res = await FontId.identify(set.latin, g.cands); return res.results.map(x => x.cand.key); }, [E('Tinos', true), E('Arimo')]);
+check('a Liberation Serif scan: Tinos (same drawing) first', r[0] === 'google:Tinos', r);
+check('the list: Chinese and Latin families, no Noto Sans TC', await A(() => FontId.GOOGLE.some(e => e.script === 'cjk' && e.family === 'Noto Serif TC' && e.zh === '思源宋體') && FontId.GOOGLE.filter(e => e.script === 'latin').length >= 100 && !FontId.GOOGLE.some(e => e.family === 'Noto Sans TC') && new Set(FontId.GOOGLE.map(e => e.family)).size === FontId.GOOGLE.length));
+await app.close();
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');

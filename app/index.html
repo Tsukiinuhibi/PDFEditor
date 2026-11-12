@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; worker-src 'self' blob:; connect-src 'self' blob: data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; worker-src 'self' blob:; connect-src 'self' blob: data: https://fonts.googleapis.com; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>PDF 工作台</title>
 <script>try{var t=localStorage.getItem('pdfeditor.theme')||'system',d=(t==='dark'||(t==='system'&&matchMedia('(prefers-color-scheme: dark)').matches)),pc=localStorage.getItem('pdfeditor.pagecolor')||'original';document.documentElement.dataset.theme=d?'dark':'light';document.documentElement.dataset.page=pc==='auto'?(d?'night':'original'):pc;}catch(e){}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
