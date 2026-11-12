@@ -219,7 +219,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 - 文字方塊（FreeText）還不能旋轉。旋轉過的矩形、橢圓是靠外觀串流呈現，如果其他軟體重新產生外觀（例如在 Acrobat 裡改它的樣式），會變回不旋轉的樣子。
 - pdf.js 解析文字方塊的 `RC` 時，會印出「XFA rich text」警告。不影響顯示，但 RC 的 XHTML 格式可以再調整。
 - 還不能在程式裡「建立」新的圖層群組（只能使用 PDF 原本就有的群組，或把圖層拖進有子圖層的圖層裡）。
-- 安裝檔沒有程式碼簽章，Windows 會顯示 SmartScreen 警告。
+- 安裝檔沒有程式碼簽章，Windows 會顯示 SmartScreen 警告。**使用者已決定不做程式碼簽章**（2026-11-12，看過 SignPath、Certum 開源憑證、Microsoft Store、商業 OV 憑證的比較後），不用再提。
 - `app/index.html` 是單一大檔。如果要拆成多個模組，app:// 協定和 CSP 已經支援 ES module。
 
 ---
