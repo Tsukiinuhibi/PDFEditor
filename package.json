@@ -1,7 +1,7 @@
 {
   "name": "pdfeditor",
   "productName": "PDF 工作台",
-  "version": "1.0.22",
+  "version": "1.0.23",
   "updateServer": {
     "host": "https://forgejo.taiyopen.com",
     "repo": "tsukiinuhibi/PDFEditor"

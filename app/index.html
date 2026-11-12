@@ -60,6 +60,31 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .dtab-add{border:0;background:transparent;font-size:18px;color:var(--ink2);cursor:pointer;width:30px;height:28px;border-radius:6px;margin-bottom:2px;flex:none}
 .dtab-add:hover{background:rgba(0,0,0,.07)}
 .rstack{display:flex;flex-direction:column;justify-content:center;gap:1px;padding-left:2px}
+/* 只顯示圖示: labels hidden (the buttons' titles still name them) */
+.ribbon.icons-only .rb{font-size:0;gap:0;min-width:34px;padding:6px 5px}
+.ribbon.icons-only .rb svg.i{width:21px;height:21px}
+.ribbon.icons-only .rb .sp-lab{display:none}
+.ribbon.icons-only .rb.split{padding:0;min-width:0}
+.ribbon.icons-only .rb.split .sp-main{min-width:30px;padding:6px 3px 6px 6px}
+.ribbon.icons-only .rb.split .sp-arr{font-size:10px}
+.ribbon.icons-only .rs{font-size:0;gap:0;padding:0 5px;height:19px}
+.ribbon.icons-only .rs svg.i{width:16px;height:16px}
+.ribbon.icons-only .brand b{display:none}
+/* 設定 */
+.set-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:-4px 0 14px}
+.set-tabs button{border:0;background:none;padding:8px 14px;font-size:13.5px;color:var(--ink2);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+.set-tabs button:hover{color:var(--ink);background:#fff3bf;border-radius:6px 6px 0 0}
+.set-tabs button.on{color:var(--seal-ink);border-bottom-color:var(--seal);font-weight:600}
+.set-pane{min-height:250px}
+.set-h{font-weight:600;font-size:13px;margin:4px 0 8px}
+.set-h small{font-weight:400;color:var(--ink3);margin-left:6px}
+.set-h:not(:first-child){margin-top:16px}
+.set-opt{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;cursor:pointer;font-size:13px}
+.set-opt:hover{background:var(--hover)}
+.set-opt small{color:var(--ink3);margin-left:4px}
+.set-opt svg.i{width:17px;height:17px}
+.set-btns{display:flex;align-items:center;gap:8px;margin-top:14px}
+.set-btns .sp{flex:1}
 .rs{display:flex;align-items:center;gap:5px;border:0;background:transparent;border-radius:5px;padding:0 8px 0 5px;height:16px;font-size:11.5px;cursor:pointer;white-space:nowrap;color:var(--ink)}
 .rs svg.i{width:14px;height:14px}
 .rs:hover{background:var(--hover)}
@@ -737,16 +762,14 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
     <button class="rb primary" data-act="save" data-need title="另存新檔 (Ctrl+S)：修改後的內容一律存成新檔案，不會覆蓋原檔"><i data-i="save"></i>另存新檔</button>
     <button class="rb" data-act="exportImages" data-need title="將頁面轉存成 PNG、JPG、WebP、BMP、TIFF、GIF 圖片"><i data-i="toImage"></i>轉存圖片</button>
   </div><div class="cap">檔案</div></div>
+  <div class="grp"><div class="btns"><div class="rstack">
+    <button class="rs" data-act="undo" id="bUndo" title="復原 (Ctrl+Z)"><i data-i="undo"></i>復原</button>
+    <button class="rs" data-act="redo" id="bRedo" title="重做 (Ctrl+Y)"><i data-i="redo"></i>重做</button>
+  </div></div><div class="cap">編輯</div></div>
   <div class="grp"><div class="btns">
-    <button class="rb" data-act="undo" id="bUndo" title="復原 (Ctrl+Z)"><i data-i="undo"></i>復原</button>
-    <button class="rb" data-act="redo" id="bRedo" title="重做 (Ctrl+Y)"><i data-i="redo"></i>重做</button>
-  </div><div class="cap">編輯</div></div>
-  <div class="grp"><div class="btns">
-    <button class="rb" data-act="addPage" data-need title="選擇位置與數量後加入空白頁"><i data-i="pageAdd"></i>加頁</button>
+    <button class="rb split" data-amenu="pageAdd" data-need title="加頁：點按執行，點 ▾ 選擇（加入空白頁、從 PDF 插入頁面）"><span class="sp-main"></span><span class="sp-arr">▾</span></button>
     <button class="rb" data-act="delPage" data-need title="預覽並勾選要刪除的頁面"><i data-i="pageDel"></i>減頁</button>
-    <button class="rb" data-act="insertPdf" data-need title="從其他 PDF 匯入頁面插入"><i data-i="pageIns"></i>插入PDF</button>
-    <button class="rb" data-act="rotL" data-need title="選取的頁面向左轉 90°（可在縮圖按 Ctrl／Shift 多選）"><i data-i="rotL"></i>左轉</button>
-    <button class="rb" data-act="rotR" data-need title="選取的頁面向右轉 90°（可在縮圖按 Ctrl／Shift 多選）"><i data-i="rotR"></i>右轉</button>
+    <button class="rb split" data-amenu="rotate" data-need title="旋轉選取的頁面：點按執行，點 ▾ 選擇向左或向右（可在縮圖按 Ctrl／Shift 多選）"><span class="sp-main"></span><span class="sp-arr">▾</span></button>
     <div class="rstack">
       <button class="rs" data-act="copyPages" data-need title="複製選取的頁面 (Ctrl+C)，可在任何分頁貼上"><i data-i="copy"></i>複製頁</button>
       <button class="rs" data-act="cutPages" data-need title="剪下選取的頁面 (Ctrl+X)"><i data-i="cut"></i>剪下頁</button>
@@ -771,14 +794,10 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
     <button class="rb" data-tool="stamp" data-need title="戳記：核准、草稿、機密、日期章…"><i data-i="stamp"></i>戳記</button>
   </div><div class="cap">註解</div></div>
   <div class="grp"><div class="btns">
-    <button class="rb" data-tool="signature" data-need title="手寫簽名並放到頁面上"><i data-i="pen"></i>手寫簽名</button>
-    <button class="rb" data-tool="digisign" data-need title="以憑證進行數位簽章"><i data-i="shield"></i>數位簽章</button>
-    <button class="rb" data-act="attach" data-need title="將檔案附加到 PDF 內"><i data-i="clip"></i>附加檔案</button>
-  </div><div class="cap">簽署與附件</div></div>
-  <div class="grp" id="grpApp" style="display:none"><div class="btns">
-    <button class="rb" data-act="themeMenu" id="bTheme" title="顯示模式：跟隨作業系統／暗色／亮色"><i data-i="themeAuto"></i>顯示模式</button>
-    <button class="rb" data-act="keySettings" title="自訂上一頁／下一頁等按鍵，可設定滑鼠側鍵"><i data-i="keyboard"></i>按鍵設定</button>
-    <button class="rb" data-act="checkUpdate" id="bUpd" title="檢查並安裝新版本"><span class="updwrap"><i data-i="refresh"></i><span class="upddot" id="updDot"></span></span><span id="bUpdTxt">檢查更新</span></button>
+    <button class="rb split" data-amenu="sign" data-need title="簽署與附件：點按使用，點 ▾ 選擇（手寫簽名、數位簽章、附加檔案）"><span class="sp-main"></span><span class="sp-arr">▾</span></button>
+  </div><div class="cap">簽署</div></div>
+  <div class="grp" id="grpApp"><div class="btns">
+    <button class="rb" data-act="settings" id="bSettings" title="設定：顯示模式、工具列、按鍵、軟體更新"><span class="updwrap"><i data-i="gear"></i><span class="upddot" id="updDot"></span></span>設定</button>
   </div><div class="cap">軟體</div></div>
 </div>
 
@@ -869,7 +888,6 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
 <div class="ctx aidmenu" id="aidMenu"></div>
 <div class="ctx toolmenu" id="toolMenu"></div>
 <div class="ctx cpmenu" id="cpMenu"></div>
-<div class="ctx thememenu" id="themeMenu"></div>
 <div class="pop" id="pop"></div>
 <div class="mask" id="mask"><div class="modal" id="modal"></div></div>
 <div class="toasts" id="toasts"></div>
@@ -954,6 +972,7 @@ const ICONS = {
   select:'M5 3l13 7.5-5.5 1.6L10 18z',
   hand:'M18 11V6a2 2 0 0 0-4 0M14 10V4a2 2 0 0 0-4 0v2M10 10.5V6a2 2 0 0 0-4 0v8M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15',
   image:'M3 3h4M3 3v4M21 3h-4M21 3v4M3 21h4M3 21v-4M21 21h-4M21 21v-4M7 16l3.5-4 2.5 3 2-2 2 3zM15 8.5h.01',
+  gear:'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z',
   ocr:'M3 7V4a1 1 0 0 1 1-1h3M17 3h3a1 1 0 0 1 1 1v3M21 17v3a1 1 0 0 1-1 1h-3M7 21H4a1 1 0 0 1-1-1v-3M8 8h8M12 8v9M10 17h4',
   note:'M4 4h16v12H9l-5 4zM8 8.5h8M8 12h5',
   text:'M5 6V4.5h14V6M12 4.5v15M9 19.5h6',
@@ -1688,6 +1707,7 @@ function setTool(t){
   S.tool = t; updateUI();
   $$('[data-act="insertImage"]').forEach(b => b.classList.toggle('on', t === 'image'));
   $$('[data-menu]').forEach(b => b.classList.toggle('on', (TOOL_MENUS[b.dataset.menu] || []).includes(t)));
+  paintActionButtons();
   rememberTool(t);
   const h = $('#hint');
   h.classList.toggle('styl', !!DRAW_TOOLS[t]);
@@ -3349,9 +3369,10 @@ const actions = {
     await loadDoc(r.bytes, {keepView:true}); toast('已重做'); await afterEdit();
   },
   addPage(){ return openAddPage(); },
-  themeMenu(){ showThemeMenu(); },
+  themeMenu(){ return openSettings('look'); },
+  settings(){ return openSettings(); },
   aids(){ showAidsMenu(); },
-  keySettings(){ return openKeySettings(); },
+  keySettings(){ return openSettings('keys'); },
   copyPages(){ return copySelected(false); },
   cutPages(){ return copySelected(true); },
   pastePages(){ return pasteClip(); },
@@ -5523,7 +5544,36 @@ function showToolMenu(btn, which){
   m.style.left = Math.min(r.left, innerWidth - m.offsetWidth - 8) + 'px'; m.style.top = (r.bottom + 2) + 'px';
   m.onclick = e => { const b = e.target.closest('[data-t]'); if (!b) return; m.style.display = 'none'; setTool(b.dataset.t); };
 }
-document.addEventListener('pointerdown', e => { const m = $('#toolMenu'); if (m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('[data-menu]')) m.style.display = 'none'; }, true);
+document.addEventListener('pointerdown', e => { const m = $('#toolMenu'); if (m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('[data-menu],[data-amenu]')) m.style.display = 'none'; }, true);
+/* buttons that gather a few related actions (加頁、旋轉、簽署): the main part repeats the one used last, ▾ lists them all */
+const ACTION_MENUS = {
+  pageAdd:[{act:'addPage', ic:'pageAdd', label:'加頁', long:'加入空白頁…'}, {act:'insertPdf', ic:'pageIns', label:'插入PDF', long:'從 PDF 插入頁面…'}],
+  rotate:[{act:'rotL', ic:'rotL', label:'左轉', long:'向左轉 90°'}, {act:'rotR', ic:'rotR', label:'右轉', long:'向右轉 90°'}],
+  sign:[{tool:'signature', ic:'pen', label:'手寫簽名', long:'手寫簽名'}, {tool:'digisign', ic:'shield', label:'數位簽章', long:'數位簽章（憑證）'}, {act:'attach', ic:'clip', label:'附加檔案', long:'附加檔案到 PDF 內'}],
+};
+const LAST_ACT = (() => { try { return JSON.parse(localStorage.getItem('pdfeditor.lastact.v1')) || {}; } catch (_) { return {}; } })();
+const lastActOf = m => ACTION_MENUS[m][LAST_ACT[m]] || ACTION_MENUS[m][0];
+function paintActionButtons(){
+  $$('[data-amenu]').forEach(b => {
+    const it = lastActOf(b.dataset.amenu), m = b.querySelector('.sp-main');
+    if (m) m.innerHTML = `${icon(it.ic)}<span class="sp-lab">${it.label}</span>`;
+    b.classList.toggle('on', ACTION_MENUS[b.dataset.amenu].some(x => x.tool && x.tool === S.tool));
+  });
+}
+function runActionItem(m, it){
+  LAST_ACT[m] = ACTION_MENUS[m].indexOf(it); try { localStorage.setItem('pdfeditor.lastact.v1', JSON.stringify(LAST_ACT)); } catch (_) {}
+  paintActionButtons();
+  if (it.tool) setTool(it.tool); else actions[it.act]();
+}
+function showActionMenu(btn, m){
+  const box = $('#toolMenu');
+  if (box.style.display === 'block' && box.dataset.w === m) { box.style.display = 'none'; return; }
+  box.dataset.w = m;
+  box.innerHTML = ACTION_MENUS[m].map((it, k) => `<button data-k="${k}" class="${it.tool && it.tool === S.tool ? 'on' : ''}">${icon(it.ic)}${it.long}</button>`).join('');
+  const r = btn.getBoundingClientRect(); box.style.display = 'block';
+  box.style.left = Math.min(r.left, innerWidth - box.offsetWidth - 8) + 'px'; box.style.top = (r.bottom + 2) + 'px';
+  box.onclick = e => { const b = e.target.closest('[data-k]'); if (!b) return; box.style.display = 'none'; runActionItem(m, ACTION_MENUS[m][+b.dataset.k]); };
+}
 
 /* ====================================================================
    Select / move / resize existing annotations (選取工具)
@@ -7242,6 +7292,7 @@ async function makeSample(){
    Wiring
    ==================================================================== */
 document.addEventListener('click', e => {
+  const am = e.target.closest('[data-amenu]'); if (am && !am.disabled) { if (e.target.closest('.sp-arr')) showActionMenu(am, am.dataset.amenu); else runActionItem(am.dataset.amenu, lastActOf(am.dataset.amenu)); return; }
   const mb = e.target.closest('[data-menu]'); if (mb && !mb.disabled) { if (e.target.closest('.sp-arr')) showToolMenu(mb, mb.dataset.menu); else setTool(lastToolOf(mb.dataset.menu)); return; }
   const b = e.target.closest('[data-act],[data-tool],[data-zoom],[data-view]'); if (!b || b.disabled) return;
   if (b.dataset.act && actions[b.dataset.act]) actions[b.dataset.act]();
@@ -7355,12 +7406,13 @@ if (DESK && DESK.onAppCommand) DESK.onAppCommand(cmd => {
 
 // recording a new binding
 let capture = null;
-async function openKeySettings(){
-  const work = structuredClone(BINDS);
+// the key / mouse-button editor shown in 設定 → 按鍵; every change is saved at once
+function keyEditor(){
+  const work = BINDS, save = () => { try { localStorage.setItem(BIND_KEY, JSON.stringify(BINDS)); } catch (_) {} };
   const body = document.createElement('div');
-  body.innerHTML = `<div class="note" style="margin-bottom:12px">點選格子後，按下想要的<b>鍵盤按鍵</b>（可搭配 Ctrl / Alt / Shift）或<b>滑鼠按鍵</b>（例如側鍵、中鍵）即可設定。每個動作最多 ${MAX_BINDS} 組。</div>
+  body.innerHTML = `<div class="note" style="margin-bottom:12px">點選格子後，按下想要的<b>鍵盤按鍵</b>（可搭配 Ctrl / Alt / Shift）或<b>滑鼠按鍵</b>（例如側鍵、中鍵）即可設定，修改後立即生效。每個動作最多 ${MAX_BINDS} 組。</div>
     <table class="kb"><thead><tr><th>動作</th>${Array.from({length:MAX_BINDS}, (_, k) => `<th>按鍵 ${k + 1}</th>`).join('')}</tr></thead><tbody id="kbBody"></tbody></table>
-    <div class="ex-warn" id="kbMsg" style="margin-top:8px"></div>`;
+    <div class="set-btns"><button class="btn" data-kb="reset">恢復預設</button><span class="ex-warn" id="kbMsg"></span></div>`;
   const tb = body.querySelector('#kbBody'), msg = body.querySelector('#kbMsg');
   const draw = () => {
     tb.innerHTML = '';
@@ -7388,15 +7440,15 @@ async function openKeySettings(){
     BIND_ACTIONS.forEach(x => { const list = work[x.id] || []; const i = list.findIndex(y => sameBind(y, b)); if (i >= 0 && !(x.id === a && i === k)) { list.splice(i, 1); if (x.id !== a) moved = x.label; } });
     const list = work[a] = (work[a] || []);
     if (k < list.length) list[k] = b; else list.push(b);
-    work[a] = list.slice(0, MAX_BINDS);
-    msg.textContent = moved ? `「${bindLabel(b)}」原本設定給「${moved}」，已改為「${BIND_ACTIONS.find(x => x.id === a).label}」。` : '';
+    work[a] = list.slice(0, MAX_BINDS); save();
+    msg.textContent = moved ? `「${bindLabel(b)}」原本設定給「${moved}」，已改為「${BIND_ACTIONS.find(x => x.id === a).label}」。` : '已儲存';
     draw();
   };
   const onKey = e => {
     e.preventDefault(); e.stopPropagation();
     if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;   // wait for the real key
     if (e.key === 'Escape' && !e.ctrlKey && !e.shiftKey && !e.altKey) { stopCapture(); msg.textContent = ''; draw(); return; }
-    if (e.key === 'Backspace' && !e.ctrlKey && !e.shiftKey && !e.altKey) { const {a, k} = target; stopCapture(); (work[a] || []).splice(k, 1); draw(); return; }
+    if (e.key === 'Backspace' && !e.ctrlKey && !e.shiftKey && !e.altKey) { const {a, k} = target; stopCapture(); (work[a] || []).splice(k, 1); save(); msg.textContent = '已儲存'; draw(); return; }
     assign(keyFromEvent(e));
   };
   const onMouse = e => {
@@ -7409,11 +7461,12 @@ async function openKeySettings(){
     assign(MB(e.button));
   };
   const onCtx = e => { e.preventDefault(); e.stopPropagation(); };
-  tb.addEventListener('click', e => {
+  body.addEventListener('click', e => {
+    if (e.target.closest('[data-kb="reset"]')) { stopCapture(); Object.keys(work).forEach(k => delete work[k]); Object.assign(work, structuredClone(DEFAULT_BINDS)); save(); msg.textContent = '已恢復預設'; draw(); return; }
     const x = e.target.closest('.kx');
     const c = e.target.closest('.kcell'); if (!c) return;
     const a = c.dataset.a, k = +c.dataset.k;
-    if (x) { (work[a] || []).splice(k, 1); stopCapture(); draw(); return; }
+    if (x) { (work[a] || []).splice(k, 1); save(); msg.textContent = '已儲存'; stopCapture(); draw(); return; }
     stopCapture(); draw();
     const cell = tb.querySelector(`.kcell[data-a="${a}"][data-k="${Math.min(k, (work[a] || []).length)}"]`);
     target = {a, k:Math.min(k, (work[a] || []).length)};
@@ -7423,24 +7476,81 @@ async function openKeySettings(){
     window.addEventListener('contextmenu', onCtx, true);
   });
   draw();
-  const r = await openModal({title:'按鍵設定', body, width:720, buttons:[
-    {label:'恢復預設', handler:() => { stopCapture(); Object.keys(work).forEach(k => delete work[k]); Object.assign(work, structuredClone(DEFAULT_BINDS)); msg.textContent = '已恢復預設，按「儲存」套用。'; draw(); }},
-    {spacer:true}, {label:'取消', value:false}, {label:'儲存', primary:true, value:true}]});
-  stopCapture();
-  if (!r) return;
-  BINDS = work;
-  try { localStorage.setItem(BIND_KEY, JSON.stringify(BINDS)); } catch (_) {}
-  toast('按鍵設定已儲存');
+  return {body, stop:stopCapture};
 }
+
+/* ====================================================================
+   設定: 外觀 (window theme, page colour), 工具列, 按鍵, 軟體更新 in one window
+   ==================================================================== */
+const RIBBON_KEY = 'pdfeditor.ribbon.v1', RELEASES_URL = 'https://forgejo.taiyopen.com/tsukiinuhibi/PDFEditor/releases';
+let RIBBON = (() => { try { return JSON.parse(localStorage.getItem(RIBBON_KEY)) || {}; } catch (_) { return {}; } })();
+function applyRibbon(){ $('#ribbon').classList.toggle('icons-only', !!RIBBON.iconsOnly); }
+let SET = null;   // the open settings window
+async function openSettings(tab = 'look'){
+  if (SET) { SET.show(tab); return; }
+  const tabs = [['look', '外觀'], ['bar', '工具列'], ['keys', '按鍵'], ...(DESK ? [['update', '軟體更新']] : [])];
+  const body = document.createElement('div'); body.className = 'set';
+  body.innerHTML = `<div class="set-tabs">${tabs.map(([k, n]) => `<button data-st="${k}">${n}</button>`).join('')}</div><div class="set-pane"></div>`;
+  const pane = body.querySelector('.set-pane');
+  let keys = null;
+  const opt = (type, name, value, on, label, extra = '') => `<label class="set-opt"><input type="${type}" name="${name}" value="${value}"${on ? ' checked' : ''}>${label}${extra}</label>`;
+  const panes = {
+    look:() => `<div class="set-h">視窗顯示</div>
+      ${[['system', 'themeAuto'], ['dark', 'moon'], ['light', 'sun']].map(([k, ic]) => opt('radio', 'th', k, THEME === k, `${icon(ic)}${THEME_NAMES[k]}`, k === 'system' ? `<small>目前：${darkMQ.matches ? '暗色' : '亮色'}</small>` : '')).join('')}
+      <div class="set-h">頁面色彩 <small>只影響畫面顯示，不會改變檔案</small></div>
+      ${Object.entries(PAGE_NAMES).map(([k, n]) => opt('radio', 'pc', k, PAGECOLOR === k, `<span class="pcs pcs-${k}"></span>${n}`)).join('')}`,
+    bar:() => `<div class="set-h">工具列</div>
+      ${opt('checkbox', 'iconsOnly', '1', !!RIBBON.iconsOnly, '只顯示圖示，不顯示文字', '<small>滑鼠移到按鈕上會顯示名稱</small>')}
+      <div class="note" style="margin-top:12px">「加頁」「旋轉」「簽署」按鈕的 ▾ 會列出同一類的其他功能，按鈕上會留著你最近用的那一個。工具列放不下時，把滑鼠移到工具列上滾動滾輪即可左右捲動。</div>`,
+    update:() => {
+      const st = UPD.state.state, ready = st === 'ready', working = st === 'checking' || st === 'downloading';
+      return `<div class="set-h">軟體更新</div>
+        <div style="margin-bottom:8px;color:var(--ink2)">目前版本：v${esc(UPD.info ? UPD.info.version : '')}</div>
+        <div id="updMsg">${updateMessage() || '程式開啟後和每 4 小時會自動檢查一次新版本，有新版會在背景下載好再通知你。'}</div>
+        <div class="set-btns"><button class="btn" data-u2="check"${working || ready ? ' disabled' : ''}>立即檢查</button>${ready ? '<button class="btn pri" data-u2="install">立即重新啟動並更新</button>' : ''}<span class="sp"></span><button class="btn" data-u2="page">版本記錄</button></div>`;
+    },
+  };
+  const show = k => {
+    if (!tabs.some(t => t[0] === k)) k = 'look';
+    if (keys) { keys.stop(); keys = null; }
+    SET.tab = k; UPD.modalOpen = k === 'update';
+    body.querySelectorAll('[data-st]').forEach(b => b.classList.toggle('on', b.dataset.st === k));
+    if (k === 'keys') { keys = keyEditor(); pane.innerHTML = ''; pane.appendChild(keys.body); }
+    else pane.innerHTML = panes[k]();
+  };
+  SET = {tab, show, paintUpdate:() => { if (SET && SET.tab === 'update') pane.innerHTML = panes.update(); }};
+  body.addEventListener('click', e => {
+    const t = e.target.closest('[data-st]'); if (t) { show(t.dataset.st); return; }
+    const u = e.target.closest('[data-u2]'); if (!u || u.disabled) return;
+    if (u.dataset.u2 === 'check') { UPD.state = {state:'checking'}; renderUpdate(); DESK.update.check().then(st => { if (st) { UPD.state = st; renderUpdate(); } }); }
+    if (u.dataset.u2 === 'install') { closeModal(true); installUpdate(); }
+    if (u.dataset.u2 === 'page') DESK.openExternal(RELEASES_URL);
+  });
+  body.addEventListener('change', e => {
+    const el = e.target;
+    if (el.name === 'th') { setTheme(el.value); toast('顯示模式：' + THEME_NAMES[el.value]); }
+    if (el.name === 'pc') { setPageColor(el.value); toast('頁面色彩：' + PAGE_NAMES[el.value]); }
+    if (el.name === 'iconsOnly') { RIBBON.iconsOnly = el.checked; try { localStorage.setItem(RIBBON_KEY, JSON.stringify(RIBBON)); } catch (_) {} applyRibbon(); }
+  });
+  await openModal({title:'設定', body, width:620, buttons:[{spacer:true}, {label:'關閉', value:true, primary:true}], onOpen:() => show(tab)});
+  if (keys) keys.stop();
+  SET = null; UPD.modalOpen = false;
+}
+// the toolbar scrolls sideways with the mouse wheel when it does not fit
+$('#ribbon').addEventListener('wheel', e => {
+  const r = e.currentTarget; if (r.scrollWidth <= r.clientWidth + 1 || e.ctrlKey) return;
+  const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY; if (!d) return;
+  e.preventDefault(); r.scrollLeft += d * (e.deltaMode === 1 ? 32 : 1);
+}, {passive:false});
 
 /* ====================================================================
    Desktop: open-with, updates
    ==================================================================== */
 const UPD = {state:{state:'idle'}, info:null, modalOpen:false, dismissed:null};
 function renderUpdate(){
-  const s = UPD.state, bar = $('#updBar'), dot = $('#updDot'), txt = $('#bUpdTxt');
+  const s = UPD.state, bar = $('#updBar'), dot = $('#updDot'), sb = $('#bSettings');
   dot.classList.toggle('on', s.state === 'ready');
-  txt.textContent = s.state === 'ready' ? '立即更新' : s.state === 'downloading' ? `下載中 ${s.percent || 0}%` : s.state === 'checking' ? '檢查中…' : '檢查更新';
+  sb.title = s.state === 'ready' ? `設定：新版本 v${s.version} 已下載好，打開「軟體更新」即可更新` : s.state === 'downloading' ? `設定：正在下載新版本 ${s.percent || 0}%` : '設定：顯示模式、工具列、按鍵、軟體更新';
   if (s.state === 'ready' && UPD.dismissed !== s.version) {
     bar.innerHTML = `<span>新版本 <b>v${esc(s.version)}</b> 已下載完成，重新啟動即可完成更新。</span><span class="sp"></span>
       ${s.notes ? '<button data-u="notes">查看更新內容</button>' : ''}<button data-u="later">稍後</button><button class="go" data-u="install">立即重新啟動並更新</button>`;
@@ -7449,7 +7559,7 @@ function renderUpdate(){
     bar.innerHTML = `<span>正在下載新版本 <b>v${esc(s.version || '')}</b>…</span><span class="bar"><i style="width:${s.percent || 0}%"></i></span><span>${s.percent || 0}%</span><span class="sp"></span>`;
     bar.classList.add('show');
   } else bar.classList.remove('show');
-  if (UPD.modalOpen) { const m = $('#updMsg'); if (m) m.innerHTML = updateMessage(); }
+  if (SET) SET.paintUpdate();
 }
 function updateMessage(){
   const s = UPD.state, v = UPD.info ? UPD.info.version : '';
@@ -7459,9 +7569,9 @@ function updateMessage(){
     case 'available': return `發現新版本 <b>v${esc(s.version)}</b>，正在背景下載…`;
     case 'downloading': return `正在下載新版本 <b>v${esc(s.version || '')}</b>… ${s.percent || 0}%<div class="updbar show" style="background:transparent;padding:8px 0 0"><span class="bar" style="background:#e6e2d9;width:100%"><i style="width:${s.percent || 0}%;background:#2f9e62"></i></span></div>`;
     case 'ready': return `新版本 <b>v${esc(s.version)}</b> 已下載完成。${s.notes ? `<div class="note" style="margin-top:10px;white-space:pre-wrap;max-height:220px;overflow:auto">${esc(s.notes)}</div>` : ''}`;
-    case 'error': return `檢查更新時發生問題：${esc(s.message || '')}<div class="note" style="margin-top:10px">請確認網路連線後再試一次。也可以到 GitHub 的版本頁面手動下載最新安裝檔。</div>`;
+    case 'error': return `檢查更新時發生問題：${esc(s.message || '')}<div class="note" style="margin-top:10px">請確認網路連線後再試一次，也可以按「版本記錄」手動下載最新安裝檔。</div>`;
     case 'dev': return '目前是開發模式，不會自動更新。';
-    case 'unsupported': return '這個安裝方式不支援自動更新，請到 GitHub 版本頁面下載最新安裝檔。';
+    case 'unsupported': return '這個安裝方式不支援自動更新，請按「版本記錄」下載最新安裝檔。';
     default: return '';
   }
 }
@@ -7473,26 +7583,14 @@ async function installUpdate(){
 }
 actions.checkUpdate = async () => {
   if (!DESK) return;
-  if (UPD.state.state === 'ready') return showUpdateModal();
-  DESK.update.check().then(st => { if (st) { UPD.state = st; renderUpdate(); } });
-  if (UPD.state.state !== 'downloading') { UPD.state = {state:'checking'}; renderUpdate(); }
-  showUpdateModal();
+  if (!['ready', 'downloading', 'checking'].includes(UPD.state.state)) { UPD.state = {state:'checking'}; renderUpdate(); DESK.update.check().then(st => { if (st) { UPD.state = st; renderUpdate(); } }); }
+  openSettings('update');
 };
-async function showUpdateModal(){
-  UPD.modalOpen = true;
-  const ready = UPD.state.state === 'ready';
-  const r = await openModal({title:'軟體更新', width:460,
-    body:`<div style="margin-bottom:8px;color:var(--ink2)">目前版本：v${esc(UPD.info ? UPD.info.version : '')}</div><div id="updMsg">${updateMessage()}</div>`,
-    buttons:[{label:'版本記錄', value:'page'}, {spacer:true}, {label:ready ? '稍後' : '關閉', value:false}].concat(ready ? [{label:'立即重新啟動並更新', primary:true, value:'install'}] : [])});
-  UPD.modalOpen = false;
-  if (r === 'install') installUpdate();
-  if (r === 'page') DESK.openExternal('https://github.com/Tsukiinuhibi/PDFEditor/releases');
-}
 $('#updBar').addEventListener('click', e => {
   const u = e.target.dataset.u; if (!u) return;
   if (u === 'install') installUpdate();
   if (u === 'later') { UPD.dismissed = UPD.state.version; renderUpdate(); }
-  if (u === 'notes') showUpdateModal();
+  if (u === 'notes') openSettings('update');
 });
 if (DESK) {
   $('#grpApp').style.display = '';
@@ -7519,8 +7617,6 @@ function applyTheme(){
   const dark = THEME === 'dark' || (THEME === 'system' && darkMQ.matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   document.documentElement.dataset.page = PAGECOLOR === 'auto' ? (dark ? 'night' : 'original') : PAGECOLOR;
-  const b = $('#bTheme');
-  if (b) { const ic = THEME === 'system' ? 'themeAuto' : THEME === 'dark' ? 'moon' : 'sun'; b.querySelector('svg').outerHTML = icon(ic); b.title = '顯示模式：' + THEME_NAMES[THEME]; }
   if (typeof drawRulers === 'function') drawRulers();
 }
 darkMQ.addEventListener('change', applyTheme);
@@ -7528,24 +7624,8 @@ function setTheme(t){
   THEME = t; try { localStorage.setItem(THEME_KEY, t); } catch (_) {}
   if (DESK && DESK.setTheme) DESK.setTheme(t).then(applyTheme); else applyTheme();
 }
-function showThemeMenu(){
-  const m = $('#themeMenu'), btn = $('#bTheme');
-  if (m.style.display === 'block') { m.style.display = 'none'; return; }
-  const now = darkMQ.matches ? '暗色' : '亮色';
-  m.innerHTML = '<div class="hd">視窗顯示</div>' + [['system', 'themeAuto', `<small>目前：${now}</small>`], ['dark', 'moon', ''], ['light', 'sun', '']]
-    .map(([k, ic, x]) => `<button data-th="${k}" class="${THEME === k ? 'on' : ''}"><span class="ck">${THEME === k ? '✓' : ''}</span>${icon(ic)}${THEME_NAMES[k]}${x}</button>`).join('') +
-    '<hr><div class="hd">頁面色彩（只影響畫面顯示，不改變檔案）</div>' +
-    Object.entries(PAGE_NAMES).map(([k, n]) => `<button data-pc="${k}" class="${PAGECOLOR === k ? 'on' : ''}"><span class="ck">${PAGECOLOR === k ? '✓' : ''}</span><span class="pcs pcs-${k}"></span>${n}</button>`).join('');
-  const r = btn.getBoundingClientRect(); m.style.display = 'block';
-  m.style.left = Math.min(r.left, innerWidth - m.offsetWidth - 8) + 'px'; m.style.top = (r.bottom + 4) + 'px';
-  m.onclick = e => {
-    const p = e.target.closest('[data-pc]'); if (p) { m.style.display = 'none'; setPageColor(p.dataset.pc); toast('頁面色彩：' + PAGE_NAMES[p.dataset.pc]); return; }
-    const b = e.target.closest('[data-th]'); if (!b) return; m.style.display = 'none'; setTheme(b.dataset.th); toast('顯示模式：' + THEME_NAMES[b.dataset.th]);
-  };
-}
-document.addEventListener('pointerdown', e => { const m = $('#themeMenu'); if (m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('#bTheme')) m.style.display = 'none'; }, true);
 if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyTheme();
-paintSplitButtons();
+paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box};
 </script>
 </body>

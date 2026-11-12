@@ -21,7 +21,8 @@ const pics = await win.evaluate(async () => {
   // a poor scan: small print, grey paper, speckles, scanned at low resolution (drawn small, then blown up)
   const small = draw(700, 120, g => { g.fillStyle = '#e9e5dc'; g.fillRect(0, 0, 700, 120); g.fillStyle = '#2a2a2a'; g.font = '22px "PDFE Sans"';
     g.fillText('會議紀錄：本週五下午三點於二樓會議室舉行。', 12, 40); g.fillText('請攜帶筆電與上月的報表（共 12 頁）。', 12, 86);
-    for (let k = 0; k < 900; k++) { g.fillStyle = Math.random() < .5 ? 'rgba(0,0,0,.35)' : 'rgba(255,255,255,.5)'; g.fillRect(Math.random() * 700, Math.random() * 120, 1.5, 1.5); } });
+    let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;   // the same speckles every run
+    for (let k = 0; k < 900; k++) { g.fillStyle = rnd() < .5 ? 'rgba(0,0,0,.35)' : 'rgba(255,255,255,.5)'; g.fillRect(rnd() * 700, rnd() * 120, 1.5, 1.5); } });
   const poor = await new Promise(res => { const im = new Image(); im.onload = () => { const c = document.createElement('canvas'); c.width = 1400; c.height = 240; const g = c.getContext('2d');
     g.imageSmoothingEnabled = true; g.drawImage(im, 0, 0, 1400, 240); res(c.toDataURL('image/png').split(',')[1]); }; im.src = 'data:image/png;base64,' + small; });
   return {hz, vt, poor};

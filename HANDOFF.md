@@ -1,6 +1,6 @@
 # PDF 工作台（PDFEditor）交接文件
 
-這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-12，最新發布版本是 **v1.0.22**。
+這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-12，最新發布版本是 **v1.0.23**。
 
 ---
 
@@ -129,10 +129,11 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 結果視窗 `#ocrPanel`：可修改、「複製文字」、橫書／直書切換（會重新做影像辨識）、PDF 文字時可改用影像辨識；可以拖標題列移動；Esc（任何焦點）關閉但保留工具。
 
 ### 3.10 其他
+- 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 工具：`setTool(t)`，搭配 `HINTS[t]`（上方提示列）。繪圖工具的設定在 `DRAW_TOOLS`、`STYLES`（存 localStorage）、`PRESETS`。新增工具時，這些都要補上，ribbon 也要加按鈕。
 - 圖示：`ICONS` 物件（SVG path）。所有工具列按鈕都是彩色，滑鼠移上去會變黃色，這是使用者的明確要求。
 - 顏色選擇一律用 `openColorPicker({anchor, value, none, title, onPick})`；對話框裡的按鈕用 `bindColorButton`。
-- localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, lasttool.v1, pagecolor, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
+- localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, lastact.v1, lasttool.v1, pagecolor, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
 - 測試用的鉤子：`window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars, getAnns, TBE, sel, …}`，端對端測試會用到，不要刪。
 
 ---
@@ -184,6 +185,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | textbox-basic / textbox-image-drop | 文字方塊、格式化、右鍵選單、拖入圖片 |
 | edit-page-text | 修改與刪除 PDF 原文、再次編輯 |
 | ocr | 文字辨識：PDF 文字一字不差、剪貼簿內容、乾淨掃描（橫書、直書）與低品質掃描的辨識率、強制影像辨識、Esc 關閉 |
+| toolbar-settings | 工具列各區寬度、旋轉 ▾（記住上次）、加頁 ▾／簽署 ▾ 選單、小的復原／重做、設定視窗四頁（主題、頁面色彩、只顯示圖示、按鍵立即儲存、軟體更新）、狀態列版本號開啟更新頁、窄視窗用滾輪捲動工具列 |
 | rotated-text | 轉 90°／180°、直書、假直書、旋轉頁面上的文字，原位編輯後方向不變、pdftotext 讀得到；編輯器與頁面上字的位置一致（`_rotated_fixture.mjs` 產生測試檔） |
 | edit-page-text-real | 修改後是頁面文字（pdftotext 讀得到）、嵌入的字型子集每個字形都完整、編輯器與頁面寬度一致、帶格式再次編輯、粗體紅字、emoji 退回圖片、復原、框選跨區塊合併 |
 | select-move / rotate-arrow | 選取、移動、旋轉、端點 |
@@ -217,6 +219,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | 1.0.20 | 修改原文時寫成真正的文字（內嵌 Noto Sans TC 子集），其他軟體可搜尋、複製 |
 | 1.0.21 | 直書、轉向（90°／180°／270°）、旋轉頁面上的文字都能修改；逐字排成一欄的假直書也能辨識；新圖示（塗鴉鴨子＋手寫 PDF，`build/icon.png` 1024 px 透明背景） |
 | 1.0.22 | 文字辨識工具（框選 → PDF 文字直接取出，掃描／圖片用離線 OCR → 可修改後複製）；工具列與歡迎畫面的標誌換成新圖示（`app/img/logo.png`） |
+| 1.0.23 | 工具列精簡：顯示模式／按鍵設定／檢查更新合併成「設定」視窗；加頁 ▾、旋轉 ▾、簽署 ▾；復原／重做改小按鈕；「只顯示圖示」選項；滾輪左右捲動工具列 |
 
 ---
 
@@ -228,6 +231,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 - 文字方塊（FreeText）還不能旋轉。旋轉過的矩形、橢圓是靠外觀串流呈現，如果其他軟體重新產生外觀（例如在 Acrobat 裡改它的樣式），會變回不旋轉的樣子。
 - pdf.js 解析文字方塊的 `RC` 時，會印出「XFA rich text」警告。不影響顯示，但 RC 的 XHTML 格式可以再調整。
 - 還不能在程式裡「建立」新的圖層群組（只能使用 PDF 原本就有的群組，或把圖層拖進有子圖層的圖層裡）。
+- 文字辨識遇到雜點多、解析度低的掃描檔時，辨識率起伏很大（測試的「品質差」範例只讀出約 46%，第一行整行被當成英文）。可以改善的方向：先去雜點（中值濾波）、或同時用 `chi_tra+eng` 和 `eng+chi_tra` 辨識後取信心度高的那個。
 - 安裝檔沒有程式碼簽章，Windows 會顯示 SmartScreen 警告。**使用者已決定不做程式碼簽章**（2026-11-12，看過 SignPath、Certum 開源憑證、Microsoft Store、商業 OV 憑證的比較後），不用再提。
 - `app/index.html` 是單一大檔。如果要拆成多個模組，app:// 協定和 CSP 已經支援 ES module。
 

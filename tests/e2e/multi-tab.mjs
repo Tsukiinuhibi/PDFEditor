@@ -11,7 +11,7 @@ await win.click('#ppOk'); await win.waitForTimeout(2000);
 console.log('after del n=', await win.evaluate(() => window.__pdfapp.S.pages.length));
 // rotate selection of 2 pages
 await win.click('.thumb[data-i="0"]'); await win.click('.thumb[data-i="1"]', {modifiers:['Control']});
-await win.click('[data-act="rotR"]'); await win.waitForTimeout(2000);
+await win.click('[data-amenu="rotate"] .sp-arr'); await win.waitForTimeout(300); await win.click('#toolMenu button:has-text("向右轉")'); await win.waitForTimeout(2000);   // 旋轉 ▾ → 向右轉
 console.log('rot', await win.evaluate(() => window.__pdfapp.S.pages.map(p => p.rot).join(',')));
 // sample in new tab, close all tabs -> welcome
 await win.evaluate(() => window.__pdfapp.makeSample()); await win.waitForTimeout(2500);
