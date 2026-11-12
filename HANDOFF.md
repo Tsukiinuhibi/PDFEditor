@@ -1,6 +1,6 @@
 # PDF 工作台（PDFEditor）交接文件
 
-這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-12，最新發布版本是 **v1.0.26**。
+這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-12，最新發布版本是 **v1.0.27**。
 
 ---
 
@@ -116,7 +116,12 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 加到內容串流最後面（`appendPageContent`）：如果原本內容在最外層改了繪圖狀態（cm、gs、Tr…），先用 `q … Q` 包起來，所以包一次之後就不會再包。區塊開頭用自己的 ExtGState 把透明度、混合模式重設。
 - 版面（`layoutReal`）和編輯器完全一樣：同一個字型（編輯器加 class `real`，字型 `"PDFE Sans"` 來自 `app/fonts`，`font-kerning:none`）、行高 1.3、內距 4 pt，基線在 `realBaseline(fs)` = 1.086 × 字級。編輯原文時，編輯器的位置讓第一行基線對齊原本的基線。
 - 文字模式：`pageTextItems` 會標出每段文字屬於第幾個區塊（`blk`，依頁面順序，和 `pdfeBlocksIn` 的順序一致）。點區塊 → `editOwnText`（帶著原本格式），送出時 `cutPageBlock` 整段拿掉再寫新的；框選時碰到的區塊整段算進來。
-- `realTextOK` 檢查字型有沒有每個字，沒有就退回 FreeText 圖片做法。
+- 系統字型（v1.0.27）：每段 run 可以有 `font`（系統字型家族）。`realFontInfo(font, bold)` 給出要用的 fontkit 字型與位元組：空字串是內建思源黑體；系統字型由 `systemFontBytes`（`queryLocalFonts` 的一般／粗體字面；.ttc 用 `sfntFromCollection` 拆出單一字面；沒有粗體字面就 `synthetic`，寫入時 `2 Tr`＋0.03 em 描邊）取得。每個（字型、粗細）只嵌入一次：先用 `subsetIsSound` 把子集讀回來檢查，壞了或授權要求整個嵌入（`embed:'full'`）就整個嵌入。
+- fontkit 子集化的短 `loca` 問題現在在程式裡修好了（`patchFontkitSubset` 把奇數長度的字形補一個位元組），系統字型不用預先處理；內建思源黑體照舊已補齊。
+- 存檔前（`commitTextEditor`，編輯器還開著）：`resolveRealFonts` 把讀不到的字型換成思源黑體並 toast；`realTextCheck` 找出「指定字型沒有、思源黑體有」的字 → 跳「字型裡沒有這些字」，選「回去修改」編輯器維持開著，選「這些字改用思源黑體」就 `missingToDefault` 拆 run；連思源黑體都沒有的字照舊退回 FreeText 圖片做法。
+- 版面：`layoutReal(lines, strut)` 的字寬用各字型 fontkit 的前進寬（PDF 就是這樣畫），行高與基線用 `fontBoxMeasurer`（canvas 量的 ascent／descent，和編輯器的 CSS 一樣）加上編輯器本身的字型（`realStrut`：思源黑體、最小字級）。直書 `layoutRealV` 用各字型的直書前進量，系統字型另外寫 `W2`（`verticalW2`：前進量、原點 x 取一半寬、原點 y 依 HarfBuzz：VORG 或 topSideBearing＋字形頂）。
+- 打開原文時，`matchSystemFont` 把 PDF 的字型名（去掉 `ABCDEF+` 與 pdf-lib 的 `-1234`）對到已安裝、授權 `ok`（直書還要有直書資料）的家族，編輯器就用那個字型。
+- 字型選單在修改原文時也有：`fontBlockReason` 灰掉「授權不允許嵌入」（直書另外灰掉「沒有直書資料」）；`embed:'full'` 的字型選之前跳「整個字型會放進檔案」。
 - 這種文字是頁面本身的一部分：不能用選取工具移動，不屬於圖層。
 - 方向（v1.0.21）：`pageTextItems` 替每段文字算出它在畫面上的方向 `rot`（0／90／180／270，順時針）和是否直書 `vert`（直書字型，或 `findStackedText` 找到的「一字一行」的假直書），並換算到「閱讀座標」（把畫面轉回 `rot`）：`base` 是基線（直書是欄的中線），`a0..a1` 是沿閱讀方向的範圍，`u` 是 PDF 座標的範圍（給 `removePageText`）。`lineOf`／`groupLines` 都在閱讀座標裡分行（直書的欄從右到左）。
 - 編輯器（`openTextEditor` 的 `rot`、`vert`）用 CSS 轉向；直書用 `writing-mode:vertical-rl; text-orientation:upright`，錨點是右上角（`translateX(-100%)`）。`writePageText` 用同一個方向寫回：直書用 `layoutRealV` 排版、字型加 `vert` 特性（直書標點）並在嵌入後把 Encoding 改成 `/Identity-V`（Noto 的直書原點 880、前進 1000，和 PDF 預設 `DW2 [880 -1000]` 一樣，所以和瀏覽器排出來的位置一致）。區塊的 `PDFE_RT` 會記 `vert`，方向從 `PDFE_M` 算回來。
@@ -141,8 +146,9 @@ npm start          # 開啟程式（開發模式不會檢查更新）
   - 文字方塊的 run 可以有 `font`（CSS 家族名，空的就是預設）。預設字型堆疊是 `TB_FONT`，最前面是內建的 `PDFE Sans`（思源黑體），所以有沒有網路都一樣。編輯器裡的 span 用 `fontStack(f)`（指定字型後面接預設堆疊），這台電腦沒有那個字型時自動退回思源黑體，但字型名稱照樣保留。
   - 字型選單 `openFontMenu()`（`#fontMenu`）：搜尋框、預設／最近用過（`pdfeditor.fonts.recent.v1`，只列這台電腦有的）／中文字型／其他字型。名稱捲到看得到時才套用它自己的字型（一次套用幾百個字型很慢）。字型還在背景讀取時，打開的選單只更新「正在讀取字型…（N／M）」，清單不重畫（避免點到一半項目被換掉），讀完才重畫一次（滑鼠按著時延到放開）。
   - 重新打開舊的文字方塊時，預設的字型、粗體、斜體、底線不會套到方塊本身（只給新方塊），否則按 Esc 就會把舊方塊整個改掉。
-  - 修改原文（`.tbed.real`）時沒有字型按鈕，`htmlToRuns` 也不記 `font`；那是 v1.0.27 要做的（嵌入字型）。
-- localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, fontcat.v1, fonts.recent.v1, lastact.v1, lasttool.v1, pagecolor, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
+  - 目錄 v2（`pdfeditor.fontcat.v2`）多記 `embed`（OS/2 fsType：`ok`／`full`／`no`）、`vert`（`vhea`＋`vmtx`＋GSUB `vert`）、`bytes`，以及每個家族的所有字面 `faces`（`FONT_FACES` 存 `queryLocalFonts` 的原物件）。測試用 `registerTestFont` 把字型位元組當成已安裝字型（`TEST_FONTS`）。
+  - 格式列與 `currentTBStyle` 讀游標旁邊那段文字的樣式（`caretStyleNode`）：游標在元素之間時（例如剛打開編輯器、游標在最後）取前一段文字。
+- localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, fontcat.v2, fonts.recent.v1, lastact.v1, lasttool.v1, pagecolor, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
 - 測試用的鉤子：`window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars, getAnns, TBE, sel, …}`，端對端測試會用到，不要刪。
 
 ---
@@ -199,6 +205,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | arrange-pages | 24 頁的格狀排列（多排）、拖曳後的「第 N 頁（原 M）」、跨排拖曳、還原原本順序、取消不改文件、套用後頁面順序與註解跟著頁面、縮圖重新編號、復原 |
 | toolbar-settings | 工具列各區寬度、旋轉 ▾（記住上次）、加頁 ▾／簽署 ▾ 選單、小的復原／重做、設定視窗四頁（主題、頁面色彩、只顯示圖示、按鍵立即儲存、軟體更新）、狀態列版本號開啟更新頁、窄視窗用滾輪捲動工具列 |
 | rotated-text | 轉 90°／180°、直書、假直書、旋轉頁面上的文字，原位編輯後方向不變、pdftotext 讀得到；編輯器與頁面上字的位置一致（`_rotated_fixture.mjs` 產生測試檔） |
+| edit-page-text-fonts | 字型目錄 v2（授權、直書資料、大小、字面）、測試字型、.ttc／粗體字面／CFF 嵌入、奇數長度字形修正、修改原文用 DejaVu Serif（文字讀得到、粗體字面、字形完整、寬度一致、再次編輯、字型不累積、復原）、假粗體、一個區塊多種字型各嵌一次、刪掉的字型不嵌入、讀不到的字型、壞子集改整個嵌入、灰掉的字型與原因、整個嵌入提醒、缺字提醒（回去修改／改用思源黑體）、自動對應原文字型、直書系統字型（位置與 W2） |
 | edit-page-text-real | 修改後是頁面文字（pdftotext 讀得到）、嵌入的字型子集每個字形都完整、編輯器與頁面寬度一致、帶格式再次編輯、粗體紅字、emoji 退回圖片、復原、框選跨區塊合併 |
 | select-move / rotate-arrow | 選取、移動、旋轉、端點 |
 | rotate-box | 矩形與圖片旋轉、沿旋轉後的方向調整大小、移動、填色、復原、旋轉頁面後角度不變 |
@@ -235,12 +242,14 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | 1.0.24 | 文字辨識加強：原圖與去雜點（3×3 中值濾波）各辨識一次，取信心度高的；雜點多的掃描從 46% 提升到 97% |
 | 1.0.25 | 檢視列在窄視窗不再擠成一團（逐步只留圖示，最後才捲動）；縮圖右鍵「展開所有頁面（拖曳排序）」 |
 | 1.0.26 | 文字方塊選字型：讀取系統字型（中文名稱、分組、搜尋、最近用過）；文字方塊預設改用內建思源黑體 |
+| 1.0.27 | 修改原文也能選系統字型（子集嵌入、粗體字面或假粗體、直書）；授權禁止嵌入的灰掉、整個嵌入先提醒、缺字先提醒；原文字型已安裝就自動用它 |
 
 ---
 
 ## 7. 已知限制與可以接著做的事
 
-- 修改原文時，字型（Noto Sans TC）沒有的字（emoji、罕用字）那一段仍是圖片，搜尋不到。
+- 修改原文時，連思源黑體都沒有的字（emoji、罕用字）那一段仍是圖片，搜尋不到。
+- 修改原文用系統字型：CJK 的 CFF（.otf）字型、有 VORG 的直書字型沒有實測過（測試環境沒有這類字型，只用 Inter 驗證過 CFF 的路徑）。
 - 修改原文不支援斜放（不是 90° 倍數）或鏡像的文字。直書字型如果用的不是 Identity-V 編碼（例如 `ETen-B5-V`），寬度對不上，原文會改用隱藏的方式（3 Tr）拿掉。Form XObject 裡的文字只能用底色蓋住。
 - 轉向或直書的文字裡如果有字型沒有的字（emoji 等），不能修改（橫書會退回圖片做法，轉向／直書沒有）。
 - 文字方塊（FreeText）還不能旋轉。旋轉過的矩形、橢圓是靠外觀串流呈現，如果其他軟體重新產生外觀（例如在 Acrobat 裡改它的樣式），會變回不旋轉的樣子。
@@ -257,14 +266,13 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 使用者說「簡單的先提前做」：小修正和簡單的功能可以插隊先做（v1.0.25 就是檢視列修正＋排列頁面）。
 
 0. **修正：從其他 PDF 插入頁面**：使用者的「承攬商施工前必備檢核資料.pdf」在插入對話框只讀到 1 頁、預覽全白（一般 PDF 正常）。懷疑是 PDF 包（Portfolio：`/Collection` ＋內嵌的 PDF）或 XFA 表單。已請使用者提供檔案或回報左側「附件」分頁內容，確認原因後再修。
-1. **v1.0.27 修改原文也能選系統字型**：存檔時嵌入 PDF。要處理：OS/2 `fsType` 禁止嵌入、.ttc 拆出單一字型、fontkit 子集化的短 `loca` 問題（見 2. 技術架構的字型說明）、字型度量、粗體字面、直書 `vmtx`。
-2. **v1.0.28 字型辨識**：併入「文字辨識」，結果視窗分「文字｜字型」兩頁，列出可能的字型與相似度 %。PDF 本身的文字直接讀 PDF 記錄的字型名稱（100%）；圖片用逐字字形比對系統字型＋Google Fonts（`fonts.googleapis.com/css2?family=…&text=…` 只抓用到的字）。使用者選了這個做法；WhatTheFont 等網站沒有公開 API，不要去抓它們的網頁。
-3. **→ 便利貼功能增強**：可刪除；右鍵已放置的便利貼可編輯／複製／刪除；可編輯作者名字；設定裡有預設人員名單（可新增／刪除）。
-4. **→ 右鍵預設功能更變**：空白處右鍵不再出現頁面選單（複製／剪下／貼上頁、加空白頁、旋轉、轉圖片、刪除頁）；插入／新增物件或文字（含框選類工具）後，右鍵點空白處自動切回選取；選到物件時工具列自動換成該物件的編輯功能。
-5. **→ 擷取圖片：點選圖片後可刪除或更換**：「擷取圖片」工具點選某張圖片後，除了擷取，還能刪除檔案中的這張圖片，或「更換圖片」換成另一張。
-6. **→ 列印功能**（程式目前完全沒有列印）：使用者要求「非常完善的設定去配合印表機」，答覆如下——印到辦公室多功能事務機（A4／A3、雙面、紙匣、裝訂）、家用噴墨／雷射、也會印成 PDF（Microsoft Print to PDF）。要有：印表機、份數與自動分頁、頁面範圍、紙張、直橫向、縮放、彩色／黑白、是否印註解，加上雙面（長邊／短邊翻頁）、多頁印在一張（2／4／6／9／16）、手冊列印、大圖分割列印（海報）。介面選「程式內建列印視窗」：即時預覽每張紙、記住每台印表機上次的設定；紙匣、裝訂等驅動程式專屬設定一鍵轉到 Windows 列印對話框。Electron 可用 `webContents.getPrintersAsync()`、`webContents.print({deviceName, copies, collate, duplexMode, color, pageSize, landscape, margins, dpi, pageRanges, silent})`；版面（多頁合一、手冊、海報）由程式自己把頁面畫成紙張再送印。輪到時走完整設計流程（有不確定的細節使用者說可以問）。
-7. **→ 尋找與取代**（程式目前沒有）：Ctrl+F 尋找列，全部符合處標示、顯示「第 N／M 筆」、Enter／Shift+Enter 上下筆；左側加「搜尋」分頁列出頁碼與前後文；選項：區分大小寫、全字相符、全形半形視為相同。使用者要「也搜尋掃描頁」：沒有文字的頁先用文字辨識讀一次（記住結果），掃描頁只能找、不能取代。取代：逐筆確認或全部取代，用修改原文的機制（`removePageText`＋`writePageText`），取代後是真正的文字、可復原；字型沿用 v1.0.27（修改原文選字型）的能力。兩個一起做，排在列印之後。
-8. **→ Claude 增益集（排在最後）**：使用者想在 Claude 裡用自己的帳號下指令，由 Claude 用 PDF 工作台的功能修改 PDF。選了做法 A：Claude 桌面版擴充功能（`.mcpb`，MCP Bundle；Claude 桌面版內建 Node，使用者雙擊安裝或「設定 → 擴充功能 → 進階設定 → 安裝擴充功能…」）。PDF 工作台在設定裡開一個只限本機的連線埠＋配對碼，擴充功能（stdio MCP server）把工具呼叫轉給它；工具全部走 `mutate()`，可復原、不覆蓋原檔。第三方程式不能用 Claude 訂閱帳號登入（Anthropic 2026 年起禁止），所以「程式內建對話面板」（做法 B）只能用 API 金鑰，使用者暫時不要。做好後要給使用者一步一步的安裝說明。
+1. **v1.0.28 字型辨識**：併入「文字辨識」，結果視窗分「文字｜字型」兩頁，列出可能的字型與相似度 %。PDF 本身的文字直接讀 PDF 記錄的字型名稱（100%）；圖片用逐字字形比對系統字型＋Google Fonts（`fonts.googleapis.com/css2?family=…&text=…` 只抓用到的字）。使用者選了這個做法；WhatTheFont 等網站沒有公開 API，不要去抓它們的網頁。
+2. **→ 便利貼功能增強**：可刪除；右鍵已放置的便利貼可編輯／複製／刪除；可編輯作者名字；設定裡有預設人員名單（可新增／刪除）。
+3. **→ 右鍵預設功能更變**：空白處右鍵不再出現頁面選單（複製／剪下／貼上頁、加空白頁、旋轉、轉圖片、刪除頁）；插入／新增物件或文字（含框選類工具）後，右鍵點空白處自動切回選取；選到物件時工具列自動換成該物件的編輯功能。
+4. **→ 擷取圖片：點選圖片後可刪除或更換**：「擷取圖片」工具點選某張圖片後，除了擷取，還能刪除檔案中的這張圖片，或「更換圖片」換成另一張。
+5. **→ 列印功能**（程式目前完全沒有列印）：使用者要求「非常完善的設定去配合印表機」，答覆如下——印到辦公室多功能事務機（A4／A3、雙面、紙匣、裝訂）、家用噴墨／雷射、也會印成 PDF（Microsoft Print to PDF）。要有：印表機、份數與自動分頁、頁面範圍、紙張、直橫向、縮放、彩色／黑白、是否印註解，加上雙面（長邊／短邊翻頁）、多頁印在一張（2／4／6／9／16）、手冊列印、大圖分割列印（海報）。介面選「程式內建列印視窗」：即時預覽每張紙、記住每台印表機上次的設定；紙匣、裝訂等驅動程式專屬設定一鍵轉到 Windows 列印對話框。Electron 可用 `webContents.getPrintersAsync()`、`webContents.print({deviceName, copies, collate, duplexMode, color, pageSize, landscape, margins, dpi, pageRanges, silent})`；版面（多頁合一、手冊、海報）由程式自己把頁面畫成紙張再送印。輪到時走完整設計流程（有不確定的細節使用者說可以問）。
+6. **→ 尋找與取代**（程式目前沒有）：Ctrl+F 尋找列，全部符合處標示、顯示「第 N／M 筆」、Enter／Shift+Enter 上下筆；左側加「搜尋」分頁列出頁碼與前後文；選項：區分大小寫、全字相符、全形半形視為相同。使用者要「也搜尋掃描頁」：沒有文字的頁先用文字辨識讀一次（記住結果），掃描頁只能找、不能取代。取代：逐筆確認或全部取代，用修改原文的機制（`removePageText`＋`writePageText`），取代後是真正的文字、可復原；字型沿用 v1.0.27（修改原文選字型）的能力。兩個一起做，排在列印之後。
+7. **→ Claude 增益集（排在最後）**：使用者想在 Claude 裡用自己的帳號下指令，由 Claude 用 PDF 工作台的功能修改 PDF。選了做法 A：Claude 桌面版擴充功能（`.mcpb`，MCP Bundle；Claude 桌面版內建 Node，使用者雙擊安裝或「設定 → 擴充功能 → 進階設定 → 安裝擴充功能…」）。PDF 工作台在設定裡開一個只限本機的連線埠＋配對碼，擴充功能（stdio MCP server）把工具呼叫轉給它；工具全部走 `mutate()`，可復原、不覆蓋原檔。第三方程式不能用 Claude 訂閱帳號登入（Anthropic 2026 年起禁止），所以「程式內建對話面板」（做法 B）只能用 API 金鑰，使用者暫時不要。做好後要給使用者一步一步的安裝說明。
 
 ---
 
