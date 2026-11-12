@@ -577,6 +577,10 @@ body.autoscrolling[data-autodir=e],body.autoscrolling[data-autodir=e] *{cursor:e
 .tbed{position:absolute;z-index:30;transform-origin:0 0;min-width:24px;padding:4px;outline:1.2px dashed #1c64d9;outline-offset:0;white-space:pre;line-height:1.3;
   font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;cursor:text;user-select:text;-webkit-user-select:text;color:#1f2328}
 .tbed div{min-height:1em}
+/* editing the PDF's own text: the editor uses the font the text is written with, so what you see is what is saved */
+@font-face{font-family:"PDFE Sans";src:url(fonts/NotoSansTC-Regular.ttf) format("truetype");font-weight:100 600;font-display:block}
+@font-face{font-family:"PDFE Sans";src:url(fonts/NotoSansTC-Bold.ttf) format("truetype");font-weight:601 900;font-display:block}
+.tbed.real{font-family:"PDFE Sans";font-kerning:none;font-synthesis:style}
 .tbed:focus{outline-color:#1c64d9}
 html[data-page="night"] .tbveil,html[data-page="night"] .tbed{filter:invert(.9) hue-rotate(180deg)}
 html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
@@ -850,6 +854,7 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
 <input type="file" id="fInsert" accept="application/pdf,.pdf">
 
 <script src="../node_modules/pdf-lib/dist/pdf-lib.min.js"></script>
+<script src="../node_modules/@pdf-lib/fontkit/dist/fontkit.umd.min.js"></script>
 <script src="../node_modules/node-forge/dist/forge.min.js"></script>
 <script type="module">
 import * as pdfjs from '../node_modules/pdfjs-dist/build/pdf.min.mjs';
@@ -3483,10 +3488,10 @@ function richTextXHTML(lines){
   const sp = r => `<span style="font-size:${r.size}pt;color:${r.color}${r.bold ? ';font-weight:bold' : ''}${r.italic ? ';font-style:italic' : ''}${r.underline ? ';text-decoration:underline' : ''}${r.bg ? ';background-color:' + r.bg : ''}">${esc(r.text)}</span>`;
   return `<?xml version="1.0"?><body xmlns="http://www.w3.org/1999/xhtml" xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/" xfa:APIVersion="Acrobat:11.0.0" xfa:spec="2.0.2">${lines.map(l => `<p>${l.map(sp).join('') || ' '}</p>`).join('')}</body>`;
 }
-function openTextEditor(i, x, y, {id = null, lines = null, box = null, veilBox = null, veilColor = null, edit = null, selectAll = false} = {}){
+function openTextEditor(i, x, y, {id = null, lines = null, box = null, veilBox = null, veilColor = null, edit = null, selectAll = false, real = false} = {}){
   commitTextEditor();
   const pg = S.pages[i], el = document.createElement('div');
-  el.className = 'tbed'; el.contentEditable = 'true'; el.spellcheck = false;
+  el.className = 'tbed' + (real ? ' real' : ''); el.contentEditable = 'true'; el.spellcheck = false;
   const bx = box || {boxBg:TB_STYLE.boxBg, border:TB_STYLE.border};
   el.dataset.boxbg = bx.boxBg || ''; el.dataset.border = bx.border ? '1' : '';
   el.style.background = bx.boxBg || 'transparent'; el.style.outlineStyle = 'dashed';
@@ -3659,22 +3664,33 @@ function commitTextEditor(){
 }
 // the PDF's own text was edited: take the original out of the page and put the new text in its place
 async function commitPageTextEdit(i, x, y, lines, box, edit, empty){
-  if (JSON.stringify(lines) === edit.orig && !box.boxBg && !box.border) return false;   // nothing changed
-  let r = empty ? null : await renderTextBox(lines, box), removed = 0;
+  if (JSON.stringify(lines) === edit.orig && (edit.block ? JSON.stringify(box) === edit.origBox : !box.boxBg && !box.border)) return false;   // nothing changed
+  // written as real page text when the bundled font has every character; otherwise as before, a picture in a text box
+  const real = !empty && await realTextOK(lines);
+  let r = empty || real ? null : await renderTextBox(lines, box), removed = 0;
   return mutate(empty ? '已刪除文字' : '已修改文字', async doc => {
-    removed = removePageText(doc, i, edit.U);
+    if (edit.block) removed = cutPageBlock(doc, i, edit.block) ? 1 : 0;
+    else {
+      if (edit.blocks && edit.blocks.length) {   // our own blocks inside the selection go as a whole
+        const bytes = pageContentBytes(doc, doc.getPage(i)), list = bytes ? pdfeBlocksIn(bytes) : [];
+        edit.blocks.map(k => list[k]).filter(Boolean).forEach(b => { if (cutPageBlock(doc, i, b.name)) removed++; });
+      }
+      removed += removePageText(doc, i, edit.U);
+    }
     if (!removed) {   // the text sits where it cannot be taken out (e.g. inside a form object): cover it instead
       if (empty) { toast('這段文字無法直接刪除', 'err'); return false; }
-      r = await renderTextBox(lines, {...box, boxBg:box.boxBg || edit.bg});
+      box = {...box, boxBg:box.boxBg || edit.bg};
+      if (!real) r = await renderTextBox(lines, box);
     }
     if (empty) return;
+    if (real) { await writePageText(doc, i, x, y, lines, box); return; }
     const plain = lines.map(l => l.map(x => x.text).join('')).join('\n');
     const b = {x, y, w:r.w, h:r.h}, g = visToPdf(i, b), ap = await imageAP(doc, r.png, b.w, b.h, g.rot);
     const f = lines[0] && lines[0][0] || TB_STYLE, col = hexColor(f.color || '#000000');
     addAnnot(doc, i, {Type:'Annot', Subtype:'FreeText', T:PDFHexString.fromText(AUTHOR), CreationDate:nowStr(), Subj:PDFHexString.fromText('修改的文字'), F:4,
       Rect:g.rect, Contents:PDFHexString.fromText(plain), RC:PDFHexString.fromText(richTextXHTML(lines)),
       DA:PDFString.of(`/Helv ${f.size || 12} Tf ${col.map(v => v.toFixed(3)).join(' ')} rg`), M:nowStr(), PDFE:true,
-      PDFE_RT:PDFHexString.fromText(JSON.stringify({lines, box:removed ? box : {...box, boxBg:box.boxBg || edit.bg}})), AP:{N:ap}});
+      PDFE_RT:PDFHexString.fromText(JSON.stringify({lines, box})), AP:{N:ap}});
   });
 }
 async function editTextBox(i, a){
@@ -3889,6 +3905,133 @@ function removePageText(doc, i, U){
   return hits.length;
 }
 
+/* ---------------- writing text into the page itself (真正的文字) ----------------
+   Edited text goes into the page's content stream, in Noto Sans TC (bundled in app/fonts; only the characters
+   used are embedded), so every reader can show, find, select and copy it. Each piece is one block
+     /PDFE_Text /<name> BDC q … Q EMC
+   whose properties (page Resources /Properties /<name>) keep the rich text (PDFE_RT) for editing it again, the
+   frame it was laid out in (PDFE_M: box top-left, x right / y up) and the font resources it uses (PDFE_Fonts). */
+const RF = {bytes:{}, fk:{}};
+const REAL_ASC = 1.16, REAL_DESC = .288, REAL_LH = 1.3, REAL_SKEW = .25, REAL_UL = .125, REAL_ULW = .05;   // Noto Sans TC metrics (per em)
+const realBaseline = fs => ((REAL_LH - REAL_ASC - REAL_DESC) / 2 + REAL_ASC) * fs;   // where the editor (CSS line-height 1.3) puts the baseline
+function realFontBytes(bold){
+  const k = bold ? 'Bold' : 'Regular';
+  if (!RF.bytes[k]) RF.bytes[k] = fetch(`fonts/NotoSansTC-${k}.ttf`).then(r => { if (!r.ok) throw new Error('字型載入失敗'); return r.arrayBuffer(); }).then(b => new Uint8Array(b));
+  return RF.bytes[k];
+}
+function realFont(bold){ const k = bold ? 'Bold' : 'Regular'; if (!RF.fk[k]) RF.fk[k] = realFontBytes(bold).then(b => fontkit.create(b)); return RF.fk[k]; }
+async function realFontsReady(){ try { await Promise.all([document.fonts.load('400 16px "PDFE Sans"', '字A'), document.fonts.load('700 16px "PDFE Sans"', '字A')]); } catch (_) {} }
+// can these lines be written with the bundled font? (it must have every character)
+async function realTextOK(lines){
+  try {
+    const [r, b] = await Promise.all([realFont(false), realFont(true)]);
+    return lines.every(l => l.every(run => [...run.text].every(ch => /\s/.test(ch) || (run.bold ? b : r).hasGlyphForCodePoint(ch.codePointAt(0)))));
+  } catch (_) { return false; }
+}
+// lay the lines out exactly like the editor: same font, line height 1.3, 4 pt padding; y grows downwards from the box top
+async function layoutReal(lines){
+  const [fr, fb] = await Promise.all([realFont(false), realFont(true)]);
+  const width = r => { const f = r.bold ? fb : fr; return f.layout(r.text).glyphs.reduce((t, g) => t + g.advanceWidth, 0) / f.unitsPerEm * r.size; };
+  const rows = []; let y = TB_PAD, w = 0;
+  lines.forEach(line => {
+    const fs = line.length ? Math.max(...line.map(r => r.size)) : TB_STYLE.size, lh = fs * REAL_LH;
+    let x = TB_PAD; const items = [];
+    line.forEach(r => { const rw = width(r); items.push({r, x, w:rw}); x += rw; });
+    rows.push({top:y, lh, base:y + realBaseline(fs), items}); y += lh; w = Math.max(w, x + TB_PAD);
+  });
+  return {rows, w:Math.max(20, w), h:Math.max(14, y + TB_PAD)};
+}
+// the page's content stream with `text` added on top; the old content is wrapped in q … Q unless it already leaves the graphics state alone
+function appendPageContent(doc, i, text){
+  const page = doc.getPage(i), ctx = doc.context, bytes = pageContentBytes(doc, page);
+  if (!bytes) {   // content we cannot decode: wrap it with separate streams instead
+    const c = page.node.get(PDFName.of('Contents')), old = !c ? [] : ctx.lookup(c) instanceof PDFArray ? ctx.lookup(c).asArray() : [c];
+    page.node.set(PDFName.of('Contents'), ctx.obj([ctx.register(ctx.stream('q\n')), ...old, ctx.register(ctx.stream('\nQ\n')), ctx.register(ctx.flateStream(enc8(text)))]));
+    return;
+  }
+  let depth = 0, clean = true;
+  for (const o of csTokens(bytes)) {
+    if (o.op === 'q') depth++; else if (o.op === 'Q') depth--;
+    else if (depth <= 0 && !['BMC', 'BDC', 'EMC', 'MP', 'DP'].includes(o.op)) { clean = false; break; }
+  }
+  const out = clean && depth === 0 ? concatBytes([bytes, enc8('\n' + text + '\n')]) : concatBytes([enc8('q\n'), bytes, enc8('\nQ\n' + text + '\n')]);
+  page.node.set(PDFName.of('Contents'), ctx.register(ctx.flateStream(out)));
+}
+// write `lines` as page text in a box whose top-left is (x, y) in page view coordinates
+async function writePageText(doc, i, x, y, lines, box){
+  const page = doc.getPage(i), ctx = doc.context, L = await layoutReal(lines), N = k => PDFName.of(k), f2 = v => +(+v).toFixed(3);
+  doc.registerFontkit(fontkit);
+  const vp = S.pages[i].vp1, P = (a, b) => vp.convertToPdfPoint(a, b), o = P(x, y), px = P(x + 1, y), py = P(x, y - 1);
+  const M = [px[0] - o[0], px[1] - o[1], py[0] - o[0], py[1] - o[1], o[0], o[1]];   // local (from the box top-left, x right, y up) → page
+  const used = {}, fontOf = async bold => {
+    const k = bold ? 'b' : 'r';
+    if (!used[k]) { const f = await doc.embedFont(await realFontBytes(bold), {subset:true}); used[k] = {f, name:page.node.newFontDictionary(bold ? 'PDFE_B' : 'PDFE_R', f.ref).toString()}; }
+    return used[k];
+  };
+  const gs = page.node.newExtGState('PDFE_GS', ctx.register(ctx.obj({Type:'ExtGState', ca:1, CA:1, BM:'Normal', SMask:'None'}))).toString();
+  const ops = ['q', `${gs} gs`, `${M.map(f2).join(' ')} cm`];
+  if (box.boxBg) ops.push(`${hexRgb(box.boxBg)} rg 0 ${f2(-L.h)} ${f2(L.w)} ${f2(L.h)} re f`);
+  if (box.border) ops.push(`0.45 0.45 0.45 RG 0.8 w 0.4 ${f2(-L.h + .4)} ${f2(L.w - .8)} ${f2(L.h - .8)} re S`);
+  L.rows.forEach(row => row.items.forEach(({r, x:rx, w}) => { if (r.bg) ops.push(`${hexRgb(r.bg)} rg ${f2(rx)} ${f2(-(row.base + REAL_DESC * r.size))} ${f2(w)} ${f2((REAL_ASC + REAL_DESC) * r.size)} re f`); }));
+  ops.push('BT 0 Tc 0 Tw 100 Tz 0 Ts 0 Tr');
+  for (const row of L.rows) for (const {r, x:rx} of row.items) {
+    if (!r.text) continue;
+    const u = await fontOf(r.bold);
+    ops.push(`${hexRgb(r.color || '#000000')} rg ${u.name} ${f2(r.size)} Tf 1 0 ${r.italic ? REAL_SKEW : 0} 1 ${f2(rx)} ${f2(-row.base)} Tm ${u.f.encodeText(r.text).toString()} Tj`);
+  }
+  ops.push('ET');
+  L.rows.forEach(row => row.items.forEach(({r, x:rx, w}) => { if (r.underline && r.text) ops.push(`${hexRgb(r.color || '#000000')} rg ${f2(rx)} ${f2(-(row.base + REAL_UL * r.size + REAL_ULW * r.size / 2))} ${f2(w)} ${f2(REAL_ULW * r.size)} re f`); }));
+  ops.push('Q');
+  const res = page.node.Resources(); let props = res.lookupMaybe(N('Properties'), PDFDict);
+  if (!props) { props = ctx.obj({}); res.set(N('Properties'), props); }
+  let name; do { name = 'PDFE_T' + Math.floor(Math.random() * 1e6); } while (props.has(N(name)));
+  props.set(N(name), ctx.obj({PDFE_RT:PDFHexString.fromText(JSON.stringify({lines, box})), PDFE_M:M.map(f2), PDFE_Size:[f2(L.w), f2(L.h)],
+    PDFE_Fonts:Object.values(used).map(u => N(u.name.slice(1))).concat([N(gs.slice(1))])}));
+  appendPageContent(doc, i, `/PDFE_Text /${name} BDC\n${ops.join('\n')}\nEMC`);
+  return {w:L.w, h:L.h};
+}
+// our text blocks in a content stream, in order: {name, s, e} (byte range of the whole block)
+function pdfeBlocksIn(bytes){
+  const out = []; let depth = 0, cur = null;
+  for (const o of csTokens(bytes)) {
+    if (o.op === 'BDC' || o.op === 'BMC') { depth++; if (!cur && o.op === 'BDC' && o.args[0] && o.args[0].name === 'PDFE_Text' && o.args[1] && o.args[1].name) cur = {name:o.args[1].name, s:o.s, depth}; }
+    else if (o.op === 'EMC') { if (cur && depth === cur.depth) { cur.e = o.e; out.push(cur); cur = null; } depth = Math.max(0, depth - 1); }
+  }
+  return out;
+}
+function blockProps(doc, i, name){
+  const props = doc.getPage(i).node.Resources().lookupMaybe(PDFName.of('Properties'), PDFDict);
+  return props && props.lookupMaybe(PDFName.of(name), PDFDict);
+}
+// take our block `name` out of page i, with the resources only it used
+function cutPageBlock(doc, i, name){
+  const page = doc.getPage(i), bytes = pageContentBytes(doc, page); if (!bytes) return false;
+  const b = pdfeBlocksIn(bytes).find(x => x.name === name); if (!b) return false;
+  page.node.set(PDFName.of('Contents'), doc.context.register(doc.context.flateStream(concatBytes([bytes.subarray(0, b.s), bytes.subarray(b.e)]))));
+  const res = page.node.Resources(), p = blockProps(doc, i, name);
+  const fonts = p && p.lookupMaybe(PDFName.of('PDFE_Fonts'), PDFArray);
+  if (fonts) fonts.asArray().forEach(n => ['Font', 'ExtGState'].forEach(k => { const d = res.lookupMaybe(PDFName.of(k), PDFDict); if (d) d.delete(n); }));
+  const props = res.lookupMaybe(PDFName.of('Properties'), PDFDict); if (props) props.delete(PDFName.of(name));
+  return true;
+}
+// what the editor needs to edit block k (in page order) again
+async function readPageBlock(i, k){
+  try {
+    const doc = await geoDoc(), page = doc.getPage(i), bytes = pageContentBytes(doc, page), b = bytes && pdfeBlocksIn(bytes)[k]; if (!b) return null;
+    const p = blockProps(doc, i, b.name), rt = p && p.lookupMaybe(PDFName.of('PDFE_RT'), PDFHexString, PDFString), m = p && p.lookupMaybe(PDFName.of('PDFE_M'), PDFArray);
+    if (!rt || !m) return {name:b.name};
+    const M = numArr(m), sz = numArr(p.lookup(PDFName.of('PDFE_Size'), PDFArray)), vp = S.pages[i].vp1;
+    const corner = (lx, ly) => vp.convertToViewportPoint(M[0] * lx + M[2] * ly + M[4], M[1] * lx + M[3] * ly + M[5]);
+    const q = [corner(0, 0), corner(sz[0], 0), corner(0, -sz[1]), corner(sz[0], -sz[1])], xs = q.map(v => v[0]), ys = q.map(v => v[1]);
+    return {name:b.name, rt:JSON.parse(rt.decodeText()), at:{x:q[0][0], y:q[0][1]}, vbox:{x:Math.min(...xs), y:Math.min(...ys), w:Math.max(...xs) - Math.min(...xs), h:Math.max(...ys) - Math.min(...ys)}};
+  } catch (e) { console.warn(e); return null; }
+}
+async function pdfeBlocks(i){   // (for tests) the blocks on page i and their plain text
+  const doc = await geoDoc(), bytes = pageContentBytes(doc, doc.getPage(i)); if (!bytes) return [];
+  return pdfeBlocksIn(bytes).map(b => { const p = blockProps(doc, i, b.name), rt = p && p.lookupMaybe(PDFName.of('PDFE_RT'), PDFHexString, PDFString);
+    return rt ? JSON.parse(rt.decodeText()).lines.map(l => l.map(r => r.text).join('')).join('\n') : '?'; });
+}
+
 /* ---------------- picking text on the page ---------------- */
 const TXT_CACHE = new Map();
 function pageTextItems(i){
@@ -3897,10 +4040,10 @@ function pageTextItems(i){
   if (TXT_CACHE.size > 40) TXT_CACHE.clear();
   const pg = S.pages[i];
   const p = pg.page.getTextContent({includeMarkedContent:true}).then(tc => {
-    const out = []; let hide = 0;
+    const out = []; let hide = 0, depth = 0, blk = -1, blkAt = 0, nblk = 0;   // blk: which of our text blocks (in page order) we are in
     for (const it of tc.items) {
-      if (it.type === 'beginMarkedContent' || it.type === 'beginMarkedContentProps') { if (hide || it.tag === 'PDFE_Hide') hide++; continue; }
-      if (it.type === 'endMarkedContent') { if (hide) hide--; continue; }
+      if (it.type === 'beginMarkedContent' || it.type === 'beginMarkedContentProps') { depth++; if (it.tag === 'PDFE_Text' && blk < 0) { blk = nblk++; blkAt = depth; } if (hide || it.tag === 'PDFE_Hide') hide++; continue; }
+      if (it.type === 'endMarkedContent') { if (blk >= 0 && depth === blkAt) blk = -1; depth--; if (hide) hide--; continue; }
       if (hide || !it.str || !it.str.trim()) continue;
       const [a, b, c, d, e, f] = it.transform;
       if (Math.abs(b) > Math.abs(a) * .02 || Math.abs(c) > Math.abs(d) * .02 || a <= 0 || d <= 0) continue;   // horizontal text only
@@ -3908,7 +4051,7 @@ function pageTextItems(i){
       const w = it.width || it.str.length * fs * .5;
       const q = [pg.vp1.convertToViewportPoint(e, f + fs * desc), pg.vp1.convertToViewportPoint(e + w, f + fs * asc)], b0 = pg.vp1.convertToViewportPoint(e, f), b1 = pg.vp1.convertToViewportPoint(e + w, f);
       if (Math.abs(b0[1] - b1[1]) > 1) continue;   // shows vertical on a rotated page
-      out.push({str:it.str, fs, font:it.fontName, base:f, x0:e, x1:e + w, y0:f + fs * desc, y1:f + fs * asc,
+      out.push({str:it.str, fs, font:it.fontName, base:f, x0:e, x1:e + w, y0:f + fs * desc, y1:f + fs * asc, blk:blk >= 0 ? blk : null,
         v:{x:Math.min(q[0][0], q[1][0]), y:Math.min(q[0][1], q[1][1]), w:Math.abs(q[1][0] - q[0][0]), h:Math.abs(q[1][1] - q[0][1])}, vb:b0[1]});
     }
     return out;
@@ -3959,9 +4102,16 @@ function sampleTextColors(i, v){
   const hx = a => '#' + a.map(v => pad2(v.toString(16))).join('');
   return {fg:hx(fg), bg:hx([br, bgc, bb])};
 }
-async function editPageText(i, items, {selectAll = false} = {}){
+async function editPageText(i, items, {selectAll = false, all = null, plain = false} = {}){
   await tbSaving;
   if (!items.length || !S.pages[i]) return;
+  let blocks = [];
+  if (!plain && all) {   // text written by this app: edit the whole block with its formatting
+    const ks = [...new Set(items.filter(t => t.blk != null).map(t => t.blk))];
+    if (ks.length === 1 && items.every(t => t.blk === ks[0])) return editOwnText(i, ks[0], all, {selectAll});
+    if (ks.length) { items = [...new Set([...items, ...all.filter(t => ks.includes(t.blk))])]; blocks = ks; }
+  }
+  await realFontsReady();
   const rows = groupLines(items), pg = S.pages[i];
   const U = {x0:Math.min(...items.map(t => t.x0)) - .5, x1:Math.max(...items.map(t => t.x1)) + .5, y0:Math.min(...items.map(t => t.y0)) - .5, y1:Math.max(...items.map(t => t.y1)) + .5};
   const vx = Math.min(...items.map(t => t.v.x)), vy = Math.min(...items.map(t => t.v.y));
@@ -3976,9 +4126,20 @@ async function editPageText(i, items, {selectAll = false} = {}){
     r.items.forEach((t, k) => { if (k && t.x0 - r.items[k - 1].x1 > t.fs * .2 && !/\s$/.test(text) && !/^\s/.test(t.str)) text += ' '; text += t.str; });
     return [{text, size, color:col.fg, bg:'', bold, italic, underline:false}];
   });
-  const top = Math.min(...rows[0].items.map(t => t.vb));
-  openTextEditor(i, vU.x - TB_PAD, top - TB_PAD - size * 1.01, {lines, box:{boxBg:'', border:false}, veilBox:{x:vU.x - 1, y:vU.y - 1, w:vU.w + 2, h:vU.h + 2}, veilColor:col.bg,
-    edit:{U, bg:col.bg, orig:JSON.stringify(lines)}, selectAll});
+  const top = Math.min(...rows[0].items.map(t => t.vb));   // the editor's first baseline lands on the old one
+  openTextEditor(i, vU.x - TB_PAD, top - TB_PAD - realBaseline(size), {lines, box:{boxBg:'', border:false}, veilBox:{x:vU.x - 1, y:vU.y - 1, w:vU.w + 2, h:vU.h + 2}, veilColor:col.bg,
+    edit:{U, bg:col.bg, orig:JSON.stringify(lines), blocks}, selectAll, real:true});
+  clearTextMarks();
+}
+// edit text this app wrote into the page: the editor comes back with its formatting, at its place
+async function editOwnText(i, k, items, {selectAll = false} = {}){
+  await tbSaving;
+  const b = await readPageBlock(i, k), mine = items.filter(t => t.blk === k);
+  if (!b || !b.rt) return editPageText(i, mine.length ? mine : items, {selectAll, plain:true});   // no editing data: treat it as plain text
+  await realFontsReady();
+  const col = sampleTextColors(i, b.vbox);
+  openTextEditor(i, b.at.x, b.at.y, {lines:b.rt.lines, box:b.rt.box, veilBox:{x:b.vbox.x - 1, y:b.vbox.y - 1, w:b.vbox.w + 2, h:b.vbox.h + 2}, veilColor:col.bg,
+    edit:{block:b.name, bg:col.bg, orig:JSON.stringify(b.rt.lines), origBox:JSON.stringify(b.rt.box)}, selectAll, real:true});
   clearTextMarks();
 }
 // textbox mode: click text to edit its line, drag across text to pick several lines, click empty space for a new box
@@ -3999,13 +4160,13 @@ function textboxDown(i, e){
     window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); band && band.remove();
     items = await itemsP;
     if (rect) picked = items.filter(t => boxHit(t.v, rect));
-    if (rect) { if (picked.length) editPageText(i, picked, {selectAll:true}); else clearTextMarks(); return; }
+    if (rect) { if (picked.length) editPageText(i, picked, {selectAll:true, all:items}); else clearTextMarks(); return; }
     // a plain click
     await tbSaving;
     const hit = (await getAnns(i)).filter(a => a.subtype === 'FreeText' && inBox(p0, a)).pop();
     if (hit) { editTextBox(i, hit); return; }
     const it = items.find(t => inBox(p0, t.v, 1));
-    if (it) { editPageText(i, lineOf(items, it)); return; }
+    if (it) { if (it.blk != null) editOwnText(i, it.blk, items); else editPageText(i, lineOf(items, it)); return; }
     const pg = S.pages[i], lh = TB_STYLE.size * 1.3;
     openTextEditor(i, clamp(p0.x - TB_PAD, 0, pg.w - 20), clamp(p0.y - lh / 2 - TB_PAD, 0, pg.h - lh));
   };
@@ -4022,7 +4183,7 @@ function textboxHover(e){
     if (S.tool !== 'textbox' || TBE) return;
     const it = items.find(t => inBox(p, t.v, 1));
     pel.classList.toggle('over-text', !!it);
-    if (it) showTextMarks(i, lineOf(items, it)); else clearTextMarks();
+    if (it) showTextMarks(i, it.blk != null ? items.filter(t => t.blk === it.blk) : lineOf(items, it)); else clearTextMarks();
   });
 }
 
@@ -7069,7 +7230,7 @@ function showThemeMenu(){
 document.addEventListener('pointerdown', e => { const m = $('#themeMenu'); if (m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('#bTheme')) m.style.display = 'none'; }, true);
 if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyTheme();
 paintSplitButtons();
-window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape};
+window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat};
 </script>
 </body>
 </html>

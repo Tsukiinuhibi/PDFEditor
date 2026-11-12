@@ -1,6 +1,6 @@
 # PDF 工作台（PDFEditor）交接文件
 
-這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-12，最新發布版本是 **v1.0.19**。
+這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-12，最新發布版本是 **v1.0.20**。
 
 ---
 
@@ -31,6 +31,8 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 函式庫都直接從 `node_modules` 載入：
   - `pdfjs-dist` 4.10.38：顯示、文字擷取、抓頁面上的圖片。含 cMaps 和標準字型，有啟用 worker，`isEvalSupported:false`。
   - `pdf-lib` 1.17.1：所有寫入，用全域 `PDFLib`。
+  - `@pdf-lib/fontkit` 1.1.1（全域 `fontkit`）：嵌入字型子集，以及檢查字型有沒有某個字、量字寬。
+  - `app/fonts/NotoSansTC-Regular.ttf`、`NotoSansTC-Bold.ttf`：思源黑體（Noto Sans TC，OFL 授權，`OFL.txt`），由 Google Fonts 的可變字型用 fontTools `varLib.instancer --static --update-name-table` 產生 400／700 兩個字重。**每個字形都補齊到 4 位元組（`glyf.padding = 4`）**：fontkit 做子集時會用短格式 `loca`（位移 ÷2），字形長度是奇數的話，子集裡後面的字形會壞掉。換字型時一定要再做一次。
   - `node-forge` 1.4.3：數位簽章（PKCS#7 detached）。
   - `gifenc`：輸出 GIF。
   - `electron-updater`：自動更新。
@@ -98,7 +100,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 ### 3.6 修改 PDF 原文（v1.0.13）
 - `csTokens` 會把內容串流拆成 token，`locateTextOps` 追蹤 CTM、Tm、字型寬度，算出每個顯示文字的運算子在頁面上的位置。
 - `removePageText` 會把選取範圍內的運算子換成**等寬的空白位移** `[-n] TJ`，所以後面的文字不會移動。如果字型寬度不可靠（例如 Type3、沒有 Widths），就改用 `/PDFE_Hide BMC 3 Tr … EMC` 把文字隱藏起來。
-- 新的文字會放成 FreeText，`Subj` 為「修改的文字」。
+- 新的文字寫進頁面本身（v1.0.20，見 3.8）。字型沒有的字（emoji、罕用字）才退回舊做法：FreeText，`Subj` 為「修改的文字」，外觀是 PNG。
 - 14 種標準字型用 `PDFLib.StandardFontEmbedder` 取得字寬。Form XObject 裡的文字無法移除，這時會改成加底色把原文蓋住。
 
 ### 3.7 不閃爍（v1.0.14）
@@ -107,7 +109,16 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - `busy()` 一開始只擋住輸入，超過 450ms 才會顯示遮罩。
 - 頁數改變時（v1.0.17）：`matchPages` 用 pdf.js 的 `page.ref`（pdf-lib 存檔後頁面物件編號不變）找出每一頁在修改前是第幾頁，舊畫面跟著頁面走。新頁面和尺寸改變的頁面（例如旋轉）由 `prerenderNew` 先在畫面外畫好，縮圖也先用這張圖縮小顯示。
 
-### 3.8 其他
+### 3.8 修改原文寫成真正的文字（v1.0.20）
+- `writePageText(doc, i, x, y, lines, box)` 把編輯器的格式化文字寫進頁面內容串流，用 `doc.embedFont(…, {subset:true})` 嵌入 Noto Sans TC 子集（只含用到的字）。粗體用 Bold 字型，斜體是 `Tm` 傾斜 0.25，底線和文字底色是 `re f`。
+- 每段文字是一個區塊：`/PDFE_Text /<名稱> BDC q … Q EMC`。名稱指向頁面 Resources `/Properties` 裡的字典：`PDFE_RT`（`{lines, box}` JSON，再次編輯用）、`PDFE_M`（版面座標：方框左上角、x 向右、y 向上 → 頁面座標的矩陣）、`PDFE_Size`、`PDFE_Fonts`（這段用到的 Font／ExtGState 資源名稱，刪掉區塊時一起清掉）。
+- 加到內容串流最後面（`appendPageContent`）：如果原本內容在最外層改了繪圖狀態（cm、gs、Tr…），先用 `q … Q` 包起來，所以包一次之後就不會再包。區塊開頭用自己的 ExtGState 把透明度、混合模式重設。
+- 版面（`layoutReal`）和編輯器完全一樣：同一個字型（編輯器加 class `real`，字型 `"PDFE Sans"` 來自 `app/fonts`，`font-kerning:none`）、行高 1.3、內距 4 pt，基線在 `realBaseline(fs)` = 1.086 × 字級。編輯原文時，編輯器的位置讓第一行基線對齊原本的基線。
+- 文字模式：`pageTextItems` 會標出每段文字屬於第幾個區塊（`blk`，依頁面順序，和 `pdfeBlocksIn` 的順序一致）。點區塊 → `editOwnText`（帶著原本格式），送出時 `cutPageBlock` 整段拿掉再寫新的；框選時碰到的區塊整段算進來。
+- `realTextOK` 檢查字型有沒有每個字，沒有就退回 FreeText 圖片做法。
+- 這種文字是頁面本身的一部分：不能用選取工具移動，不屬於圖層。
+
+### 3.9 其他
 - 工具：`setTool(t)`，搭配 `HINTS[t]`（上方提示列）。繪圖工具的設定在 `DRAW_TOOLS`、`STYLES`（存 localStorage）、`PRESETS`。新增工具時，這些都要補上，ribbon 也要加按鈕。
 - 圖示：`ICONS` 物件（SVG path）。所有工具列按鈕都是彩色，滑鼠移上去會變黃色，這是使用者的明確要求。
 - 顏色選擇一律用 `openColorPicker({anchor, value, none, title, onPick})`；對話框裡的按鈕用 `bindColorButton`。
@@ -162,6 +173,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 |---|---|
 | textbox-basic / textbox-image-drop | 文字方塊、格式化、右鍵選單、拖入圖片 |
 | edit-page-text | 修改與刪除 PDF 原文、再次編輯 |
+| edit-page-text-real | 修改後是頁面文字（pdftotext 讀得到）、嵌入的字型子集每個字形都完整、編輯器與頁面寬度一致、帶格式再次編輯、粗體紅字、emoji 退回圖片、復原、框選跨區塊合併 |
 | select-move / rotate-arrow | 選取、移動、旋轉、端點 |
 | rotate-box | 矩形與圖片旋轉、沿旋轉後的方向調整大小、移動、填色、復原、旋轉頁面後角度不變 |
 | fill-nodes | 填色（節點模式） |
@@ -190,12 +202,13 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | 1.0.17 | 新增、刪除、旋轉頁面時不閃爍 |
 | 1.0.18 | 矩形、橢圓、雲形、戳記、圖片可以旋轉 |
 | 1.0.19 | 巢狀圖層：保留並顯示群組與子圖層，整組顯示／隱藏、鎖定，拖曳進出群組 |
+| 1.0.20 | 修改原文時寫成真正的文字（內嵌 Noto Sans TC 子集），其他軟體可搜尋、複製 |
 
 ---
 
 ## 7. 已知限制與可以接著做的事
 
-- 修改原文時，新文字是 FreeText 註解，外觀是圖片，所以**用其他軟體搜尋不到新文字**。如果要做成真正的頁面文字，需要嵌入中文字型（例如 Noto Sans TC 子集，搭配 fontkit）。
+- 修改原文時，字型（Noto Sans TC）沒有的字（emoji、罕用字）那一段仍是圖片，搜尋不到。
 - 修改原文只支援橫書；旋轉 90°、直書的文字還不能改。Form XObject 裡的文字只能用底色蓋住。
 - 文字方塊（FreeText）還不能旋轉。旋轉過的矩形、橢圓是靠外觀串流呈現，如果其他軟體重新產生外觀（例如在 Acrobat 裡改它的樣式），會變回不旋轉的樣子。
 - pdf.js 解析文字方塊的 `RC` 時，會印出「XFA rich text」警告。不影響顯示，但 RC 的 XHTML 格式可以再調整。
