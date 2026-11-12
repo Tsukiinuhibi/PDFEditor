@@ -137,9 +137,10 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 圖示：`ICONS` 物件（SVG path）。所有工具列按鈕都是彩色，滑鼠移上去會變黃色，這是使用者的明確要求。
 - 顏色選擇一律用 `openColorPicker({anchor, value, none, title, onPick})`；對話框裡的按鈕用 `bindColorButton`。
 - 字型（v1.0.26）：
-  - `FONTCAT`／`loadFontCatalog()`：`queryLocalFonts()` 取得系統字型，每個家族挑一個代表字面，在背景一次讀一個字型檔（fontkit；.ttc 用 postscriptName 取出），得到顯示名稱（`zh-TW` 優先）和是不是中文字型（「中文字體」四個字都有），結果快取在 `pdfeditor.fontcat.v1`。
+  - `FONTCAT`／`loadFontCatalog()`：`queryLocalFonts()` 取得系統字型，每個家族挑一個代表字面，在背景一次讀一個字型檔（`fontkit.create(bytes)` 不帶名稱；.ttc 字型集再用 postscriptName、找不到就用家族名挑出那一個——帶名稱呼叫 `create` 只對字型集有效，一般 .ttf 會出錯），得到顯示名稱（每種語言先看 nameID 16 再看 nameID 1，`zh-TW` 優先）和是不是中文字型（「中文字體」四個字都有）。讀成功的結果快取在 `pdfeditor.fontcat.v1`，讀不了的不快取、下次再試；`queryLocalFonts` 失敗時，下次打開選單會再試。
   - 文字方塊的 run 可以有 `font`（CSS 家族名，空的就是預設）。預設字型堆疊是 `TB_FONT`，最前面是內建的 `PDFE Sans`（思源黑體），所以有沒有網路都一樣。編輯器裡的 span 用 `fontStack(f)`（指定字型後面接預設堆疊），這台電腦沒有那個字型時自動退回思源黑體，但字型名稱照樣保留。
-  - 字型選單 `openFontMenu()`（`#fontMenu`）：搜尋框、預設／最近用過（`pdfeditor.fonts.recent.v1`，只列這台電腦有的）／中文字型／其他字型。名稱捲到看得到時才套用它自己的字型（一次套用幾百個字型很慢）。
+  - 字型選單 `openFontMenu()`（`#fontMenu`）：搜尋框、預設／最近用過（`pdfeditor.fonts.recent.v1`，只列這台電腦有的）／中文字型／其他字型。名稱捲到看得到時才套用它自己的字型（一次套用幾百個字型很慢）。字型還在背景讀取時，打開的選單只更新「正在讀取字型…（N／M）」，清單不重畫（避免點到一半項目被換掉），讀完才重畫一次（滑鼠按著時延到放開）。
+  - 重新打開舊的文字方塊時，預設的字型、粗體、斜體、底線不會套到方塊本身（只給新方塊），否則按 Esc 就會把舊方塊整個改掉。
   - 修改原文（`.tbed.real`）時沒有字型按鈕，`htmlToRuns` 也不記 `font`；那是 v1.0.27 要做的（嵌入字型）。
 - localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, fontcat.v1, fonts.recent.v1, lastact.v1, lasttool.v1, pagecolor, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
 - 測試用的鉤子：`window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars, getAnns, TBE, sel, …}`，端對端測試會用到，不要刪。
@@ -260,7 +261,8 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 2. **v1.0.28 字型辨識**：併入「文字辨識」，結果視窗分「文字｜字型」兩頁，列出可能的字型與相似度 %。PDF 本身的文字直接讀 PDF 記錄的字型名稱（100%）；圖片用逐字字形比對系統字型＋Google Fonts（`fonts.googleapis.com/css2?family=…&text=…` 只抓用到的字）。使用者選了這個做法；WhatTheFont 等網站沒有公開 API，不要去抓它們的網頁。
 3. **→ 便利貼功能增強**：可刪除；右鍵已放置的便利貼可編輯／複製／刪除；可編輯作者名字；設定裡有預設人員名單（可新增／刪除）。
 4. **→ 右鍵預設功能更變**：空白處右鍵不再出現頁面選單（複製／剪下／貼上頁、加空白頁、旋轉、轉圖片、刪除頁）；插入／新增物件或文字（含框選類工具）後，右鍵點空白處自動切回選取；選到物件時工具列自動換成該物件的編輯功能。
-5. **→ Claude 增益集（排在最後）**：使用者想在 Claude 裡用自己的帳號下指令，由 Claude 用 PDF 工作台的功能修改 PDF。選了做法 A：Claude 桌面版擴充功能（`.mcpb`，MCP Bundle；Claude 桌面版內建 Node，使用者雙擊安裝或「設定 → 擴充功能 → 進階設定 → 安裝擴充功能…」）。PDF 工作台在設定裡開一個只限本機的連線埠＋配對碼，擴充功能（stdio MCP server）把工具呼叫轉給它；工具全部走 `mutate()`，可復原、不覆蓋原檔。第三方程式不能用 Claude 訂閱帳號登入（Anthropic 2026 年起禁止），所以「程式內建對話面板」（做法 B）只能用 API 金鑰，使用者暫時不要。做好後要給使用者一步一步的安裝說明。
+5. **→ 擷取圖片：點選圖片後可刪除或更換**：「擷取圖片」工具點選某張圖片後，除了擷取，還能刪除檔案中的這張圖片，或「更換圖片」換成另一張。
+6. **→ Claude 增益集（排在最後）**：使用者想在 Claude 裡用自己的帳號下指令，由 Claude 用 PDF 工作台的功能修改 PDF。選了做法 A：Claude 桌面版擴充功能（`.mcpb`，MCP Bundle；Claude 桌面版內建 Node，使用者雙擊安裝或「設定 → 擴充功能 → 進階設定 → 安裝擴充功能…」）。PDF 工作台在設定裡開一個只限本機的連線埠＋配對碼，擴充功能（stdio MCP server）把工具呼叫轉給它；工具全部走 `mutate()`，可復原、不覆蓋原檔。第三方程式不能用 Claude 訂閱帳號登入（Anthropic 2026 年起禁止），所以「程式內建對話面板」（做法 B）只能用 API 金鑰，使用者暫時不要。做好後要給使用者一步一步的安裝說明。
 
 ---
 
