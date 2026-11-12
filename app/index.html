@@ -3758,7 +3758,7 @@ function htmlToRuns(root){
     }
     const rgb2hex = v => { const m = v.match(/\d+(\.\d+)?/g); return m ? '#' + m.slice(0, 3).map(n => pad2((+n).toString(16))).join('') : v; };
     const st = {size:Math.round(parseFloat(cs.fontSize) * 10) / 10, color:rgb2hex(cs.color), bg:bg ? rgb2hex(bg) : '', bold:+cs.fontWeight >= 600, italic:cs.fontStyle === 'italic', underline};
-    const font = real ? '' : firstFamily(cs.fontFamily);
+    const font = firstFamily(cs.fontFamily);
     if (font) st.font = font;
     return st;
   };
@@ -3780,8 +3780,10 @@ const runFont = (r, K) => `${r.italic ? 'italic ' : ''}${r.bold ? 700 : 400} ${r
 // font's ascent and descent, a line holds all of them plus the editor's own font (the strut, strut = {size, font, bold}),
 // and the runs of a line share one baseline
 const TB_LH = 1.3;
-function layoutRuns(lines, ctx, strut = {size:TB_STYLE.size, font:'', bold:false}){
-  const memo = new Map(), box = (font, size, bold) => {
+// (font, size, bold) → that font's box in a line: top / bottom around the baseline, ascent a and descent d
+function fontBoxMeasurer(ctx){
+  const memo = new Map();
+  return (font, size, bold) => {
     const k = `${bold ? 7 : 4}|${size}|${font || ''}`;
     if (!memo.has(k)) {
       ctx.font = `${bold ? 700 : 400} ${size}px ${fontStack(font)}`;
@@ -3790,6 +3792,9 @@ function layoutRuns(lines, ctx, strut = {size:TB_STYLE.size, font:'', bold:false
     }
     return memo.get(k);
   };
+}
+function layoutRuns(lines, ctx, strut = {size:TB_STYLE.size, font:'', bold:false}){
+  const box = fontBoxMeasurer(ctx);
   const out = []; let y = TB_PAD, w = 0;
   lines.forEach(line => {
     const sb = box(strut.font, strut.size, strut.bold); let top = sb.top, bottom = sb.bottom, x = TB_PAD;
@@ -3886,7 +3891,6 @@ function restoreTBRange(){
 }
 // apply a format: to the highlighted text while editing, and as the default for new text boxes
 function applyTextFormat(k, v){
-  if (k === 'font' && TBE && TBE.el.classList.contains('real')) return;   // the PDF's own text is written with the bundled font
   if (TBE && document.activeElement === TBE.el) saveTBRange();   // selectionchange arrives later: take the selection as it is now
   // with text highlighted only that text changes; with nothing highlighted it also becomes the default for new text
   const hasSel = TBE && TBE.range && !TBE.range.collapsed;
@@ -3924,7 +3928,7 @@ function currentTBStyle(){
   const cs = getComputedStyle(n);
   const rgb2hex = v => { const m = v.match(/\d+(\.\d+)?/g); return m ? '#' + m.slice(0, 3).map(x => pad2((+x).toString(16))).join('') : v; };
   return {...TB_STYLE, size:Math.round(parseFloat(cs.fontSize)), color:rgb2hex(cs.color), bold:+cs.fontWeight >= 600, italic:cs.fontStyle === 'italic', underline:/underline/.test(cs.textDecorationLine),
-    font:TBE.el.classList.contains('real') ? '' : firstFamily(cs.fontFamily),
+    font:firstFamily(cs.fontFamily),
     boxBg:TBE.el.dataset.boxbg || '', border:!!TBE.el.dataset.border};
 }
 const TB_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 60, 72];
@@ -4120,7 +4124,11 @@ function commitTextEditor(){
 async function commitPageTextEdit(i, x, y, lines, box, edit, empty, strut){
   if (JSON.stringify(lines) === edit.orig && (edit.block ? JSON.stringify(box) === edit.origBox : !box.boxBg && !box.border)) return false;   // nothing changed
   // written as real page text when the bundled font has every character; otherwise as before, a picture in a text box
-  const real = !empty && await realTextOK(lines);
+  if (!empty) lines = await resolveRealFonts(lines);   // a font that cannot be read: 思源黑體, with a message
+  if (edit.vert) lines = lines.map(l => l.map(r => { if (!r.font) return r; const {font, ...rest} = r; return rest; }));   // vertical: 思源黑體 for now
+  let chk = empty ? {image:false, missing:[]} : await realTextCheck(lines);
+  if (chk.missing.length) { lines = await missingToDefault(lines); chk = await realTextCheck(lines); }
+  const real = !empty && !chk.image;
   if (!empty && !real && (edit.rot || edit.vert)) { toast('有字型裡沒有的字（例如表情符號），轉向或直書的文字無法這樣修改', 'err'); return false; }
   let r = empty || real ? null : await renderTextBox(lines, box, strut), removed = 0;
   return mutate(empty ? '已刪除文字' : '已修改文字', async doc => {
@@ -4138,7 +4146,7 @@ async function commitPageTextEdit(i, x, y, lines, box, edit, empty, strut){
       if (!real) r = await renderTextBox(lines, box, strut);
     }
     if (empty) return;
-    if (real) { await writePageText(doc, i, x, y, lines, box, {rot:edit.rot || 0, vert:!!edit.vert}); return; }
+    if (real) { await writePageText(doc, i, x, y, lines, box, {rot:edit.rot || 0, vert:!!edit.vert, strut:strut && !edit.vert ? strut : realStrut(lines)}); return; }
     const plain = lines.map(l => l.map(x => x.text).join('')).join('\n');
     const b = {x, y, w:r.w, h:r.h}, g = visToPdf(i, b), ap = await imageAP(doc, r.png, b.w, b.h, g.rot);
     const f = lines[0] && lines[0][0] || TB_STYLE, col = hexColor(f.color || '#000000');
@@ -4437,7 +4445,6 @@ async function patchFontkitSubset(){
    frame it was laid out in (PDFE_M: box top-left, x right / y up) and the font resources it uses (PDFE_Fonts). */
 const RF = {bytes:{}, fk:{}};
 const REAL_ASC = 1.16, REAL_DESC = .288, REAL_LH = 1.3, REAL_SKEW = .25, REAL_UL = .125, REAL_ULW = .05;   // Noto Sans TC metrics (per em)
-const realBaseline = fs => ((REAL_LH - REAL_ASC - REAL_DESC) / 2 + REAL_ASC) * fs;   // where the editor (CSS line-height 1.3) puts the baseline
 function realFontBytes(bold){
   const k = bold ? 'Bold' : 'Regular';
   if (!RF.bytes[k]) RF.bytes[k] = fetch(`fonts/NotoSansTC-${k}.ttf`).then(r => { if (!r.ok) throw new Error('字型載入失敗'); return r.arrayBuffer(); }).then(b => new Uint8Array(b));
@@ -4445,24 +4452,90 @@ function realFontBytes(bold){
 }
 function realFont(bold){ const k = bold ? 'Bold' : 'Regular'; if (!RF.fk[k]) RF.fk[k] = realFontBytes(bold).then(b => fontkit.create(b)); return RF.fk[k]; }
 async function realFontsReady(){ try { await Promise.all([document.fonts.load('400 16px "PDFE Sans"', '字A'), document.fonts.load('700 16px "PDFE Sans"', '字A')]); } catch (_) {} }
-// can these lines be written with the bundled font? (it must have every character)
-async function realTextOK(lines){
+// the font a run is written in: '' is the bundled Noto Sans TC, anything else a system font in its regular or bold
+// face (no bold face: the regular one, drawn bold: synthetic). key names it, so each (font, weight) is embedded once
+const RFI = new Map();
+function realFontInfo(font, bold){
+  const key = (font || '') + '|' + (bold ? 'b' : 'r');
+  if (!RFI.has(key)) RFI.set(key, (async () => {
+    if (!font) return {fk:await realFont(bold), bytes:await realFontBytes(bold), key, synthetic:false, full:false, sys:false};
+    const {bytes, synthetic} = await systemFontBytes(font, bold), fk = fontkit.create(bytes);
+    if (!fk || Array.isArray(fk.fonts) || !fk.unitsPerEm) throw new Error('not a font');
+    const fam = FONTCAT.fams.find(f => f.family === font);
+    return {fk, bytes, key, synthetic, full:!!fam && fam.embed === 'full', sys:true};
+  })());
+  RFI.get(key).catch(() => RFI.delete(key));
+  return RFI.get(key);
+}
+// a font whose file cannot be read is replaced by 思源黑體, with a message
+async function resolveRealFonts(lines){
+  const bad = new Set();
+  for (const r of lines.flat()) if (r.font && !bad.has(r.font)) { try { await realFontInfo(r.font, r.bold); } catch (_) { bad.add(r.font); } }
+  bad.forEach(f => toast(`讀不到字型${fontLabel(f)}，這段文字改用思源黑體`, 'err'));
+  return bad.size ? lines.map(l => l.map(r => { if (!bad.has(r.font)) return r; const {font, ...rest} = r; return rest; })) : lines;
+}
+// which characters cannot be written: missing = a run's own font lacks them but 思源黑體 has them (by font);
+// image = some character not even 思源黑體 has (then the text goes in as a picture, as before)
+async function realTextCheck(lines){
+  const missing = new Map(); let image = false;
+  for (const r of lines.flat()) {
+    const own = await realFontInfo(r.font || '', r.bold), noto = r.font ? await realFontInfo('', r.bold) : own;
+    for (const ch of r.text) {
+      if (/\s/.test(ch) || own.fk.hasGlyphForCodePoint(ch.codePointAt(0))) continue;
+      if (r.font && noto.fk.hasGlyphForCodePoint(ch.codePointAt(0))) { if (!missing.has(r.font)) missing.set(r.font, new Set()); missing.get(r.font).add(ch); }
+      else image = true;
+    }
+  }
+  return {image, missing:[...missing].map(([font, set]) => ({font, chars:[...set]}))};
+}
+// the characters a run's font lacks become runs of their own in 思源黑體 (spaces stay with their neighbours)
+async function missingToDefault(lines){
+  const out = [];
+  for (const line of lines) {
+    const nl = [];
+    for (const r of line) {
+      if (!r.font) { nl.push(r); continue; }
+      const own = await realFontInfo(r.font, r.bold); let cur = null;
+      for (const ch of r.text) {
+        const f = /\s/.test(ch) ? (cur ? cur.font || '' : r.font) : own.fk.hasGlyphForCodePoint(ch.codePointAt(0)) ? r.font : '';
+        if (cur && (cur.font || '') === f) { cur.text += ch; continue; }
+        const {font, ...rest} = r; cur = f ? {...rest, text:ch, font:f} : {...rest, text:ch}; nl.push(cur);
+      }
+    }
+    out.push(nl);
+  }
+  return out;
+}
+// the editor's own font for page text: 思源黑體 at the smallest size of the text (see openTextEditor)
+const realStrut = lines => { const sz = lines.flat().map(r => +r.size).filter(v => v > 0); return {size:sz.length ? Math.min(...sz) : TB_STYLE.size, font:'', bold:false}; };
+// a fontkit subset of these characters, read back: every glyph still has its outline (TrueType only; CFF is trusted)
+async function subsetIsSound(fk, text){
+  if (!fk.directory.tables.glyf) return true;
   try {
-    const [r, b] = await Promise.all([realFont(false), realFont(true)]);
-    return lines.every(l => l.every(run => [...run.text].every(ch => /\s/.test(ch) || (run.bold ? b : r).hasGlyphForCodePoint(ch.codePointAt(0)))));
+    await patchFontkitSubset();
+    const sub = fk.createSubset(); fk.layout(text).glyphs.forEach(g => sub.includeGlyph(g.id));
+    const bytes = await new Promise((res, rej) => { const parts = []; sub.encodeStream().on('data', b => parts.push(new Uint8Array(b))).on('end', () => res(concatBytes(parts))).on('error', rej); });   // (it ends by itself)
+    const back = fontkit.create(bytes);
+    for (let k = 1; k < sub.glyphs.length; k++) if (back.getGlyph(k).path.commands.length !== fk.getGlyph(sub.glyphs[k]).path.commands.length) return false;
+    return true;
   } catch (_) { return false; }
 }
-// lay the lines out exactly like the editor: same font, line height 1.3, 4 pt padding; y grows downwards from the box top
-async function layoutReal(lines){
-  const [fr, fb] = await Promise.all([realFont(false), realFont(true)]);
-  const width = r => { const f = r.bold ? fb : fr; return f.layout(r.text).glyphs.reduce((t, g) => t + g.advanceWidth, 0) / f.unitsPerEm * r.size; };
-  const rows = []; let y = TB_PAD, w = 0;
-  lines.forEach(line => {
-    const fs = line.length ? Math.max(...line.map(r => r.size)) : TB_STYLE.size, lh = fs * REAL_LH;
-    let x = TB_PAD; const items = [];
-    line.forEach(r => { const rw = width(r); items.push({r, x, w:rw}); x += rw; });
-    rows.push({top:y, lh, base:y + realBaseline(fs), items}); y += lh; w = Math.max(w, x + TB_PAD);
-  });
+// lay the lines out exactly like the editor: each run in its own font (widths from that font's glyph advances, as the
+// PDF will draw them), line boxes from each font's ascent and descent plus the editor's own font (strut), 4 pt padding;
+// y grows downwards from the box top
+async function layoutReal(lines, strut = realStrut(lines)){
+  await textFontsReady(lines, strut);
+  const box = fontBoxMeasurer(document.createElement('canvas').getContext('2d')), rows = []; let y = TB_PAD, w = 0;
+  for (const line of lines) {
+    const sb = box(strut.font, strut.size, strut.bold); let top = sb.top, bottom = sb.bottom, x = TB_PAD; const items = [];
+    for (const r of line) {
+      const fi = await realFontInfo(r.font || '', r.bold), b = box(r.font, r.size, r.bold);
+      top = Math.min(top, b.top); bottom = Math.max(bottom, b.bottom);
+      const rw = fi.fk.layout(r.text).glyphs.reduce((t, g) => t + g.advanceWidth, 0) / fi.fk.unitsPerEm * r.size;
+      items.push({r, x, w:rw, a:b.a, d:b.d}); x += rw;
+    }
+    rows.push({top:y, lh:bottom - top, base:y - top, items}); y += bottom - top; w = Math.max(w, x + TB_PAD);
+  }
   return {rows, w:Math.max(20, w), h:Math.max(14, y + TB_PAD)};
 }
 // vertical text (直書, upright characters): columns right to left, each 1.3 em wide, characters going down by their
@@ -4497,16 +4570,24 @@ function appendPageContent(doc, i, text){
 }
 // write `lines` as page text in a box whose top-left is (x, y) in page view coordinates
 // (x, y): the editor's anchor on screen, its top-left corner, or top-right for vertical text; rot: how the text is turned on screen
-async function writePageText(doc, i, x, y, lines, box, {rot = 0, vert = false} = {}){
-  const page = doc.getPage(i), ctx = doc.context, L = vert ? await layoutRealV(lines) : await layoutReal(lines), N = k => PDFName.of(k), f2 = v => +(+v).toFixed(3);
+async function writePageText(doc, i, x, y, lines, box, {rot = 0, vert = false, strut = realStrut(lines)} = {}){
+  const page = doc.getPage(i), ctx = doc.context, L = vert ? await layoutRealV(lines) : await layoutReal(lines, strut), N = k => PDFName.of(k), f2 = v => +(+v).toFixed(3);
   doc.registerFontkit(fontkit);
   const dx = returnTurn({x:1, y:0}, rot), up = returnTurn({x:0, y:-1}, rot);   // the box's own x and y (up) directions on screen
   const tl = vert ? {x:x - dx.x * L.w, y:y - dx.y * L.w} : {x, y};
   const vp = S.pages[i].vp1, P = (a, b) => vp.convertToPdfPoint(a, b), o = P(tl.x, tl.y), px = P(tl.x + dx.x, tl.y + dx.y), py = P(tl.x + up.x, tl.y + up.y);
   const M = [px[0] - o[0], px[1] - o[1], py[0] - o[0], py[1] - o[1], o[0], o[1]];   // local (from the box top-left, x right, y up) → page
-  const used = {}, fontOf = async bold => {
-    const k = (bold ? 'b' : 'r') + (vert ? 'v' : '');
-    if (!used[k]) { const f = await doc.embedFont(await realFontBytes(bold), {subset:true, ...(vert ? {features:{vert:true}} : {})}); used[k] = {f, name:page.node.newFontDictionary(bold ? 'PDFE_B' : 'PDFE_R', f.ref).toString()}; }
+  // each (font, weight) is embedded once: as a subset (only the characters used), or whole when its licence asks for
+  // that or when the subset would come out broken
+  const textOf = new Map();
+  for (const r of lines.flat()) { const k = (r.font || '') + '|' + (r.bold ? 'b' : 'r'); textOf.set(k, (textOf.get(k) || '') + r.text); }
+  const used = {}, fontOf = async r => {
+    const fi = await realFontInfo(r.font || '', r.bold), k = fi.key + (vert ? '|v' : '');
+    if (!used[k]) {
+      const subset = !fi.full && (!fi.sys || await subsetIsSound(fi.fk, textOf.get(fi.key) || r.text));
+      const f = await doc.embedFont(fi.bytes, {subset, ...(vert ? {features:{vert:true}} : {})});
+      used[k] = {f, fi, name:page.node.newFontDictionary(fi.sys ? 'PDFE_F' : r.bold ? 'PDFE_B' : 'PDFE_R', f.ref).toString()};
+    }
     return used[k];
   };
   const gs = page.node.newExtGState('PDFE_GS', ctx.register(ctx.obj({Type:'ExtGState', ca:1, CA:1, BM:'Normal', SMask:'None'}))).toString();
@@ -4514,12 +4595,12 @@ async function writePageText(doc, i, x, y, lines, box, {rot = 0, vert = false} =
   const ops = ['q', `${gs} gs`, `${M.map(f2).join(' ')} cm`];
   if (box.boxBg) ops.push(`${hexRgb(box.boxBg)} rg 0 ${f2(-L.h)} ${f2(L.w)} ${f2(L.h)} re f`);
   if (box.border) ops.push(`0.45 0.45 0.45 RG 0.8 w 0.4 ${f2(-L.h + .4)} ${f2(L.w - .8)} ${f2(L.h - .8)} re S`);
-  L.rows.forEach(row => row.items.forEach(({r, x:rx, w}) => { if (r.bg) ops.push(`${hexRgb(r.bg)} rg ${f2(rx)} ${f2(-(row.base + REAL_DESC * r.size))} ${f2(w)} ${f2((REAL_ASC + REAL_DESC) * r.size)} re f`); }));
+  L.rows.forEach(row => row.items.forEach(({r, x:rx, w, a, d}) => { if (r.bg) ops.push(`${hexRgb(r.bg)} rg ${f2(rx)} ${f2(-(row.base + d))} ${f2(w)} ${f2(a + d)} re f`); }));
   ops.push('BT 0 Tc 0 Tw 100 Tz 0 Ts 0 Tr');
   for (const row of L.rows) for (const {r, x:rx} of row.items) {
     if (!r.text) continue;
-    const u = await fontOf(r.bold);
-    ops.push(`${hexRgb(r.color || '#000000')} rg ${u.name} ${f2(r.size)} Tf 1 0 ${r.italic ? REAL_SKEW : 0} 1 ${f2(rx)} ${f2(-row.base)} Tm ${u.f.encodeText(r.text).toString()} Tj`);
+    const u = await fontOf(r), col = hexRgb(r.color || '#000000'), fake = u.fi.synthetic;   // no bold face: fill and stroke (0.03 em)
+    ops.push(`${col} rg ${fake ? `2 Tr ${f2(r.size * .03)} w ${col} RG ` : ''}${u.name} ${f2(r.size)} Tf 1 0 ${r.italic ? REAL_SKEW : 0} 1 ${f2(rx)} ${f2(-row.base)} Tm ${u.f.encodeText(r.text).toString()} Tj${fake ? ' 0 Tr' : ''}`);
   }
   ops.push('ET');
   L.rows.forEach(row => row.items.forEach(({r, x:rx, w}) => { if (r.underline && r.text) ops.push(`${hexRgb(r.color || '#000000')} rg ${f2(rx)} ${f2(-(row.base + REAL_UL * r.size + REAL_ULW * r.size / 2))} ${f2(w)} ${f2(REAL_ULW * r.size)} re f`); }));
@@ -4534,7 +4615,7 @@ async function writePageText(doc, i, x, y, lines, box, {rot = 0, vert = false} =
     ops.push('BT 0 Tc 0 Tw 100 Tz 0 Ts 0 Tr');
     for (const col of L.cols) for (const {r, y:ry} of col.items) {
       if (!r.text) continue;
-      const u = await fontOf(r.bold);
+      const u = await fontOf(r);
       ops.push(`${hexRgb(r.color || '#000000')} rg ${u.name} ${f2(r.size)} Tf 1 0 0 1 ${f2(L.w - col.mid)} ${f2(-ry)} Tm ${u.f.encodeText(r.text).toString()} Tj`);
     }
     ops.push('ET');
@@ -4748,7 +4829,8 @@ async function editPageText(i, items, {selectAll = false, all = null, plain = fa
   // the editor (turned like the text) sits so its first line lands on the old one: the first baseline, or for vertical
   // text the first column's centre and top; for vertical text the anchor is its top-right corner
   const a0 = Math.min(...items.map(t => t.a0)), fsz = rows[0].items[0].fs;
-  const anchor = vert ? {x:rows[0].base + fsz * REAL_LH / 2 + TB_PAD, y:a0 - TB_PAD} : {x:a0 - TB_PAD, y:Math.min(...rows[0].items.map(t => t.base)) - TB_PAD - realBaseline(size)};
+  const firstBase = vert ? 0 : (await layoutReal(lines, realStrut(lines))).rows[0].base;
+  const anchor = vert ? {x:rows[0].base + fsz * REAL_LH / 2 + TB_PAD, y:a0 - TB_PAD} : {x:a0 - TB_PAD, y:Math.min(...rows[0].items.map(t => t.base)) - firstBase};
   const at = returnTurn(anchor, rot);
   openTextEditor(i, at.x, at.y, {lines, box:{boxBg:'', border:false}, veilBox:{x:vU.x - 1, y:vU.y - 1, w:vU.w + 2, h:vU.h + 2}, veilColor:col.bg,
     edit:{U, bg:col.bg, orig:JSON.stringify(lines), blocks, rot, vert}, selectAll, real:true, rot, vert});
@@ -8125,6 +8207,7 @@ window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageC
   registerTestFont,
   fontBytesInfo:async (family, bold) => { const r = await systemFontBytes(family, bold); return {bytes:r.bytes.length, synthetic:r.synthetic}; },
   fontkitPatch:on => { fkPatchOn = !!on; },
+  breakTestFont:family => { for (const k of [...TEST_FONTS.keys()]) if (k.startsWith(family + '|')) TEST_FONTS.set(k, new Uint8Array([0, 1, 0, 0, 0, 0])); for (const k of [...RFI.keys()]) if (k.startsWith(family + '|')) RFI.delete(k); },
   embedCheck:async ({family, bold = false, text, b64}) => {
     await patchFontkitSubset();
     const bytes = b64 ? Uint8Array.from(atob(b64), c => c.charCodeAt(0)) : (await systemFontBytes(family, bold)).bytes;
