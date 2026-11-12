@@ -21,7 +21,7 @@ const wqy = cat.fams.find(f => f.family === 'WenQuanYi Zen Hei'), dv = cat.fams.
 check('catalog ok', cat.ok === true && cat.fams.length >= 10, cat.fams.length);
 check('zh name from .ttc', !!wqy && wqy.name === '文泉驛正黑' && wqy.cjk === true, wqy);
 check('latin font', !!dv && dv.name === 'DejaVu Serif' && dv.cjk === false, dv);
-check('cache written', await A(() => Object.keys(JSON.parse(localStorage.getItem('pdfeditor.fontcat.v1') || '{}')).length) >= cat.fams.length);
+check('cache written', await A(() => Object.keys(JSON.parse(localStorage.getItem('pdfeditor.fontcat.v2') || '{}')).length) >= cat.fams.length);
 await app.close();
 
 // the same profile again: the names come from the cache straight away
