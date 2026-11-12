@@ -6433,6 +6433,27 @@ async function ocrImage(i, box){
   const g = out.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, out.width, out.height); g.drawImage(c, m, m);
   return out;
 }
+// 3×3 median filter on the grey picture: takes the specks out of a poor scan and leaves the strokes
+function denoiseCanvas(src){
+  const W = src.width, H = src.height, out = document.createElement('canvas'); out.width = W; out.height = H;
+  const g = out.getContext('2d'); g.drawImage(src, 0, 0);
+  const im = g.getImageData(0, 0, W, H), d = im.data, n = W * H, gray = new Uint8Array(n), med = new Uint8Array(n), v = new Uint8Array(9);
+  for (let k = 0, o = 0; k < n; k++, o += 4) gray[k] = (d[o] * 77 + d[o + 1] * 150 + d[o + 2] * 29) >> 8;
+  const sw = (a, b) => { if (v[a] > v[b]) { const t = v[a]; v[a] = v[b]; v[b] = t; } };
+  for (let y = 0; y < H; y++) {
+    const r0 = (y ? y - 1 : 0) * W, r1 = y * W, r2 = (y < H - 1 ? y + 1 : y) * W;
+    for (let x = 0; x < W; x++) {
+      const x0 = x ? x - 1 : 0, x2 = x < W - 1 ? x + 1 : x;
+      v[0] = gray[r0 + x0]; v[1] = gray[r0 + x]; v[2] = gray[r0 + x2]; v[3] = gray[r1 + x0]; v[4] = gray[r1 + x]; v[5] = gray[r1 + x2]; v[6] = gray[r2 + x0]; v[7] = gray[r2 + x]; v[8] = gray[r2 + x2];
+      // the median of nine with a sorting network (19 compare-and-swaps)
+      sw(1, 2); sw(4, 5); sw(7, 8); sw(0, 1); sw(3, 4); sw(6, 7); sw(1, 2); sw(4, 5); sw(7, 8); sw(0, 3); sw(5, 8); sw(4, 7); sw(3, 6); sw(1, 4); sw(2, 5); sw(4, 7); sw(4, 2); sw(6, 4); sw(4, 2);
+      med[r1 + x] = v[4];
+    }
+  }
+  for (let k = 0, o = 0; k < n; k++, o += 4) { d[o] = d[o + 1] = d[o + 2] = med[k]; d[o + 3] = 255; }
+  g.putImageData(im, 0, 0);
+  return out;
+}
 function startOcrDraw(i, e){
   closeOcr();
   const pg = S.pages[i], p0 = pagePoint(i, e);
@@ -6465,13 +6486,20 @@ async function readRegion(i, box, {image = false, dir = null} = {}){
   setOcr({status:OCR.worker ? '辨識中…' : '載入辨識引擎…（第一次需要幾秒鐘）', progress:0, src:''});
   try {
     const img = await ocrImage(i, box);
-    OCR.progress = m => { if (job === OCR.job && m.status === 'recognizing text') setOcr({status:'辨識中…', progress:m.progress}); };
     // tried on clean scans: English first reads mixed lines best; automatic layout (3) is the only mode that reads vertical columns
     const w = await ocrWorker(vert ? 'chi_tra_vert' : 'eng+chi_tra'); if (job !== OCR.job) return;
     await w.setParameters({tessedit_pageseg_mode:'3', preserve_interword_spaces:'1'});
-    const {data} = await w.recognize(img); if (job !== OCR.job) return;
-    const text = tidyOcr(data.text || '');
-    setOcr({text, src:`影像辨識・${vert ? '直書' : '橫書'}・信心度 ${Math.round(data.confidence || 0)}%`, status:text ? '' : '這個範圍沒有辨識出文字', progress:null, busy:false, canImage:false});
+    // read it twice, as it is and with the specks filtered out, and keep the more confident reading: on poor scans the
+    // filtered one wins by far, on clean ones the original (measured on noisy, small-print and clean samples)
+    const passes = [['', img], ['（已去雜點）', denoiseCanvas(img)]];
+    let best = null;
+    for (let k = 0; k < passes.length; k++) {
+      OCR.progress = m => { if (job === OCR.job && m.status === 'recognizing text') setOcr({status:'辨識中…', progress:(k + m.progress) / passes.length}); };
+      const {data} = await w.recognize(passes[k][1]); if (job !== OCR.job) return;
+      if (!best || (data.confidence || 0) > best.conf) best = {text:data.text || '', conf:data.confidence || 0, note:passes[k][0]};
+    }
+    const text = tidyOcr(best.text);
+    setOcr({text, src:`影像辨識・${vert ? '直書' : '橫書'}・信心度 ${Math.round(best.conf)}%${best.note}`, status:text ? '' : '這個範圍沒有辨識出文字', progress:null, busy:false, canImage:false});
   } catch (err) {
     console.error(err);
     if (job === OCR.job) setOcr({status:'辨識失敗：' + (err && err.message || err), progress:null, busy:false});
@@ -7626,7 +7654,7 @@ function setTheme(t){
 }
 if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyTheme();
 paintSplitButtons(); paintActionButtons(); applyRibbon();
-window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box};
+window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box, tidyOcr, denoiseCanvas};
 </script>
 </body>
 </html>
