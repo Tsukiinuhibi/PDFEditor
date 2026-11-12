@@ -8,15 +8,16 @@
 
 | 項目 | 位置 |
 |---|---|
-| 程式碼 | GitHub：`https://github.com/Tsukiinuhibi/PDFEditor`，分支 `main` |
-| 更新與安裝檔 | Forgejo：`https://forgejo.taiyopen.com/tsukiinuhibi/PDFEditor/releases`（公開儲存庫，只放發布版本，不放程式碼） |
+| 程式碼（主要） | Forgejo：`https://forgejo.taiyopen.com/tsukiinuhibi/PDFEditor`，分支 `main`。**推送到這裡** |
+| 程式碼（打包用副本） | GitHub：`https://github.com/Tsukiinuhibi/PDFEditor`。Forgejo 的「推送鏡像」會把每個新 commit 同步過來；不要直接在這裡改 |
+| 更新與安裝檔 | Forgejo Releases：`https://forgejo.taiyopen.com/tsukiinuhibi/PDFEditor/releases`（公開） |
 | 打包 | GitHub Actions（`.github/workflows/release.yml`），在 GitHub 的 Windows 機器上打包，再上傳到 Forgejo |
 | 使用者 | 繁體中文（台灣），Windows。介面文字、版本說明、回覆一律用繁體中文 |
 
 開始工作：
 
 ```bash
-git clone https://github.com/Tsukiinuhibi/PDFEditor.git
+git clone https://forgejo.taiyopen.com/tsukiinuhibi/PDFEditor.git
 cd PDFEditor
 npm install
 npm start          # 開啟程式（開發模式不會檢查更新）
@@ -115,7 +116,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 ## 4. 發布流程
 
 1. 改 `package.json` 的 `version`，然後**改寫** `RELEASE_NOTES.md`。每版都整份覆蓋，用繁體中文寫給使用者看。
-2. 提交並推送到 GitHub 的 `main`。只有 `package.json` 或 workflow 檔有變動時，才會觸發打包。
+2. 提交並推送到 **Forgejo** 的 `main`。Forgejo 的推送鏡像會同步到 GitHub，GitHub Actions 就會開始打包。只有 `package.json` 或 workflow 檔有變動時，才會觸發打包。
 3. `release.yml` 的流程：
    1. 讀出版本號，查 Forgejo 上這個版本有沒有 `latest.yml`。有的話就跳過。
    2. 執行 `electron-builder --win --publish never`。
@@ -123,7 +124,12 @@ npm start          # 開啟程式（開發模式不會檢查更新）
    4. 版本說明寫成 UTF-8 檔案再上傳。在 Windows 上用命令列參數傳中文會變成亂碼。
 4. 需要 GitHub secret **`FORGEJO_TOKEN`**（Forgejo 權杖，repository 讀寫權限），使用者已經設定好了。
 5. `PUBLISH_GITHUB: 'false'`。GitHub Releases 只用來發布交接版本 v1.0.16，往後不要再發到 GitHub。
-6. 推送後可以用 `gh run list -R Tsukiinuhibi/PDFEditor` 追蹤，大約 4 分鐘完成。
+6. 推送後可以用 `gh run list -R Tsukiinuhibi/PDFEditor` 追蹤（需要 `gh auth login`），或直接看 Forgejo 的 Releases 頁面，大約 4 分鐘完成。
+
+### 程式碼同步（Forgejo ⇄ GitHub）
+- **Forgejo → GitHub**：在 Forgejo 儲存庫的「設定 → 鏡像設定 → 推送鏡像」，設定成推送到 `https://github.com/Tsukiinuhibi/PDFEditor.git`，並勾選「推送 commit 時同步」。這要用一個 GitHub 權杖：classic 權杖要有 `repo` 和 `workflow` 權限；fine-grained 權杖要有這個儲存庫的 Contents 與 Workflows 讀寫權限。沒有 `workflow` 權限的話，改到 `.github/workflows/` 的 commit 會同步失敗。
+- **GitHub → Forgejo**：`.github/workflows/sync-forgejo.yml`。萬一有 commit 先進了 GitHub，會自動補推到 Forgejo。它不會覆蓋只存在於 Forgejo 的 commit；兩邊分歧時會直接報錯，交給人工合併。
+- 推送鏡像是強制覆蓋的，所以**不要直接推送到 GitHub**；一律推送到 Forgejo。
 
 ### 自動更新怎麼運作
 - `package.json` 的 `updateServer: {host, repo}` → `main.js` 的 `pointFeed()` 會先呼叫 Forgejo API `/releases/latest` 取得最新版本號，再把 electron-updater 的來源指到 `{host}/{repo}/releases/download/{tag}`（generic provider）。

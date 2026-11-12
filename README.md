@@ -47,7 +47,7 @@ Windows 桌面版 PDF 閱讀與編輯工具，會自動檢查並安裝新版本�
 ## 發佈新版本（給維護者）
 
 1. 修改 `package.json` 的 `version`，並把這次的更新內容寫進 `RELEASE_NOTES.md`（會顯示在 Forgejo 版本頁面與程式的更新視窗）
-2. 提交並推送到 GitHub 的 `main`
+2. 提交並推送到 Forgejo 的 `main`（Forgejo 會用推送鏡像同步到 GitHub）
 3. GitHub Actions 偵測到版本號變更，會在 Windows 上建置安裝檔並上傳到 Forgejo（需要 GitHub secret `FORGEJO_TOKEN`），
    已安裝的程式就會自動更新。也可以在 Actions 頁面手動執行「Build & Release」。
 
