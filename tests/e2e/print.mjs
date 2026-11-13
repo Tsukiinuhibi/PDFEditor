@@ -113,5 +113,28 @@ await send('#prSys');
 const sys = (await printed()).at(-1);
 check('〔印表機內容…〕: the same job through the system print window', (await printed()).length === n0 + 1 && sys.opts.silent === false && sys.opts.deviceName === 'OfficeMFP', sys && sys.opts);
 
+// ---- part 2: several pages on a side (多頁合一) ----------------------------------------------------------------------
+await open();
+await set('layout', 'nup'); await set('nup', '4'); await set('order', 'h');
+s = await pst();
+const quad = async () => ({tl:await prevAt(.27, .27, 99), tr:await prevAt(.73, .27, 99), bl:await prevAt(.27, .73, 99), br:await prevAt(.73, .73, 99)});
+let qq = await quad();
+check('多頁合一 4: 2 sides; red and green on top, blue and yellow below', s.sides === 2 && s.paper.w < s.paper.h && near(qq.tl, RGB[0]) && near(qq.tr, RGB[1]) && near(qq.bl, RGB[2]) && near(qq.br, RGB[3]), {sides:s.sides, qq});
+await set('order', 'hr'); qq = await quad();
+check('橫向（右到左）: red top right, green top left', near(qq.tr, RGB[0]) && near(qq.tl, RGB[1]), qq);
+await set('order', 'v'); qq = await quad();
+check('直向（上到下，左起）: red top left, green under it', near(qq.tl, RGB[0]) && near(qq.bl, RGB[1]), qq);
+await set('order', 'h'); await set('nup', '2');
+s = await pst();
+const two = {l:await prevAt(.27, .5, 99), r:await prevAt(.73, .5, 99)};
+check('2 a side, 方向 自動: the paper lies, red left, green right; 3 sides', s.paper.w > s.paper.h && s.sides === 3 && near(two.l, RGB[0]) && near(two.r, RGB[1]), {paper:s.paper, sides:s.sides, two});
+await set('borders', true);
+const edge = await Ev(() => { const s = window.__pdfapp.printState(), c = document.querySelector('#prPrev canvas'), r = c.width / s.paper.w, it = s.items[0], g = c.getContext('2d');
+  const y = Math.round((it.y + it.h / 2) * r), x = Math.round(it.x * r);
+  return [-1, 0, 1].map(d => [...g.getImageData(x + d, y, 1, 1).data].slice(0, 3)).sort((a, b) => a[0] + a[1] + a[2] - b[0] - b[1] - b[2])[0]; });
+check('頁面框線: a dark line round each page', edge.every(v => v < 90), edge);
+await set('borders', false); await set('layout', 'normal');
+await close();
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

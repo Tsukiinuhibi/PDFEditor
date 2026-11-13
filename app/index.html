@@ -9473,15 +9473,37 @@ function printPages(st){
 const pageWH = i => [S.pages[i].w, S.pages[i].h];   // as shown (its /Rotate applied), in points
 // the paper in points, upright or lying
 function paperOf(st, landscape){ const [a, b] = PAPERS[st.paper] || PAPERS.A4, w = Math.min(a, b) * MM_PT, h = Math.max(a, b) * MM_PT; return landscape ? {w:h, h:w} : {w, h}; }
-// a w×h page fitted into a bw×bh box: its scale, and a quarter turn when that makes it larger
-function fitIn(w, h, bw, bh){ const a = Math.min(bw / w, bh / h), b = Math.min(bw / h, bh / w); return b > a * 1.0001 ? {s:b, rot:90} : {s:a, rot:0}; }
+// a w×h page fitted into a bw×bh box: its scale, and a quarter turn when that makes it larger (when it may turn)
+function fitIn(w, h, bw, bh, turn = true){ const a = Math.min(bw / w, bh / h), b = turn ? Math.min(bw / h, bh / w) : 0; return b > a * 1.0001 ? {s:b, rot:90} : {s:a, rot:0}; }
+const NUP_GRID = {2:[2, 1], 4:[2, 2], 6:[3, 2], 9:[3, 3], 16:[4, 4]};   // columns × rows on lying paper (turned round on upright paper)
 // a page placed at scale s (turned rot) with its middle at (cx, cy): an item of a side
 const placeAt = (i, s, rot, cx, cy) => { const [w, h] = pageWH(i), W = (rot % 180 ? h : w) * s, H = (rot % 180 ? w : h) * s; return {i, x:cx - W / 2, y:cy - H / 2, w:W, h:H, rot}; };
 /* every side of paper: {paper:{w, h}, sides:[{items:[{i (null: a blank page), x, y, w, h, rot, clip?}], label}], duplex, sheets} */
 function printPlan(st){
   const pages = printPages(st), m = (+st.margin || 0) * MM_PT, first = pages.length ? pageWH(pages[0]) : [1, 1.4];
   let paper, sides = [];
-  {   // 一般: a page on each side, turned a quarter when it lies the other way, in the middle
+  if (st.layout === 'nup') {   // 多頁合一: a grid of pages, in the order chosen; the paper the way the first page comes out larger
+    const n = NUP_GRID[+st.nup] ? +st.nup : 4, gap = 4;
+    const L = [false, true].filter(l => st.orient === 'auto' || (st.orient === 'landscape') === l).map(land => {
+      const p = paperOf(st, land), [a, b] = NUP_GRID[n], [cols, rows] = land ? [a, b] : [b, a];
+      const cw = Math.max(1, p.w - 2 * m) / cols, ch = Math.max(1, p.h - 2 * m) / rows;
+      return {p, cols, rows, cw, ch, s:fitIn(first[0], first[1], cw - gap, ch - gap, false).s};
+    }).sort((x, y) => y.s - x.s)[0];
+    paper = L.p;
+    const cell = k => {
+      let c, r;
+      if (st.order === 'v' || st.order === 'vr') { c = Math.floor(k / L.rows); r = k % L.rows; } else { r = Math.floor(k / L.cols); c = k % L.cols; }
+      if (st.order === 'hr' || st.order === 'vr') c = L.cols - 1 - c;
+      return [c, r];
+    };
+    for (let p0 = 0; p0 < pages.length; p0 += n) {
+      const group = pages.slice(p0, p0 + n);
+      sides.push({items:group.map((i, k) => {
+        const [c, r] = cell(k), [w, h] = pageWH(i), f = fitIn(w, h, L.cw - gap, L.ch - gap, false);
+        return {...placeAt(i, f.s, 0, m + (c + .5) * L.cw, m + (r + .5) * L.ch), border:!!st.borders};
+      }), label:group.length > 1 ? `第 ${group.map(i => i + 1).join('、')} 頁` : `第 ${group[0] + 1} 頁`});
+    }
+  } else {   // 一般: a page on each side, turned a quarter when it lies the other way, in the middle
     paper = paperOf(st, st.orient === 'landscape' || (st.orient === 'auto' && first[0] > first[1]));
     const bw = Math.max(1, paper.w - 2 * m), bh = Math.max(1, paper.h - 2 * m);
     sides = pages.map(i => {
@@ -9525,6 +9547,7 @@ async function drawSide(plan, side, k, st, {cache = false} = {}){
     const r = {x:Math.floor((x0 - it.x) * k), y:Math.floor((y0 - it.y) * k), w:Math.ceil((x1 - x0) * k), h:Math.ceil((y1 - y0) * k)};
     const pc = await printPiece(it.i, s, it.rot, st.annots !== 'none', r, cache);
     g.drawImage(pc, it.x * k + r.x, it.y * k + r.y);
+    if (it.border) { g.strokeStyle = '#000'; g.lineWidth = Math.max(1, .6 * k); g.strokeRect(it.x * k, it.y * k, it.w * k, it.h * k); }
   }
   if (st.color === 'gray') toGray(c);
   return c;
@@ -9549,9 +9572,12 @@ function printFormHTML(st, printers){
         <label class="chk"><input type="checkbox" data-p="reverse"> 反向列印</label></div>
       <div class="pr-row"><div class="field"><label>紙張</label><select data-p="paper">${Object.entries(PAPERS).map(([k, v]) => opt(k, v[2] || k, st.paper)).join('')}</select></div>
         <div class="field"><label>方向</label><select data-p="orient">${opt('auto', '自動', st.orient)}${opt('portrait', '直向', st.orient)}${opt('landscape', '橫向', st.orient)}</select></div></div>
-      <div class="pr-row"><div class="field"><label>版面</label><select data-p="layout">${opt('normal', '一般（每面一頁）', st.layout)}</select></div>
+      <div class="pr-row"><div class="field"><label>版面</label><select data-p="layout">${opt('normal', '一般（每面一頁）', st.layout)}${opt('nup', '多頁合一', st.layout)}</select></div>
         <div class="field" data-lay="normal"><label>縮放</label><select data-p="scale">${opt('fit', '符合紙張', st.scale)}${opt('shrink', '只縮小過大的頁面', st.scale)}${opt('actual', '實際大小', st.scale)}${opt('custom', '自訂比例', st.scale)}</select></div>
         <div class="field pr-copies" data-lay="normal" data-show="pct"><label>比例（%）</label><input type="number" data-p="pct" min="1" max="1000" value="${st.pct}"></div></div>
+      <div class="pr-row" data-lay="nup"><div class="field pr-copies"><label>每面頁數</label><select data-p="nup">${[2, 4, 6, 9, 16].map(v => opt(v, `${v} 頁`, st.nup)).join('')}</select></div>
+        <div class="field"><label>順序</label><select data-p="order">${opt('h', '橫向（左到右）', st.order)}${opt('hr', '橫向（右到左）', st.order)}${opt('v', '直向（上到下，左起）', st.order)}${opt('vr', '直向（上到下，右起）', st.order)}</select></div>
+        <label class="chk"><input type="checkbox" data-p="borders"${st.borders ? ' checked' : ''}> 頁面框線</label></div>
       <div class="pr-row"><div class="field"><label>邊界</label><select data-p="margin">${opt(0, '無', st.margin)}${opt(5, '窄（5 mm）', st.margin)}${opt(10, '一般（10 mm）', st.margin)}</select></div>
         <div class="field"><label>雙面</label><select data-p="duplex">${opt('simplex', '單面', st.duplex)}${opt('longEdge', '雙面（長邊翻頁）', st.duplex)}${opt('shortEdge', '雙面（短邊翻頁）', st.duplex)}</select></div></div>
       <div class="pr-row"><div class="field"><label>色彩</label><select data-p="color">${opt('color', '彩色', st.color)}${opt('gray', '黑白（灰階）', st.color)}</select></div>
