@@ -86,7 +86,7 @@ check('Shift on the turn handle still turns the object in 15° steps (not a sele
 await undo();
 
 // ---- part 2: align and distribute (page 2) --------------------------------------------------------------------------------
-await see(1, 250, 300);
+await see(1, 255, 225);   // the middle of the box dragged over the three (40..470 × 80..370)
 await tool('rect');
 for (const [a, b] of [[[60, 100], [100, 140]], [[150, 200], [210, 240]], [[400, 300], [440, 350]]]) await drag(await P(1, ...a), await P(1, ...b));
 await tool('select');

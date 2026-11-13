@@ -1082,6 +1082,9 @@ const ICONS = {
   rotL:'M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5',
   rotR:'M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8M21 3v5h-5',
   select:'M5 3l13 7.5-5.5 1.6L10 18z',
+  alL:'M4 3v18M8 6h11v4H8zM8 14h7v4H8z', alC:'M12 3v18M6 6h12v4H6zM8 14h8v4H8z', alR:'M20 3v18M5 6h11v4H5zM9 14h7v4H9z',
+  alT:'M3 4h18M6 8h4v11H6zM14 8h4v7h-4z', alM:'M3 12h18M6 6h4v12H6zM14 8h4v8h-4z', alB:'M3 20h18M6 5h4v11H6zM14 9h4v7h-4z',
+  distH:'M3 4v16M21 4v16M9 8h6v8H9z', distV:'M4 3h16M4 21h16M8 9h8v6H8z',
   hand:'M18 11V6a2 2 0 0 0-4 0M14 10V4a2 2 0 0 0-4 0v2M10 10.5V6a2 2 0 0 0-4 0v8M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15',
   image:'M3 3h4M3 3v4M21 3h-4M21 3v4M3 21h4M3 21v-4M21 21h-4M21 21v-4M7 16l3.5-4 2.5 3 2-2 2 3zM15 8.5h.01',
   gear:'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z',
@@ -7177,9 +7180,38 @@ async function paintObjBar(){
   h.classList.add('show', 'styl', 'objbar');
   OBJBAR = {i, id:a.id, kind, doc:activeDoc(), st:o.st};
 }
-// the bar of several selected objects (the align buttons come with 對齊)
+// the bar of several selected objects: align (to the selection or the page), distribute (3 or more), delete
+let ALIGN_TO = 'sel';
 function multiBarHTML(n){
-  return `<b class="sb-t">${icon('select')}已選取 ${n} 個物件</b><span class="sb-row"><button class="pchip" data-ma="del">${icon('trash')}刪除</button></span>`;
+  const b = (k, label, ic) => `<button class="pchip" data-al="${k}" title="${label}">${icon(ic)}${label}</button>`;
+  return `<b class="sb-t">${icon('select')}已選取 ${n} 個物件</b><span class="sb-row"><span class="sb-h">對齊</span>${b('left', '靠左', 'alL')}${b('hcenter', '水平置中', 'alC')}${b('right', '靠右', 'alR')}${b('top', '靠上', 'alT')}${b('vcenter', '垂直置中', 'alM')}${b('bottom', '靠下', 'alB')}
+    ${n >= 3 ? `<button class="pchip" data-dist="h" title="水平平均分配">${icon('distH')}水平平均分配</button><button class="pchip" data-dist="v" title="垂直平均分配">${icon('distV')}垂直平均分配</button>` : ''}
+    <label class="sb-l">對齊到<select data-alto><option value="sel"${ALIGN_TO === 'sel' ? ' selected' : ''}>選取範圍</option><option value="page"${ALIGN_TO === 'page' ? ' selected' : ''}>頁面</option></select></label>
+    <button class="pchip" data-ma="del">${icon('trash')}刪除</button></span>`;
+}
+// line up the selected objects by what can be seen of each (a turned one: its turned frame): against the frame round all of
+// them, or the page
+async function alignSelected(kind, to = 'sel'){
+  if (!MS) return;
+  const {i, items} = MS, pg = S.pages[i];
+  const G = to === 'page' ? {x0:0, y0:0, x1:pg.w, y1:pg.h} : items.reduce((g, a) => ({x0:Math.min(g.x0, a.x), y0:Math.min(g.y0, a.y), x1:Math.max(g.x1, a.x + a.w), y1:Math.max(g.y1, a.y + a.h)}), {x0:Infinity, y0:Infinity, x1:-Infinity, y1:-Infinity});
+  const moves = items.map(a => {
+    let x = a.x, y = a.y;
+    if (kind === 'left') x = G.x0; if (kind === 'right') x = G.x1 - a.w; if (kind === 'hcenter') x = (G.x0 + G.x1) / 2 - a.w / 2;
+    if (kind === 'top') y = G.y0; if (kind === 'bottom') y = G.y1 - a.h; if (kind === 'vcenter') y = (G.y0 + G.y1) / 2 - a.h / 2;
+    return {a, ob:{x:a.x, y:a.y, w:a.w, h:a.h}, nb:{x, y, w:a.w, h:a.h}};
+  });
+  await moveObjects(i, moves, `已對齊 ${items.length} 個物件`);
+}
+// equal gaps between neighbours (by position); the first and the last stay where they are
+async function distributeSelected(axis){
+  if (!MS || MS.items.length < 3) return;
+  const {i, items} = MS, h = axis === 'h', pos = a => h ? a.x : a.y, len = a => h ? a.w : a.h;
+  const sorted = items.slice().sort((p, q) => (pos(p) + len(p) / 2) - (pos(q) + len(q) / 2)), first = sorted[0], last = sorted[sorted.length - 1];
+  const gap = ((pos(last) + len(last)) - pos(first) - sorted.reduce((t, a) => t + len(a), 0)) / (sorted.length - 1);
+  let at = pos(first) + len(first) + gap;
+  const moves = sorted.slice(1, -1).map(a => { const v = at; at += len(a) + gap; return {a, ob:{x:a.x, y:a.y, w:a.w, h:a.h}, nb:h ? {x:v, y:a.y, w:a.w, h:a.h} : {x:a.x, y:v, w:a.w, h:a.h}}; });
+  await moveObjects(i, moves, `已平均分配 ${sorted.length} 個物件`);
 }
 // the bar for one kind of object: {name, ic (icon), html, st}
 function objBarHTML(kind, dict){
@@ -7437,7 +7469,10 @@ async function changeImageOf(ob){
 $('#hint').addEventListener('click', e => {
   if (!OBJBAR || !OBJBAR.multi || !MS) return;
   if (e.target.closest('[data-ma="del"]')) deleteMulti();
+  const al = e.target.closest('[data-al]'); if (al) alignSelected(al.dataset.al, ALIGN_TO);
+  const ds = e.target.closest('[data-dist]'); if (ds) distributeSelected(ds.dataset.dist);
 });
+$('#hint').addEventListener('change', e => { if (e.target.matches && e.target.matches('[data-alto]')) { ALIGN_TO = e.target.value; e.target.blur(); } });
 $('#hint').addEventListener('click', e => {
   if (!OBJBAR || OBJBAR.multi || !$('#hint').classList.contains('objbar')) return;
   const ob = OBJBAR;
