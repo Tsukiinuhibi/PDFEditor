@@ -8,15 +8,17 @@ import path from 'path';
 let failed = 0;
 const check = (name, ok, detail = '') => { console.log(`${ok ? '✔' : '✘'} ${name}${detail !== '' ? '  ' + (typeof detail === 'string' ? detail : JSON.stringify(detail)) : ''}`); if (!ok) { failed++; process.exitCode = 1; } };
 
-// three pages; page 2 turned by /Rotate 90; page 3 holds a link another program made (a named destination: page 1) lying
-// over a red rectangle
+// three pages; page 2 turned by /Rotate 90; page 3 holds links other programs made: a named destination (page 1) lying
+// over a red rectangle, one with a red 2 pt frame drawn from /BS (as Acrobat writes it), one to another file (GoToR)
 const doc = await PDFDocument.create(), ctx = doc.context, N = n => PDFName.of(n);
 const p1 = doc.addPage([595, 842]), p2 = doc.addPage([595, 842]), p3 = doc.addPage([595, 842]);
 p2.node.set(N('Rotate'), ctx.obj(90));
 const dests = ctx.obj({}); dests.set(N('first'), ctx.obj([p1.ref, N('Fit')]));
 doc.catalog.set(N('Dests'), ctx.register(dests));
 p3.node.set(N('Annots'), ctx.obj([ctx.register(ctx.obj({Type:'Annot', Subtype:'Square', Rect:[90, 690, 310, 740], C:[1, 0, 0], Border:[0, 0, 2], F:4})),
-  ctx.register(ctx.obj({Type:'Annot', Subtype:'Link', Rect:[100, 700, 300, 730], Border:[0, 0, 0], Dest:N('first')}))]));
+  ctx.register(ctx.obj({Type:'Annot', Subtype:'Link', Rect:[100, 700, 300, 730], Border:[0, 0, 0], Dest:N('first')})),
+  ctx.register(ctx.obj({Type:'Annot', Subtype:'Link', Rect:[100, 400, 300, 430], BS:{W:2, S:'S'}, C:[1, 0, 0], A:{S:'URI', URI:PDFString.of('https://red.example.com')}})),
+  ctx.register(ctx.obj({Type:'Annot', Subtype:'Link', Rect:[100, 300, 300, 330], Border:[0, 0, 0], A:{S:'GoToR', F:PDFString.of('other.pdf'), D:PDFString.of('intro')}}))]));
 const PDF = path.join(TMP, 'links.pdf'); fs.writeFileSync(PDF, await doc.save());
 
 const { app } = await launchPath(PDF);
@@ -38,7 +40,7 @@ const bluest = (i, x0, x1, y) => Ev(([i, x0, x1, y]) => { const S = window.__pdf
 const undos = () => Ev(() => window.__pdfapp.S.undo.length);
 const dlg = () => Ev(() => { const m = document.querySelector('#mask').classList.contains('show') && document.querySelector('#lkKind'); if (!m) return null;
   return {title:document.querySelector('#modal .mh').textContent, kind:document.querySelector('#lkKind').value, url:document.querySelector('#lkUrl').value, page:document.querySelector('#lkPage').value,
-    mail:document.querySelector('#lkMail').value, err:(document.querySelector('#lkErr') || {}).textContent || '', go:document.querySelector('#lkGo').disabled, del:!!document.querySelector('#lkDel')}; });
+    mail:document.querySelector('#lkMail').value, look:document.querySelector('#lkLook').value, err:(document.querySelector('#lkErr') || {}).textContent || '', go:document.querySelector('#lkGo').disabled, del:!!document.querySelector('#lkDel')}; });
 const setF = async (sel, v) => { await Ev(([sel, v]) => { const el = document.querySelector(sel); el.value = v; el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', {bubbles:true})); }, [sel, v]); await win.waitForTimeout(200); };
 const make = async (i, a, b, fill) => { await see(i, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2); await drag(await P(i, ...a), await P(i, ...b)); await fill(); await win.click('#lkGo'); await win.waitForTimeout(2200); };
 
@@ -105,7 +107,8 @@ d = await dlg();
 check("another program's link (a named destination): 「本文件的頁面」, page 1", !!d && d.kind === 'page' && d.page === '1', d);
 await setF('#lkPage', '2'); await win.click('#lkGo'); await win.waitForTimeout(2200);
 L = await links(2);
-check('changed to page 2: written as /Dest [page 2 /Fit]; its look left as it was (no frame, no /AP)', L.length === 1 && L[0].page === 1 && L[0].fit && L[0].border === 0 && !L[0].ap, L);
+const nd = L.find(l => l.page != null);
+check('changed to page 2: written as /Dest [page 2 /Fit]; its look left as it was (no frame, no /AP)', !!nd && nd.page === 1 && nd.fit && nd.border === 0 && !nd.ap, L);
 await see(0, 200, 280);
 await ctrlClick(await P(0, 200, 280));
 check('link tool, Ctrl+click on the page link: goes to page 2, no window', (await Ev(() => window.__pdfapp.S.current)) === 1 && !(await dlg()), await Ev(() => window.__pdfapp.S.current));
@@ -122,6 +125,55 @@ await see(2, 200, 127);
 await win.mouse.click(...(await P(2, 200, 127))); await win.waitForTimeout(600);
 const s3 = await Ev(() => window.__pdfapp.sel());
 check('selection tool, a plain click where a link lies over a rectangle: the rectangle is selected', !!s3 && s3.sub === 'Square', s3);
+
+// ---- part 3 (final review): ( ) \ and Chinese in addresses; frames from /BS; links of other kinds; a long document --------
+await Ev(() => window.__pdfapp.setTool('link')); await win.waitForTimeout(300);
+await make(0, [100, 500], [300, 530], async () => { await setF('#lkUrl', 'https://example.com/foo)'); });
+await make(0, [100, 600], [300, 630], async () => { await setF('#lkKind', 'mail'); await setF('#lkMail', '王小明@example.com'); });
+L = await links(0);
+const dec = s => { try { return decodeURIComponent(s); } catch (_) { return s; } };
+await see(0, 200, 615);
+await win.mouse.click(...(await P(0, 200, 615))); await win.waitForTimeout(500);
+const dm = await dlg(); await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+check('an address with an unpaired ")" is kept whole; an e-mail address in Chinese too, and shown as typed when opened again',
+  L.length === 5 && L.some(l => l.url === 'https://example.com/foo)') && L.some(l => dec(l.url || '') === 'mailto:王小明@example.com') && !!dm && dm.mail === '王小明@example.com', {urls:L.map(l => l.url), dm});
+await see(2, 200, 427);
+await win.mouse.click(...(await P(2, 200, 427))); await win.waitForTimeout(500);
+const dr = await dlg();
+await setF('#lkUrl', 'https://red.example.org'); await win.click('#lkGo'); await win.waitForTimeout(2200);
+let red = (await links(2)).find(l => /red\.example/.test(l.url || ''));
+const kept = !!red && red.url === 'https://red.example.org' && red.look === 'blue' && JSON.stringify(red.c) === '[1,0,0]';
+await see(2, 200, 427);
+await win.mouse.click(...(await P(2, 200, 427))); await win.waitForTimeout(500);
+await setF('#lkLook', 'none'); await win.click('#lkGo'); await win.waitForTimeout(2200);
+red = (await links(2)).find(l => /red\.example/.test(l.url || ''));
+check("another program's frame drawn from /BS (red, 2 pt): a new target keeps it; 不顯示框 takes it away", !!dr && dr.look === 'blue' && kept && !!red && red.look === 'none', {dr, kept, red});
+await see(2, 200, 527);
+const tipG = await Ev(() => [...window.__pdfapp.S.els[2].querySelectorAll('.lnk')].map(x => x.title).find(t => /other\.pdf/.test(t)) || '');
+await win.mouse.click(...(await P(2, 200, 527))); await win.waitForTimeout(500);
+const dg = await dlg();
+await win.keyboard.press('Enter'); await win.waitForTimeout(800);
+const still = await dlg();
+await setF('#lkLook', 'blue'); await win.click('#lkGo'); await win.waitForTimeout(2200);
+const gr = (await links(2)).find(l => /other\.pdf/.test(l.url || ''));
+check('a link to another file (GoToR): 「其他連結」, kept as it is (〔儲存〕 off, Enter does nothing); a new look keeps where it goes',
+  tipG.startsWith('其他連結：other.pdf') && !!dg && dg.kind === 'other' && dg.go && !!still && still.kind === 'other' && !!gr && gr.act === 'GoToR' && gr.ap, {tipG, dg, still, gr});
+const longDoc = await PDFDocument.create();
+for (let k = 0; k < 210; k++) { const pg = longDoc.addPage([200, 100]); pg.node.set(N('Annots'), longDoc.context.obj([longDoc.context.register(longDoc.context.obj({Type:'Annot', Subtype:'Link', Rect:[10, 10, 190, 90], Border:[0, 0, 0], A:{S:'URI', URI:PDFString.of('https://example.org/p' + k)}}))])); }
+const LONG = path.join(TMP, 'long.pdf'); fs.writeFileSync(LONG, await longDoc.save());
+await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), LONG);
+await win.waitForFunction(() => window.__pdfapp.S.pages.length === 210, null, {timeout:30000}); await win.waitForTimeout(1000);
+await Ev(() => window.__pdfapp.setTool('select'));
+for (let k = 0; k < 8; k++) await Ev(() => window.__pdfapp.actions.zoomOut());
+await win.waitForTimeout(1000);
+await Ev(async () => { const vw = document.querySelector('#viewer'); for (let y = 0; y <= vw.scrollHeight; y += vw.clientHeight * 0.7) { vw.scrollTop = y; await new Promise(r => setTimeout(r, 250)); } });
+await win.waitForTimeout(1500);
+const shown = await Ev(() => window.__pdfapp.S.st.filter(st => st.ovlVer === window.__pdfapp.S.version).length);
+await Ev(() => window.__pdfapp.scrollToPage(0)); await win.waitForTimeout(1000);
+await app.evaluate(() => { global.__opened = []; });
+await ctrlClick(await P(0, 100, 50));
+const op = await app.evaluate(() => global.__opened);
+check("a 210-page document with every page shown once: Ctrl+click on page 1's link still opens it", shown > 200 && op.length === 1 && op[0].startsWith('https://example.org/p0'), {shown, op});
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

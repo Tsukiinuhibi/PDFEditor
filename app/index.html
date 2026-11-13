@@ -299,6 +299,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .pr-err:empty{display:none}
 .pr-warn{color:#b35c00;font-size:12px;margin:-4px 0 8px}
 .url-st{font-size:12px;color:var(--ink2);min-height:18px}
+.lk-other{font-size:12px;line-height:1.6;color:var(--ink2);word-break:break-all;border:1px solid var(--line);border-radius:6px;padding:6px 8px}
 .pr-sum{margin-right:auto;font-size:13px;color:var(--ink2)}
 #printRoot{display:none}
 @media print{
@@ -1184,7 +1185,7 @@ const S = {
   bytes:null, name:'document.pdf', pdf:null, pages:[], els:[], st:[],
   scale:PX, zoomMode:'fit-width', view:'continuous', cover:false,
   current:0, rows:[], pos:[], tool:'select', undo:[], redo:[],
-  dirty:false, signed:false, version:0, imgCache:new Map(), annCache:new Map(),
+  dirty:false, signed:false, version:0, imgCache:new Map(), annCache:new Map(), linkCache:new Map(),
   handle:null, autoWrite:false, writing:null,
   sigImg:null, sigAspect:3, hlColor:'#ffd43b', spaceDown:false, panning:null,
 };
@@ -1293,14 +1294,14 @@ async function saveFile(filename, data){
    Each open PDF is a document with its own pages, view, undo history and file handle.
    The active document's fields live on S; switching tabs stashes them and restores another set. */
 const DOC_KEYS = ['bytes', 'name', 'pdf', 'pages', 'scale', 'zoomMode', 'view', 'cover', 'current', 'undo', 'redo',
-  'dirty', 'signed', 'version', 'imgCache', 'annCache', 'handle', 'thumbSel', 'guides', 'activeLayer'];
+  'dirty', 'signed', 'version', 'imgCache', 'annCache', 'linkCache', 'handle', 'thumbSel', 'guides', 'activeLayer'];
 const docs = [];
 let active = -1, docSeq = 0, VSEQ = 0;
 S.thumbSel = new Set();
 const activeDoc = () => docs[active] || null;
 function blankDoc(){
   return {id:++docSeq, bytes:null, name:'', pdf:null, pages:[], scale:PX, zoomMode:'fit-width', view:S.view || 'continuous',
-    cover:S.cover, current:0, undo:[], redo:[], dirty:false, signed:false, version:0, imgCache:new Map(), annCache:new Map(),
+    cover:S.cover, current:0, undo:[], redo:[], dirty:false, signed:false, version:0, imgCache:new Map(), annCache:new Map(), linkCache:new Map(),
     handle:null, thumbSel:new Set(), guides:{h:[], v:[]}, scrollTop:0, scrollLeft:0, activeLayer:null};
 }
 function stashActive(){
@@ -1397,7 +1398,7 @@ async function loadDoc(bytes, {name, keepView = false, scrollToCurrent = false} 
   if (prev) { prev.map = matchPages(prev.pages, pages); prev.pre = await prerenderNew(pages, prev); }
   S.pdf = pdf; S.pages = pages; S.bytes = bytes; S.version = ++VSEQ;
   if (name) S.name = name;
-  S.imgCache.clear(); S.annCache.clear();
+  S.imgCache.clear(); S.annCache.clear(); S.linkCache.clear();
   if (!keepView) { S.current = 0; S.zoomMode = 'fit-width'; }
   S.current = clamp(S.current, 0, pages.length - 1);
   const keepSel = keepView ? [...(S.thumbSel || [])].filter(i => i < pages.length) : [];
@@ -10219,29 +10220,30 @@ async function urlDialog(pre, auto){
    document (/Dest [page /Fit]). The link tool draws a box and asks where it goes; with the tool on, the links show and
    can be changed or deleted; Ctrl+click follows one with any tool.
    ==================================================================== */
-const LINKS = new Map(), LINKS_NOW = new Map();   // per version and page: the promise, and the links once known
-// the links on page i: their box on screen, the address or page they go to (named destinations looked up), how they look
+// the links on page i: their box on screen, the address or page they go to (named destinations looked up), how they look.
+// Kept per document like its annotations (S.linkCache, page → {p: the promise, now: the links once known}), emptied when the
+// document changes: every page whose overlay is up keeps its entry, so Ctrl+click can always find its links.
 function pageLinks(i){
-  const key = S.version + ':' + i; if (LINKS.has(key)) return LINKS.get(key);
-  if (LINKS.size > 200) { LINKS.clear(); LINKS_NOW.clear(); }
-  const pg = S.pages[i];
-  const p = pg.page.getAnnotations().then(async list => {
+  const cache = S.linkCache, pdf = S.pdf, pg = S.pages[i];   // (this document's, even if the tab changes meanwhile)
+  if (cache.has(i)) return cache.get(i).p;
+  const ent = {p:null, now:null};
+  ent.p = pg.page.getAnnotations().then(async list => {
     const out = [];
     for (const a of list) {
       if (a.subtype !== 'Link' || !a.rect || (a.annotationFlags & 2)) continue;   // (a hidden link is not followed by any reader)
       const r = pg.vp1.convertToViewportRectangle(a.rect), box = {x:Math.min(r[0], r[2]), y:Math.min(r[1], r[3]), w:Math.abs(r[2] - r[0]), h:Math.abs(r[3] - r[1])};
       let page = null;
       try {
-        let dest = a.dest; if (typeof dest === 'string') dest = await S.pdf.getDestination(dest);
-        if (Array.isArray(dest) && dest[0] != null) page = typeof dest[0] === 'number' ? dest[0] : await S.pdf.getPageIndex(dest[0]);
+        let dest = a.dest; if (typeof dest === 'string') dest = await pdf.getDestination(dest);
+        if (Array.isArray(dest) && dest[0] != null) page = typeof dest[0] === 'number' ? dest[0] : await pdf.getPageIndex(dest[0]);
       } catch (_) {}
       const w = a.borderStyle ? a.borderStyle.width : 0;
       // url: the address as written in the file (shown and changed); href: the same as pdf.js checked it (followed), or ''
       out.push({id:a.id, box, url:a.unsafeUrl || a.url || '', href:a.url || '', page, look:w > 0 ? 'blue' : 'none'});
     }
-    LINKS_NOW.set(key, out); return out;
+    ent.now = out; return out;
   }).catch(() => []);
-  LINKS.set(key, p); return p;
+  cache.set(i, ent); return ent.p;
 }
 // Ctrl+click (⌘ on a Mac) on a link follows it, whatever the tool: the page it goes to, or the address in the browser.
 // Runs before everything else on the page (capture); the click that follows is swallowed, so nothing under the link reacts.
@@ -10250,7 +10252,7 @@ pagesEl.addEventListener('pointerdown', e => {
   if (e.target.closest && e.target.closest('[contenteditable="true"],input,textarea,select,button,.abar')) return;
   const pel = e.target.closest && e.target.closest('.page'); if (!pel) return;
   const i = +pel.dataset.i, p = pagePoint(i, e);
-  const hit = (LINKS_NOW.get(S.version + ':' + i) || []).filter(l => p.x >= l.box.x && p.x <= l.box.x + l.box.w && p.y >= l.box.y && p.y <= l.box.y + l.box.h)
+  const ent = S.linkCache.get(i), hit = ((ent && ent.now) || []).filter(l => p.x >= l.box.x && p.x <= l.box.x + l.box.w && p.y >= l.box.y && p.y <= l.box.y + l.box.h)
     .sort((a, b) => a.box.w * a.box.h - b.box.w * b.box.h)[0];
   if (!hit) return;
   e.preventDefault(); e.stopPropagation();
@@ -10261,11 +10263,14 @@ pagesEl.addEventListener('pointerdown', e => {
 function followLink(l){
   if (l.page != null) { if (l.page < S.pages.length) scrollToPage(l.page); return; }
   const u = l.href || '';   // (as pdf.js checked it; l.url is the address as written)
-  if (!/^(https?:\/\/|mailto:)/i.test(u)) { toast(l.url ? '這個連結不能開啟：' + l.url.slice(0, 80) : '這個連結沒有目的地', 'err'); return; }
+  if (!/^(https?:\/\/|mailto:)/i.test(u)) { toast(l.url ? '這個連結不能開啟：' + l.url.slice(0, 80) : '這種連結不支援', 'err'); return; }
   if (DESK) DESK.openExternal(u); else window.open(u, '_blank', 'noopener');
-  toast((/^mailto:/i.test(u) ? '寄信給：' + u.slice(7) : '在瀏覽器開啟：' + u).slice(0, 120));
+  toast((/^mailto:/i.test(u) ? '寄信給：' + pctDecode(u.slice(7)) : '在瀏覽器開啟：' + u).slice(0, 120));
 }
-const linkText = l => l.page != null ? `跳到第 ${l.page + 1} 頁` : /^mailto:/i.test(l.url) ? '寄信給：' + l.url.slice(7) : l.url ? '開啟網址：' + l.url : '（沒有目的地）';
+// a link's web address: as written when that is one, else as pdf.js checked it, else null
+const linkWeb = l => /^https?:\/\//i.test(l.url.trim()) ? l.url.trim() : /^https?:\/\//i.test(l.href) ? l.href : null;
+const linkText = l => l.page != null ? `跳到第 ${l.page + 1} 頁` : /^mailto:/i.test(l.url) ? '寄信給：' + pctDecode(l.url.slice(7)) : linkWeb(l) ? '開啟網址：' + l.url.trim()
+  : l.url ? '其他連結：' + l.url : '（這種連結不支援）';
 // a box dragged with the link tool (as 文字辨識 does), then where it goes
 function startLinkDraw(i, e){
   const pg = S.pages[i], p0 = pagePoint(i, e);
@@ -10285,13 +10290,15 @@ function startLinkDraw(i, e){
 }
 // the window for a new link (box) or one already there (link): returns nothing; makes, changes or deletes it
 async function openLinkDialog(i, {box = null, link = null} = {}){
-  const n = S.pages.length, cur = link ? (link.page != null ? {kind:'page', page:link.page + 1} : /^mailto:/i.test(link.url) ? {kind:'mail', mail:link.url.slice(7)} : {kind:'url', url:link.url}) : {kind:'url'};
+  const n = S.pages.length, cur = !link ? {kind:'url'} : link.page != null ? {kind:'page', page:link.page + 1} : /^mailto:/i.test(link.url) ? {kind:'mail', mail:pctDecode(link.url.slice(7))}
+    : linkWeb(link) ? {kind:'url', url:linkWeb(link)} : {kind:'other'};   // another file, a program, a script…: kept as it is unless a kind is picked
   const body = document.createElement('div'); body.style.width = 'min(460px, 80vw)';
-  body.innerHTML = `<div class="pr-row"><div class="field"><label>連到</label><select id="lkKind"><option value="url">網址</option><option value="page">本文件的頁面</option><option value="mail">電子郵件</option></select></div>
+  body.innerHTML = `<div class="pr-row"><div class="field"><label>連到</label><select id="lkKind"><option value="url">網址</option><option value="page">本文件的頁面</option><option value="mail">電子郵件</option>${cur.kind === 'other' ? '<option value="other">其他（保持原樣）</option>' : ''}</select></div>
       <div class="field"><label>外觀</label><select id="lkLook"><option value="none">不顯示框</option><option value="blue">細藍框</option></select></div></div>
     <div class="field" data-k="url"><label>網址</label><input type="text" id="lkUrl" placeholder="https://example.com" spellcheck="false" autocomplete="off"></div>
     <div class="field" data-k="page"><label>頁碼（1～${n}）</label><input type="number" id="lkPage" min="1" max="${n}"></div>
     <div class="field" data-k="mail"><label>電子郵件地址</label><input type="text" id="lkMail" placeholder="name@example.com" spellcheck="false" autocomplete="off"></div>
+    ${cur.kind === 'other' ? `<div class="field" data-k="other"><label>原本的目的地</label><div class="lk-other">${esc(link.url || '（這種連結沒有網址）')}<br>這種連結只能保留原樣或刪除；要改目的地，請在「連到」選網址、頁面或電子郵件。</div></div>` : ''}
     <div class="pr-err" id="lkErr"></div>`;
   const $b = q => body.querySelector(q);
   // where it goes as typed: {kind, url, page (0-based), mail, look} or {err}
@@ -10300,13 +10307,14 @@ async function openLinkDialog(i, {box = null, link = null} = {}){
     if (kind === 'url') {
       let u = $b('#lkUrl').value.trim(); if (!u) return {err:'', empty:true};
       if (!/^[a-z][a-z0-9+.-]*:/i.test(u)) u = 'https://' + u;
-      let ok = false; try { const x = new URL(u); ok = /^https?:$/.test(x.protocol) && !!x.hostname; if (ok && /[^\x20-\x7e]/.test(u)) u = x.href; } catch (_) {}
+      let ok = false; try { const x = new URL(u); ok = /^https?:$/.test(x.protocol) && !!x.hostname; if (ok && /[^\x21-\x7e]/.test(u)) u = x.href; } catch (_) {}   // (spaces, Chinese…: percent-encoded)
       return ok ? {kind, url:u, look} : {err:'網址要是 http:// 或 https:// 開頭的網址'};
     }
     if (kind === 'page') {
       const v = $b('#lkPage').value.trim(), p = +v; if (!v) return {err:'', empty:true};
       return Number.isInteger(p) && p >= 1 && p <= n ? {kind, page:p - 1, look} : {err:`頁碼要在 1～${n} 之間`};
     }
+    if (kind === 'other') return look !== link.look ? {kind, look} : {err:'', empty:true};   // only the look can change
     const m = $b('#lkMail').value.trim(); if (!m) return {err:'', empty:true};
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(m) ? {kind, mail:m, look} : {err:'電子郵件地址的格式不對'};
   };
@@ -10322,20 +10330,25 @@ async function openLinkDialog(i, {box = null, link = null} = {}){
     if (cur.url) $b('#lkUrl').value = cur.url; if (cur.page) $b('#lkPage').value = cur.page; if (cur.mail) $b('#lkMail').value = cur.mail;
     body.addEventListener('input', refresh); body.addEventListener('change', refresh);
     body.addEventListener('keydown', e => { if (e.key === 'Enter' && !$('#lkGo').disabled) { e.preventDefault(); $('#lkGo').click(); } });
-    refresh(); const f = $b(`[data-k="${cur.kind}"] input`); if (f) { f.focus(); f.select(); }
+    refresh(); const f = $b(`[data-k="${cur.kind}"] input`); if (f) { f.focus(); f.select(); } else $b('#lkKind').focus();
   }});
   if (r === 'del' && link) return mutate('已刪除連結', doc => { const ref = findAnnotRef(doc, i, link.id); if (!ref) return false; removeAnnotRefs(doc, i, ref); });
   if (!r || r === 'del') return;
   if (link) return mutate('已修改連結', doc => {
     const ref = findAnnotRef(doc, i, link.id); if (!ref) return false;
-    const d = doc.context.lookup(ref, PDFDict), keys = r.look !== link.look ? ['A', 'Dest', 'Border', 'C', 'AP'] : ['A', 'Dest'];
-    keys.forEach(k => d.delete(N_(k)));
-    Object.entries({...linkTarget(doc, r), ...(r.look !== link.look ? linkLook(doc, r, i, link.box) : {})}).forEach(([k, v]) => d.set(N_(k), doc.context.obj(v)));
+    // the target is replaced unless kept (另一種連結); the look only when it was changed (/BS too: it wins over /Border)
+    const d = doc.context.lookup(ref, PDFDict), retarget = r.kind !== 'other', relook = r.look !== link.look;
+    [...(retarget ? ['A', 'Dest'] : []), ...(relook ? ['Border', 'BS', 'C', 'AP'] : [])].forEach(k => d.delete(N_(k)));
+    Object.entries({...(retarget ? linkTarget(doc, r) : {}), ...(relook ? linkLook(doc, r, i, link.box) : {})}).forEach(([k, v]) => d.set(N_(k), doc.context.obj(v)));
   });
   return mutate('已建立連結', doc => { addAnnot(doc, i, {Type:'Annot', Subtype:'Link', Rect:visToPdf(i, box).rect, ...linkTarget(doc, r), ...linkLook(doc, r, i, box)}); });
 }
-// where a link goes, as PDF entries (strings become names in ctx.obj)
-const linkTarget = (doc, t) => t.kind === 'page' ? {Dest:[doc.getPage(t.page).ref, 'Fit']} : {A:{S:'URI', URI:PDFString.of(t.kind === 'mail' ? 'mailto:' + t.mail : t.url)}};
+// where a link goes, as PDF entries (strings become names in ctx.obj). An address is written as printable ASCII (the rest
+// percent-encoded) with \ ( ) escaped: PDFString.of takes its text as it will stand between the brackets.
+const pctNonAscii = s => s.replace(/[^\x21-\x7e]/gu, c => encodeURIComponent(c));
+const pctDecode = s => { try { return decodeURIComponent(s); } catch (_) { return s; } };
+const uriString = u => PDFString.of(u.replace(/[\\()]/g, '\\$&'));
+const linkTarget = (doc, t) => t.kind === 'page' ? {Dest:[doc.getPage(t.page).ref, 'Fit']} : {A:{S:'URI', URI:uriString(t.kind === 'mail' ? 'mailto:' + pctNonAscii(t.mail) : t.url)}};
 // how it looks: no frame, or a thin blue one drawn as its appearance too (pdf.js, Edge and Chrome draw only that); no print
 // flag, so the frame shows on screen and is not printed, as Acrobat does with link frames
 function linkLook(doc, t, i, box){
@@ -10936,7 +10949,7 @@ window.__pdfapp = {
     const doc = await geoDoc();
     return Promise.all((await pageLinks(i)).map(async l => {
       const ref = findAnnotRef(doc, i, l.id), d = ref && doc.context.lookup(ref, PDFDict), b = d && d.lookupMaybe(N_('Border'), PDFArray), c = d && d.lookupMaybe(N_('C'), PDFArray), dest = d && d.get(N_('Dest'));
-      return {id:l.id, box:l.box, url:l.url || null, page:l.page, fit:dest instanceof PDFArray && String(dest.get(1)) === '/Fit', border:b ? numArr(b)[2] : 1, blue:!!c && numArr(c).join() === '0,0,1', ap:!!(d && d.get(N_('AP'))), printed:!!(d && d.get(N_('F')) && (d.get(N_('F')).asNumber() & 4))};
+      return {id:l.id, box:l.box, url:l.url || null, page:l.page, fit:dest instanceof PDFArray && String(dest.get(1)) === '/Fit', border:b ? numArr(b)[2] : 1, blue:!!c && numArr(c).join() === '0,0,1', ap:!!(d && d.get(N_('AP'))), look:l.look, c:c ? numArr(c) : null, act:(() => { const A = d && d.lookupMaybe(N_('A'), PDFDict), t = A && A.get(N_('S')); return t ? String(t).slice(1) : null; })(), printed:!!(d && d.get(N_('F')) && (d.get(N_('F')).asNumber() & 4))};
     }));
   },
   switchTab,
