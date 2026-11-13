@@ -8746,9 +8746,32 @@ const RIBBON_KEY = 'pdfeditor.ribbon.v1', RELEASES_URL = 'https://forgejo.taiyop
 let RIBBON = (() => { try { return JSON.parse(localStorage.getItem(RIBBON_KEY)) || {}; } catch (_) { return {}; } })();
 function applyRibbon(){ $('#ribbon').classList.toggle('icons-only', !!RIBBON.iconsOnly); }
 let SET = null;   // the open settings window
+/* 設定檔: the program's settings — the localStorage keys starting with pdfeditor. — saved to a .json file as they are
+   stored, and read back (importSettings) */
+const SETTINGS_SKIP = new Set(['pdfeditor.fontcat.v2', 'pdfeditor.seenversion.v1']);   // this computer's font list cache; which version's notes were seen
+function settingsSnapshot(){
+  const settings = {};
+  try {
+    for (let k = 0; k < localStorage.length; k++) { const key = localStorage.key(k); if (key && key.startsWith('pdfeditor.') && !SETTINGS_SKIP.has(key)) settings[key] = localStorage.getItem(key); }
+  } catch (_) {}
+  return {app:'PDF 工作台', kind:'settings', version:UPD.info ? UPD.info.version : '', exported:new Date().toISOString(), settings};
+}
+async function exportSettings(){
+  const d = new Date(), name = `PDF工作台-設定-${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}.json`;
+  const bytes = new TextEncoder().encode(JSON.stringify(settingsSnapshot(), null, 2));
+  if (DESK) {
+    let where = null;
+    try { where = await DESK.saveAs(name, bytes); } catch (err) { toast('匯出失敗：' + (err.message || err), 'err'); return null; }
+    if (!where) return null;   // cancelled
+    toast('已匯出設定：' + String(where).split(/[\\/]/).pop()); return where;
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([bytes], {type:'application/json'})); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast('已匯出設定：' + name); return name;
+}
 async function openSettings(tab = 'look'){
   if (SET) { SET.show(tab); return; }
-  const tabs = [['look', '外觀'], ['bar', '工具列'], ['keys', '按鍵'], ['people', '人員'], ...(DESK ? [['update', '軟體更新']] : [])];
+  const tabs = [['look', '外觀'], ['bar', '工具列'], ['keys', '按鍵'], ['people', '人員'], ['file', '設定檔'], ...(DESK ? [['update', '軟體更新']] : [])];
   const body = document.createElement('div'); body.className = 'set';
   body.innerHTML = `<div class="set-tabs">${tabs.map(([k, n]) => `<button data-st="${k}">${n}</button>`).join('')}</div><div class="set-pane"></div>`;
   const pane = body.querySelector('.set-pane');
@@ -8769,6 +8792,9 @@ async function openSettings(tab = 'look'){
         ${names.map(n => `<div class="ppl-row"><label class="set-opt"><input type="radio" name="pdef" value="${esc(n)}"${PEOPLE.def === n ? ' checked' : ''}>${esc(n)}</label>${PEOPLE.def === n ? '<small class="ppl-def">預設</small>' : ''}<button class="ppl-del" data-pdel="${esc(n)}" title="${one ? '名單至少要留一個名字' : '從名單刪除'}"${one ? ' disabled' : ''}>${icon('trash')}</button></div>`).join('')}
         <div class="ppl-add"><input id="pName" class="ex-in" placeholder="輸入名字" maxlength="40" spellcheck="false"><button class="btn" data-padd>新增</button></div>`;
     },
+    file:() => `<div class="set-h">設定檔</div>
+      <div class="note" style="margin-bottom:12px">把這台電腦上的程式設定（外觀、工具列、按鍵、人員名單、繪圖樣式、我的最愛顏色、戳記、文字方塊樣式…）存成一個檔案，在別台電腦或重灌後匯入，就是同一套設定。</div>
+      <div class="set-btns"><button class="btn" data-sf="export">匯出設定…</button><button class="btn" data-sf="import">匯入設定…</button></div>`,
     update:() => {
       const st = UPD.state.state, ready = st === 'ready', working = st === 'checking' || st === 'downloading';
       return `<div class="set-h">軟體更新</div>
@@ -8798,6 +8824,7 @@ async function openSettings(tab = 'look'){
     const t = e.target.closest('[data-st]'); if (t) { show(t.dataset.st); return; }
     const pd = e.target.closest('[data-pdel]'); if (pd) { if (!pd.disabled && removePerson(pd.dataset.pdel)) show('people'); return; }
     if (e.target.closest('[data-padd]')) { addFromInput(); return; }
+    const sf = e.target.closest('[data-sf]'); if (sf) { if (sf.dataset.sf === 'export') exportSettings(); return; }
     const u = e.target.closest('[data-u2]'); if (!u || u.disabled) return;
     if (u.dataset.u2 === 'check') { UPD.state = {state:'checking'}; renderUpdate(); DESK.update.check().then(st => { if (st) { UPD.state = st; renderUpdate(); } }); }
     if (u.dataset.u2 === 'install') { closeModal(true); installUpdate(); }
@@ -8995,6 +9022,7 @@ if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyThem
 paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {
   people:() => ({names:PEOPLE ? [...PEOPLE.names] : [], def:PEOPLE ? PEOPLE.def : '', author:AUTHOR}),
+  settingsSnapshot,
   clip:() => ({last:LAST_CLIP, note:NOTE_CLIP ? {contents:NOTE_CLIP.contents, author:NOTE_CLIP.author} : null}),
   changelog:url => loadChangelog(url), notesHTML, whatsNewList, showWhatsNew, checkWhatsNew, updState:st => { UPD.state = st; renderUpdate(); },
   fontIdState:() => { const p = OCR.panel; if (!p) return null;
