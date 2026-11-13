@@ -1687,9 +1687,9 @@ async function renderPage(i){
 async function ensureOverlay(i){
   const st = S.st[i]; if (st.ovlVer === S.version) return; st.ovlVer = S.version;
   const ver = S.version, el = S.els[i], ovl = el.querySelector('.ovl'), pg = S.pages[i];
-  const [anns, imgs] = await Promise.all([getAnns(i), detectImages(i)]);
+  const [anns, imgs, lnks] = await Promise.all([getAnns(i), detectImages(i), pageLinks(i)]);
   if (ver !== S.version) return;
-  ovl.querySelectorAll('.annhit,.imgbox').forEach(n => n.remove());
+  ovl.querySelectorAll('.annhit,.imgbox,.lnk').forEach(n => n.remove());
   const pct = (v, t) => (v / t * 100) + '%';
   anns.forEach(a => {
     const d = document.createElement('div'); d.className = 'annhit' + (a.noap ? ' noap' : '') + (a.sig ? ' sig' : '') + (a.subtype === 'Text' ? ' txt' : '');
@@ -1720,6 +1720,14 @@ async function ensureOverlay(i){
     d.style.left = pct(b.x, pg.w); d.style.top = pct(b.y, pg.h); d.style.width = pct(b.w, pg.w); d.style.height = pct(b.h, pg.h);
     d.innerHTML = `<span>圖片 ${k + 1}${b.nw ? ' · ' + b.nw + '×' + b.nh : ''}</span>`;
     d.dataset.k = k;   // click selects the image; dragging from it starts a new selection (handled in startExtractDraw)
+    ovl.appendChild(d);
+  });
+  lnks.forEach(l => {   // (shown only with the link tool) a click changes or deletes the link; Ctrl+click is left to followLinkAt
+    const d = document.createElement('div'); d.className = 'lnk'; d.title = linkText(l);
+    d.style.left = pct(l.box.x, pg.w); d.style.top = pct(l.box.y, pg.h); d.style.width = pct(l.box.w, pg.w); d.style.height = pct(l.box.h, pg.h);
+    const mine = ev => S.tool === 'link' && !S.spaceDown && ev.button === 0 && !ev.ctrlKey && !ev.metaKey;
+    d.addEventListener('pointerdown', ev => { if (mine(ev)) { ev.stopPropagation(); ev.preventDefault(); } });
+    d.addEventListener('click', ev => { if (mine(ev)) { ev.stopPropagation(); openLinkDialog(i, {link:l}); } });
     ovl.appendChild(d);
   });
   if (FIND.open) paintFindPage(i);
@@ -10234,6 +10242,28 @@ function pageLinks(i){
     LINKS_NOW.set(key, out); return out;
   }).catch(() => []);
   LINKS.set(key, p); return p;
+}
+// Ctrl+click (⌘ on a Mac) on a link follows it, whatever the tool: the page it goes to, or the address in the browser.
+// Runs before everything else on the page (capture); the click that follows is swallowed, so nothing under the link reacts.
+pagesEl.addEventListener('pointerdown', e => {
+  if (!(e.ctrlKey || e.metaKey) || e.button !== 0 || S.spaceDown || !S.pdf) return;
+  if (e.target.closest && e.target.closest('[contenteditable="true"],input,textarea,select,button,.abar')) return;
+  const pel = e.target.closest && e.target.closest('.page'); if (!pel) return;
+  const i = +pel.dataset.i, p = pagePoint(i, e);
+  const hit = (LINKS_NOW.get(S.version + ':' + i) || []).filter(l => p.x >= l.box.x && p.x <= l.box.x + l.box.w && p.y >= l.box.y && p.y <= l.box.y + l.box.h)
+    .sort((a, b) => a.box.w * a.box.h - b.box.w * b.box.h)[0];
+  if (!hit) return;
+  e.preventDefault(); e.stopPropagation();
+  const eat = ev => { ev.stopPropagation(); ev.preventDefault(); };
+  window.addEventListener('click', eat, {capture:true, once:true}); setTimeout(() => window.removeEventListener('click', eat, true), 800);
+  followLink(hit);
+}, true);
+function followLink(l){
+  if (l.page != null) { if (l.page < S.pages.length) scrollToPage(l.page); return; }
+  const u = l.href || '';   // (as pdf.js checked it; l.url is the address as written)
+  if (!/^(https?:\/\/|mailto:)/i.test(u)) { toast(l.url ? '這個連結不能開啟：' + l.url.slice(0, 80) : '這個連結沒有目的地', 'err'); return; }
+  if (DESK) DESK.openExternal(u); else window.open(u, '_blank', 'noopener');
+  toast((/^mailto:/i.test(u) ? '寄信給：' + u.slice(7) : '在瀏覽器開啟：' + u).slice(0, 120));
 }
 const linkText = l => l.page != null ? `跳到第 ${l.page + 1} 頁` : /^mailto:/i.test(l.url) ? '寄信給：' + l.url.slice(7) : l.url ? '開啟網址：' + l.url : '（沒有目的地）';
 // a box dragged with the link tool (as 文字辨識 does), then where it goes

@@ -238,6 +238,15 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 一次只會有一個「從網址開啟」：`URLOPEN`（視窗開著或正在開）或已有其他視窗開著（`#mask` 有 `show`，例如列印、設定、匯出）時，拖進來的連結不處理，提示「請先關掉目前的視窗，再拖入連結」；再按一次 Ctrl+Shift+O 也不會開第二個（`openUrlDialog` 包住 `urlDialog`）。
 - 測試 `open-url.mjs` 在測試裡開本機 HTTP 伺服器（轉址、中文檔名（`filename*` 與原始 UTF-8 的 `filename="…"`）、非法字元、網址裡的 %E5…、沒有副檔名、HTML、404、慢慢送、超過 500 MB、下載中或其他視窗開著時拖入連結）。
 
+### 3.9.14 連結工具（v1.0.41）
+- 入口：「註解」群組的〔插入圖片〕改成分段按鈕 `ACTION_MENUS.insert`（〔插入圖片…〕`{tool:'image'}`、〔連結〕`{tool:'link'}`）；工具名 `link`，`HINTS.link`。
+- 建立：`startLinkDraw(i, e)` 拖曳一個框（小於 4 pt 不算）→ `openLinkDialog(i, {box})`。修改：連結工具下點一下 `.lnk` → `openLinkDialog(i, {link})`（多〔刪除連結〕）。都是一次 `mutate`：「已建立連結」「已修改連結」「已刪除連結」。網址沒有 `scheme:` 就補 `https://`，只收 http、https；頁碼 1～N；郵件寫成 `mailto:`。
+- 寫法：標準的 `/Subtype /Link`。`linkTarget`：網址與郵件 `/A <</S /URI /URI (…)>>`，本文件的頁面 `/Dest [頁 /Fit]`。`linkLook`：不顯示框 `/Border [0 0 0]`；細藍框 `/Border [0 0 1]`、`/C [0 0 1]`，再畫一個 1 pt 藍框的 `/AP`（`formAP`，旋轉頁也對），因為 pdf.js（本程式）和 Edge／Chrome 只畫有外觀的連結。連結不設 `/F 4`（列印旗標），所以框跟 Acrobat 一樣只在螢幕上，不會印出來。修改時外觀沒有改就不動 `/Border`、`/C`、`/AP`（別的程式做的紅框連結改了目的地還是紅框）；目的地一律換成上面的寫法（命名目的地也是）。
+- 讀取：`pageLinks(i)`（`LINKS` 放 promise、`LINKS_NOW` 放結果，鍵是 `S.version:i`，`S.version` 全程式唯一）：pdf.js `getAnnotations` 的 Link → 框（畫面座標，`vp1`）、`url`（`url` 或 `unsafeUrl`）、目的頁（命名目的地用 `getDestination`，再 `getPageIndex`）、外觀（`borderStyle.width` > 0 就是細藍框）。`linkText(l)`：「開啟網址：…」「跳到第 N 頁」「寄信給：…」。
+- 顯示：`ensureOverlay` 每一頁都讀 `pageLinks`（這樣 Ctrl＋點才知道哪裡有連結），並為每個連結放一個 `.lnk`（`title` 是 `linkText`），CSS 只在 `.tool-link` 時顯示，其他工具下不擋任何東西。
+- Ctrl＋點（Mac 是 ⌘）：`pagesEl` 的 capture `pointerdown`，點在 `LINKS_NOW` 某個連結的框內（重疊時取面積最小的）→ `followLink`：頁面連結 `scrollToPage`；網址只開 http、https、mailto（主程式 `app:open-external` 也只放行這三種，其他提示「這個連結不能開啟」）。接下來那一次 click 會被吃掉，底下的物件不會反應。點在文字編輯區、輸入框、按鈕上不處理。
+- 測試 `links.mjs`：3 頁（第 2 頁 /Rotate 90；第 3 頁有別的程式做的命名目的地連結，壓在一個矩形上）：建立網址／頁面／郵件連結、頁碼超出範圍、旋轉頁的位置、細藍框畫得出來而且框內不變；`.lnk` 與提示、修改（換網址、改外觀）、刪除與復原、修改命名目的地的連結（外觀不動）、連結工具與選取工具下 Ctrl＋點（攔下主程式的 `shell.openExternal`）、選取工具下點到連結底下的矩形。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。
@@ -253,7 +262,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
   - 目錄 v2（`pdfeditor.fontcat.v2`）多記 `embed`（OS/2 fsType：`ok`／`full`／`no`）、`vert`（`vhea`＋`vmtx`＋GSUB `vert`）、`bytes`，以及每個家族的所有字面 `faces`（`FONT_FACES` 存 `queryLocalFonts` 的原物件）。測試用 `registerTestFont` 把字型位元組當成已安裝字型（`TEST_FONTS`）。
   - 格式列與 `currentTBStyle` 讀游標旁邊那段文字的樣式（`caretStyleNode`）：游標在元素之間時（例如剛打開編輯器、游標在最後）取前一段文字。
 - localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, find.v1, fontcat.v2, fontid.v1, fonts.recent.v1, lastact.v1, seenversion.v1, lasttool.v1, pagecolor, people.v1, print.v1, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
-- 測試用的鉤子：`window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars, getAnns, TBE, sel, …}`，端對端測試會用到，不要刪。
+- 測試用的鉤子：`window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars, getAnns, TBE, sel, links, …}`，端對端測試會用到，不要刪。
 
 ---
 
