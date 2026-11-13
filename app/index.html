@@ -1688,30 +1688,54 @@ document.addEventListener('pointerdown', e => { if (!pop.contains(e.target)) pop
 
 /* ---------------- image detection ---------------- */
 const imgResolved = new Map();
+// [x0, y0, x1, y1] boxes: where two meet (null: one is missing → the other; no overlap → null); two {x, y, w, h} alike
+const boxMeet = (a, b) => { if (!a) return b; if (!b) return a; const r = [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])]; return r[0] <= r[2] && r[1] <= r[3] ? r : null; };
+const sameBox = (p, q, d = 1.5) => !!p && !!q && ['x', 'y', 'w', 'h'].every(k => Math.abs(p[k] - q[k]) <= d);
 async function detectImages(i){
   const key = S.version + ':' + i; if (S.imgCache.has(key)) return S.imgCache.get(key);
   const p = (async () => {
     const pg = S.pages[i];
     const ops = await pg.page.getOperatorList({annotationMode:pdfjsLib.AnnotationMode.DISABLE});
     const O = pdfjsLib.OPS, U = pdfjsLib.Util, vt = pg.vp1.transform;
-    let ctm = [1, 0, 0, 1, 0, 0]; const stack = [], out = [];
+    // the clip (page view, [x0, y0, x1, y1]) follows the clipping paths: a path's box (its control points included: pdf.js
+    // leaves curves out of its own minMax) takes effect at the end of the path, like in the renderer
+    let ctm = [1, 0, 0, 1, 0, 0], clip = null, path = null, pending = false; const stack = [], out = [];
+    const view = (r, m) => { const q = [[r[0], r[1]], [r[2], r[1]], [r[0], r[3]], [r[2], r[3]]].map(p => U.applyTransform(U.applyTransform(p, m), vt)), xs = q.map(p => p[0]), ys = q.map(p => p[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; };
+    const PATH_ARGS = {[O.moveTo]:2, [O.lineTo]:2, [O.curveTo]:6, [O.curveTo2]:4, [O.curveTo3]:4, [O.closePath]:0, [O.rectangle]:4};
+    const pathBox = (fns, args) => {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, j = 0;
+      const pt = (x, y) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); };
+      for (const f of fns) {
+        const n = PATH_ARGS[f] ?? 0;
+        if (f === O.rectangle) { pt(args[j], args[j + 1]); pt(args[j] + args[j + 2], args[j + 1] + args[j + 3]); }
+        else for (let k = 0; k + 1 < n; k += 2) pt(args[j + k], args[j + k + 1]);
+        j += n;
+      }
+      return x0 <= x1 && y0 <= y1 ? [x0, y0, x1, y1] : null;
+    };
     const add = (nw, nh) => {
-      const pts = [[0, 0], [1, 0], [0, 1], [1, 1]].map(q => U.applyTransform(U.applyTransform(q, ctm), vt));
-      const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]);
-      let x0 = Math.max(0, Math.min(...xs)), y0 = Math.max(0, Math.min(...ys));
-      let x1 = Math.min(pg.w, Math.max(...xs)), y1 = Math.min(pg.h, Math.max(...ys));
-      if (x1 - x0 < 4 || y1 - y0 < 4) return;
-      const b = {x:x0, y:y0, w:x1 - x0, h:y1 - y0, nw:nw | 0, nh:nh | 0};
-      if (!out.some(o => Math.abs(o.x - b.x) < 1 && Math.abs(o.y - b.y) < 1 && Math.abs(o.w - b.w) < 1 && Math.abs(o.h - b.h) < 1)) out.push(b);
+      const f = view([0, 0, 1, 1], ctm), v = boxMeet(boxMeet(f, clip), [0, 0, pg.w, pg.h]);
+      if (!v || v[2] - v[0] < 4 || v[3] - v[1] < 4) return;
+      const full = {x:f[0], y:f[1], w:f[2] - f[0], h:f[3] - f[1]};
+      if (!out.some(o => sameBox(o.full, full, 1))) out.push({x:v[0], y:v[1], w:v[2] - v[0], h:v[3] - v[1], nw:nw | 0, nh:nh | 0, full});
     };
     for (let k = 0; k < ops.fnArray.length; k++) {
       const fn = ops.fnArray[k], a = ops.argsArray[k];
       switch (fn) {
-        case O.save: stack.push(ctm.slice()); break;
-        case O.restore: if (stack.length) ctm = stack.pop(); break;
+        case O.save: stack.push({ctm:ctm.slice(), clip}); break;
+        case O.restore: if (stack.length) ({ctm, clip} = stack.pop()); path = null; pending = false; break;
         case O.transform: ctm = U.transform(ctm, a); break;
-        case O.paintFormXObjectBegin: stack.push(ctm.slice()); if (a && Array.isArray(a[0]) && a[0].length === 6) ctm = U.transform(ctm, a[0]); break;
-        case O.paintFormXObjectEnd: if (stack.length) ctm = stack.pop(); break;
+        case O.constructPath: { const b = a && pathBox(a[0], a[1]); if (b) { const v = view(b, ctm); path = path ? [Math.min(path[0], v[0]), Math.min(path[1], v[1]), Math.max(path[2], v[2]), Math.max(path[3], v[3])] : v; } break; }
+        case O.clip: case O.eoClip: pending = true; break;
+        case O.endPath: case O.fill: case O.eoFill: case O.stroke: case O.closeStroke: case O.fillStroke: case O.eoFillStroke: case O.closeFillStroke: case O.closeEOFillStroke:
+          if (pending && path) clip = boxMeet(clip, path) || [0, 0, 0, 0];
+          path = null; pending = false; break;
+        case O.paintFormXObjectBegin:
+          stack.push({ctm:ctm.slice(), clip});
+          if (a && a[0] && a[0].length === 6) ctm = U.transform(ctm, a[0]);
+          if (a && a[1] && a[1].length === 4) clip = boxMeet(clip, view(a[1], ctm)) || [0, 0, 0, 0];
+          break;
+        case O.paintFormXObjectEnd: if (stack.length) ({ctm, clip} = stack.pop()); break;
         case O.paintImageXObject: add(a[1], a[2]); break;
         case O.paintInlineImageXObject: add(a[0] && a[0].width, a[0] && a[0].height); break;
         case O.paintImageMaskXObject: add(a[0] && a[0].width, a[0] && a[0].height); break;
@@ -1734,7 +1758,8 @@ async function renderRegion(i, box, pxPerPt){
   return c;
 }
 function nativeScale(box){
-  let s = box.nw ? Math.max(box.nw / box.w, box.nh / box.h) : 3;
+  const f = box.full || box;   // a cropped picture: its pixels span the whole picture, not the part that shows
+  let s = box.nw ? Math.max(box.nw / f.w, box.nh / f.h) : 3;
   s = clamp(s, 2, 8);
   return Math.min(s, 5000 / Math.max(box.w, box.h));
 }
@@ -4493,7 +4518,7 @@ function csTokens(b){
     if (tok === 'BI') {   // inline image: jump past EI
       let k = i; while (k < n - 2 && !(b[k] === 73 && b[k + 1] === 68 && CS_WS.has(b[k - 1]) && CS_WS.has(b[k + 2]))) k++;
       k += 3; while (k < n - 1 && !(CS_WS.has(b[k - 1]) && b[k] === 69 && b[k + 1] === 73 && (k + 2 >= n || CS_WS.has(b[k + 2])))) k++;
-      i = Math.min(n, k + 2); args = []; argStart = -1; stack.length = 0; continue;
+      i = Math.min(n, k + 2); ops.push({op:'BI', args:[], s, e:i}); args = []; argStart = -1; stack.length = 0; continue;
     }
     ops.push({op:tok, args, s:argStart < 0 ? s : argStart, e:i}); args = []; argStart = -1; stack.length = 0;
   }
@@ -4635,6 +4660,73 @@ function removePageText(doc, i, U){
   parts.push(bytes.subarray(pos));
   page.node.set(PDFName.of('Contents'), doc.context.register(doc.context.flateStream(concatBytes(parts))));
   return hits.length;
+}
+
+/* ---------------- pictures in the page content (擷取圖片：刪除、更換) ----------------
+   imageDrawsIn walks a page's content and the forms it draws, the way detectImages walks pdf.js's operator list, and
+   lists every picture drawn: which content holds the command (the page or a form), its byte range there, the matrix that
+   takes the picture's unit square to the page, and what of it can be seen. The red boxes are matched to these by their
+   whole box (full), which neither walker clips. */
+const streamBytes = st => st.contents && !st.dict.get(N_('Filter')) ? st.contents : PDFLib.decodePDFRawStream(st).decode();
+function imageDrawsIn(doc, i){
+  const page = doc.getPage(i), pg = S.pages[i], V = pg.vp1.transform, ctx = doc.context, out = [];
+  const num = v => typeof v === 'number' ? v : 0;
+  const toView = (r, m) => { const q = [[r[0], r[1]], [r[2], r[1]], [r[0], r[3]], [r[2], r[3]]].map(p => MPT(V, ...MPT(m, p[0], p[1]))), xs = q.map(p => p[0]), ys = q.map(p => p[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; };
+  const userBox = (r, m) => { const q = [[r[0], r[1]], [r[2], r[1]], [r[0], r[3]], [r[2], r[3]]].map(p => MPT(m, p[0], p[1])), xs = q.map(p => p[0]), ys = q.map(p => p[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; };
+  const draw = (o, M, clip, extra) => {
+    const f = toView([0, 0, 1, 1], M), vc = clip && toView(clip, [1, 0, 0, 1, 0, 0]), v = boxMeet(boxMeet(f, vc), [0, 0, pg.w, pg.h]);
+    out.push({i, s:o.s, e:o.e, M:M.slice(), clip:clip && clip.slice(), full:{x:f[0], y:f[1], w:f[2] - f[0], h:f[3] - f[1]},
+      box:v ? {x:v[0], y:v[1], w:v[2] - v[0], h:v[3] - v[1]} : {x:f[0], y:f[1], w:0, h:0}, ...extra});
+  };
+  const walk = (bytes, res, holder, chain, ctm0, clip0, depth) => {
+    let g = {ctm:ctm0, clip:clip0}, path = null, pending = false; const st = [];
+    const xo = res && res.lookupMaybe(N_('XObject'), PDFDict);
+    const addPts = pts => pts.forEach(([x, y]) => { const [u, w] = MPT(g.ctm, num(x), num(y)); path = path ? [Math.min(path[0], u), Math.min(path[1], w), Math.max(path[2], u), Math.max(path[3], w)] : [u, w, u, w]; });
+    for (const o of csTokens(bytes)) {
+      const a = o.args;
+      switch (o.op) {
+        case 'q': st.push({...g}); break;
+        case 'Q': if (st.length) g = st.pop(); path = null; pending = false; break;
+        case 'cm': if (a.length >= 6) g.ctm = MUL(a.slice(-6).map(num), g.ctm); break;
+        case 're': { const [x, y, w, h] = a.slice(-4).map(num); addPts([[x, y], [x + w, y + h]]); break; }
+        case 'm': case 'l': addPts([a.slice(-2)]); break;
+        case 'c': addPts([a.slice(0, 2), a.slice(2, 4), a.slice(4, 6)]); break;
+        case 'v': case 'y': addPts([a.slice(0, 2), a.slice(2, 4)]); break;
+        case 'W': case 'W*': pending = true; break;
+        case 'n': case 'f': case 'F': case 'f*': case 'S': case 's': case 'B': case 'B*': case 'b': case 'b*':
+          if (pending && path) g.clip = boxMeet(g.clip, path) || [0, 0, 0, 0];
+          path = null; pending = false; break;
+        case 'BI': {
+          const head = new TextDecoder('latin1').decode(bytes.subarray(o.s, Math.min(o.e, o.s + 400))), m = k => { const r = head.match(new RegExp('/' + k + '\\s+(\\d+)')); return r ? +r[1] : 0; };
+          draw(o, g.ctm, g.clip, {holder, chain, name:null, ref:null, inline:true, px:{w:m('W') || m('Width'), h:m('H') || m('Height')}, raw:bytes.subarray(o.s, o.e)});
+          break;
+        }
+        case 'Do': {
+          const name = a[0] && a[0].name, ref = name && xo && xo.get(N_(name)), x = ref && ctx.lookup(ref);
+          if (!x || !x.dict) break;
+          const sub = String(x.dict.get(N_('Subtype')));
+          if (sub === '/Image') { const n = k => { const v = x.dict.get(N_(k)); return v && v.asNumber ? v.asNumber() : 0; };
+            draw(o, g.ctm, g.clip, {holder, chain, name, ref:ref instanceof PDFRef ? ref : null, inline:false, px:{w:n('Width'), h:n('Height')}}); }
+          else if (sub === '/Form' && depth < 8 && ref instanceof PDFRef) {
+            let fb; try { fb = streamBytes(x); } catch (_) { break; }
+            const mx = x.dict.lookupMaybe(N_('Matrix'), PDFArray), M = MUL(mx ? numArr(mx) : [1, 0, 0, 1, 0, 0], g.ctm), bb = x.dict.lookupMaybe(N_('BBox'), PDFArray);
+            walk(fb, x.dict.lookupMaybe(N_('Resources'), PDFDict) || res, {form:ref}, [...chain, {form:ref, name, s:o.s, e:o.e, holder}], M, bb ? boxMeet(g.clip, userBox(numArr(bb), M)) || [0, 0, 0, 0] : g.clip, depth + 1);
+          }
+          break;
+        }
+      }
+    }
+  };
+  const bytes = pageContentBytes(doc, page);
+  if (bytes) walk(bytes, page.node.Resources(), {page:i}, [], [1, 0, 0, 1, 0, 0], null, 0);
+  return out;
+}
+// what makes two pictures the same picture: the same object, or a separately stored copy of the same data (and size)
+function imageKey(doc, d){
+  const hash = b => { let h = 2166136261; for (let k = 0; k < b.length; k++) h = Math.imul(h ^ b[k], 16777619) >>> 0; return b.length + ':' + h.toString(36); };
+  if (d.inline) return 'i' + hash(d.raw);
+  const x = doc.context.lookup(d.ref);
+  return x && x.contents ? `x${hash(x.contents)}:${d.px.w}x${d.px.h}` : 'r' + d.ref.toString();
 }
 
 /* ---------------- embedding system fonts ----------------
@@ -9371,6 +9463,8 @@ window.__pdfapp = {
     const bb = st.dict.lookupMaybe(N_('BBox'), PDFArray), m = st.dict.lookupMaybe(N_('Matrix'), PDFArray);
     return {bbox:bb ? numArr(bb) : null, matrix:m ? numArr(m) : [1, 0, 0, 1, 0, 0]};
   },
+  imageBoxes:i => detectImages(i),
+  imageDraws:async i => { const doc = await geoDoc(); return imageDrawsIn(doc, i).map(d => ({full:d.full, box:d.box, inline:d.inline, key:imageKey(doc, d), px:d.px})); },
   annHas:async (i, id, k) => { const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); return !!ref && !!doc.context.lookup(ref, PDFDict).get(N_(k)); },
   apChain:async (i, id) => {   // (tests) an upright drawing and the drawings inside it (/B), outermost first
     const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); if (!ref) return null;
