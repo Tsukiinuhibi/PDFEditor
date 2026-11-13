@@ -2326,7 +2326,7 @@ function showXSel(i, box, meta){
   const el = document.createElement('div'); el.className = 'xsel';
   el.innerHTML = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].map(d => `<div class="h" data-d="${d}"></div>`).join('');
   const bar = document.createElement('div'); bar.className = 'xbar';
-  bar.innerHTML = `<span class="dim"></span><button data-x="ok">確定擷取 (Enter)</button><button data-x="cancel">取消</button>`;
+  bar.innerHTML = `<span class="dim"></span><button data-x="ok">確定擷取 (Enter)</button>${meta.full ? '<button data-x="del">刪除圖片</button><button data-x="rep">更換圖片…</button>' : ''}<button data-x="cancel">取消</button>`;
   ovl.appendChild(el); ovl.appendChild(bar);
   S.els[i].style.zIndex = 4;
   XS = {i, box:{...box}, meta, el, bar};
@@ -2334,7 +2334,7 @@ function showXSel(i, box, meta){
   el.querySelectorAll('.h').forEach(h => { const [x, y] = hp[h.dataset.d]; h.style.left = x + '%'; h.style.top = y + '%'; });
   el.addEventListener('pointerdown', e => { if (e.button !== 0 || S.spaceDown) return; e.preventDefault(); e.stopPropagation(); adjustXSel(e, e.target.dataset.d || 'move'); });
   bar.addEventListener('pointerdown', e => e.stopPropagation());
-  bar.addEventListener('click', e => { const x = e.target.dataset.x; if (x === 'ok') confirmXSel(); if (x === 'cancel') cancelXSel(); });
+  bar.addEventListener('click', e => { const x = e.target.dataset.x; if (x === 'ok') confirmXSel(); if (x === 'cancel') cancelXSel(); if (x === 'del') deletePageImage(i, meta.full); });
   drawXSel();
 }
 function adjustXSel(e, d){
@@ -2398,7 +2398,7 @@ function startExtractDraw(i, e){
     if (box.w < 5 || box.h < 5) {
       if (hitImg) {   // a click on a detected image: select it, keeping its native resolution
         const k = +hitImg.dataset.k, b = (imgResolved.get(S.version + ':' + i) || [])[k];
-        if (b) { showXSel(i, {x:b.x, y:b.y, w:b.w, h:b.h}, {view0, ppt:nativeScale(b), k}); return; }
+        if (b) { showXSel(i, {x:b.x, y:b.y, w:b.w, h:b.h}, {view0, ppt:nativeScale(b), k, full:b.full}); return; }
       }
       restoreViewState(view0); return;
     }
@@ -4636,9 +4636,9 @@ function pageContentBytes(doc, page){
 }
 function concatBytes(parts){ const n = parts.reduce((t, p) => t + p.length, 0), out = new Uint8Array(n); let k = 0; parts.forEach(p => { out.set(p, k); k += p.length; }); return out; }
 // take the text inside box U (PDF units) out of page i; returns how many text operators were removed
-function removePageText(doc, i, U){
+function removePageText(doc, i, U, {invisibleOnly = false} = {}){
   const page = doc.getPage(i), bytes = pageContentBytes(doc, page); if (!bytes) return 0;
-  const hits = locateTextOps(doc, page, bytes).filter(r => {
+  const hits = locateTextOps(doc, page, bytes).filter(r => !invisibleOnly || r.tr === 3 || r.tr === 7).filter(r => {
     // the run's box: along its direction from start to end (at least .3 em), across from .2 em below to .8 em above the
     // baseline, or half an em each side of a vertical column
     const fs = r.fs || 1, len = Math.hypot(r.p1[0] - r.p0[0], r.p1[1] - r.p0[1]), e = len < fs * .3 ? [r.p0[0] + r.along[0] * fs * .3, r.p0[1] + r.along[1] * fs * .3] : r.p1;
@@ -4668,18 +4668,19 @@ function removePageText(doc, i, U){
    takes the picture's unit square to the page, and what of it can be seen. The red boxes are matched to these by their
    whole box (full), which neither walker clips. */
 const streamBytes = st => st.contents && !st.dict.get(N_('Filter')) ? st.contents : PDFLib.decodePDFRawStream(st).decode();
-function imageDrawsIn(doc, i){
+function imageDrawsIn(doc, i, seen = null){   // seen: a Set that collects the resources dictionaries walked through
   const page = doc.getPage(i), pg = S.pages[i], V = pg.vp1.transform, ctx = doc.context, out = [];
   const num = v => typeof v === 'number' ? v : 0;
   const toView = (r, m) => { const q = [[r[0], r[1]], [r[2], r[1]], [r[0], r[3]], [r[2], r[3]]].map(p => MPT(V, ...MPT(m, p[0], p[1]))), xs = q.map(p => p[0]), ys = q.map(p => p[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; };
   const userBox = (r, m) => { const q = [[r[0], r[1]], [r[2], r[1]], [r[0], r[3]], [r[2], r[3]]].map(p => MPT(m, p[0], p[1])), xs = q.map(p => p[0]), ys = q.map(p => p[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; };
   const draw = (o, M, clip, extra) => {
     const f = toView([0, 0, 1, 1], M), vc = clip && toView(clip, [1, 0, 0, 1, 0, 0]), v = boxMeet(boxMeet(f, vc), [0, 0, pg.w, pg.h]);
-    out.push({i, s:o.s, e:o.e, M:M.slice(), clip:clip && clip.slice(), full:{x:f[0], y:f[1], w:f[2] - f[0], h:f[3] - f[1]},
+    out.push({i, s:o.s, e:o.e, M:M.slice(), clip:clip && clip.slice(), user:boxMeet(userBox([0, 0, 1, 1], M), clip), full:{x:f[0], y:f[1], w:f[2] - f[0], h:f[3] - f[1]},
       box:v ? {x:v[0], y:v[1], w:v[2] - v[0], h:v[3] - v[1]} : {x:f[0], y:f[1], w:0, h:0}, ...extra});
   };
   const walk = (bytes, res, holder, chain, ctm0, clip0, depth) => {
     let g = {ctm:ctm0, clip:clip0}, path = null, pending = false; const st = [];
+    if (seen && res) seen.add(res);
     const xo = res && res.lookupMaybe(N_('XObject'), PDFDict);
     const addPts = pts => pts.forEach(([x, y]) => { const [u, w] = MPT(g.ctm, num(x), num(y)); path = path ? [Math.min(path[0], u), Math.min(path[1], w), Math.max(path[2], u), Math.max(path[3], w)] : [u, w, u, w]; });
     for (const o of csTokens(bytes)) {
@@ -4727,6 +4728,123 @@ function imageKey(doc, d){
   if (d.inline) return 'i' + hash(d.raw);
   const x = doc.context.lookup(d.ref);
   return x && x.contents ? `x${hash(x.contents)}:${d.px.w}x${d.px.h}` : 'r' + d.ref.toString();
+}
+
+// the clicked picture (its red box's whole box `full` on page i) and every place the same picture is drawn in the document:
+// {group: the commands under that red box, places: commands grouped by page and box, the group first}
+function findImageGroup(doc, i, full){
+  const pages = Array.from({length:doc.getPageCount()}, (_, j) => imageDrawsIn(doc, j));
+  const group = pages[i].filter(d => sameBox(d.full, full)); if (!group.length) return {group, places:[], pages};
+  const keys = new Set(group.map(d => imageKey(doc, d))), places = [group];
+  pages.forEach((ds, j) => ds.forEach(d => {
+    if (group.includes(d) || !keys.has(imageKey(doc, d))) return;
+    let p = places.find(pl => pl[0].i === j && sameBox(pl[0].full, d.full)); if (!p) places.push(p = []);
+    p.push(d);
+  }));
+  return {group, places, pages};
+}
+// rewrite the content of a page or a form by byte ranges ({s, e, text}, not overlapping)
+function editHolder(doc, holder, edits){
+  const ctx = doc.context, list = [...edits].sort((a, b) => a.s - b.s);
+  const apply = bytes => { const parts = []; let pos = 0; list.forEach(x => { parts.push(bytes.subarray(pos, x.s), enc8(x.text)); pos = x.e; }); parts.push(bytes.subarray(pos)); return concatBytes(parts); };
+  if (holder.page != null) { const page = doc.getPage(holder.page), b = pageContentBytes(doc, page); if (b) page.node.set(N_('Contents'), ctx.register(ctx.flateStream(apply(b)))); return; }
+  const x = ctx.lookup(holder.form), dict = {};
+  x.dict.entries().forEach(([k, v]) => { const n = String(k).slice(1); if (!['Length', 'Filter', 'DecodeParms'].includes(n)) dict[n] = v; });
+  ctx.assign(holder.form, ctx.flateStream(apply(streamBytes(x)), dict));
+}
+const holderKey = h => h.page != null ? 'p' + h.page : 'f' + h.form.toString();
+// a name for a new XObject in the resources of a page or a form
+function addXObject(doc, holder, ref, prefix){
+  const ctx = doc.context;
+  let res = holder.page != null ? doc.getPage(holder.page).node.Resources() : ctx.lookup(holder.form).dict.lookupMaybe(N_('Resources'), PDFDict);
+  if (!res) { res = ctx.obj({}); if (holder.page != null) doc.getPage(holder.page).node.set(N_('Resources'), res); else ctx.lookup(holder.form).dict.set(N_('Resources'), res); }
+  let xo = res.lookupMaybe(N_('XObject'), PDFDict); if (!xo) { xo = ctx.obj({}); res.set(N_('XObject'), xo); }
+  let n = 1; while (xo.get(N_(prefix + n))) n++;
+  xo.set(N_(prefix + n), ref); return prefix + n;
+}
+// "only this one" inside a form drawn in more than one place: from the outermost such form inwards, each form on the way is
+// copied (with resources of its own) and the copy drawn instead, so only this place changes. Returns the command in the copy.
+function cloneChain(doc, d, pages, edits, memo){
+  const uses = f => { const seen = new Set(); pages.forEach(ds => ds.forEach(x => x.chain.forEach((c, k) => { if (c.form.toString() === f.toString()) seen.add(x.i + '|' + x.chain.slice(0, k + 1).map(y => y.s).join('/')); }))); return seen.size; };
+  const from = d.chain.findIndex(c => uses(c.form) > 1); if (from < 0) return d;
+  const ctx = doc.context; let parent = d.chain[from].holder;
+  for (let k = from; k < d.chain.length; k++) {
+    const c = d.chain[k], mk = d.i + '|' + d.chain.slice(0, k + 1).map(y => y.s).join('/');
+    if (!memo.has(mk)) {
+      const x = ctx.lookup(c.form), dict = {};
+      x.dict.entries().forEach(([key, v]) => { const n = String(key).slice(1); if (!['Length', 'Filter', 'DecodeParms'].includes(n)) dict[n] = v; });
+      const r = x.dict.lookupMaybe(N_('Resources'), PDFDict);
+      if (r) { const rc = ctx.obj({}); r.entries().forEach(([key, v]) => rc.set(key, v)); const xo = r.lookupMaybe(N_('XObject'), PDFDict); if (xo) { const xc = ctx.obj({}); xo.entries().forEach(([key, v]) => xc.set(key, v)); rc.set(N_('XObject'), xc); } dict.Resources = rc; }
+      const copy = ctx.register(ctx.flateStream(streamBytes(x), dict)), name = addXObject(doc, parent, copy, 'PDFE_Fm');
+      addEdit(edits, parent, {s:c.s, e:c.e, text:`/${name} Do`});
+      memo.set(mk, copy);
+    }
+    parent = {form:memo.get(mk)};
+  }
+  return {...d, holder:parent};
+}
+function addEdit(edits, holder, e){
+  const k = holderKey(holder); if (!edits.has(k)) edits.set(k, {holder, list:[]});
+  const L = edits.get(k).list; if (!L.some(x => x.s === e.s)) L.push(e);
+}
+// the objects anything still points to, from the file's root (its trailer)
+function reachableRefs(doc){
+  const ctx = doc.context, seen = new Set(), stack = [];
+  const visit = o => {
+    if (!o) return;
+    if (o instanceof PDFRef) { const k = o.toString(); if (seen.has(k)) return; seen.add(k); stack.push(ctx.lookup(o)); return; }
+    stack.push(o);
+  };
+  const t = ctx.trailerInfo; [t.Root, t.Info, t.Encrypt].forEach(visit);
+  while (stack.length) {
+    const o = stack.pop(); if (!o) continue;
+    if (o instanceof PDFDict) o.values().forEach(visit);
+    else if (o instanceof PDFArray) o.asArray().forEach(visit);
+    else if (o.dict instanceof PDFDict) o.dict.values().forEach(visit);
+  }
+  return seen;
+}
+// pictures no longer drawn anywhere: their names come out of the resources walked through, and the pictures (and their
+// masks) out of the file once nothing points to them any more
+function purgeImages(doc, refs){
+  const seenRes = new Set(), drawn = new Set();
+  for (let j = 0; j < doc.getPageCount(); j++) imageDrawsIn(doc, j, seenRes).forEach(d => d.ref && drawn.add(d.ref.toString()));
+  const gone = refs.filter(r => r && !drawn.has(r.toString())); if (!gone.length) return;
+  const goneK = new Set(gone.map(r => r.toString()));
+  seenRes.forEach(res => { const xo = res.lookupMaybe(N_('XObject'), PDFDict); if (!xo) return; xo.entries().forEach(([k, v]) => { if (v instanceof PDFRef && goneK.has(v.toString())) xo.delete(k); }); });
+  const live = reachableRefs(doc), ctx = doc.context;
+  gone.forEach(r => {
+    if (live.has(r.toString())) return;
+    const x = ctx.lookup(r);
+    ['SMask', 'Mask'].forEach(k => { const m = x && x.dict && x.dict.get(N_(k)); if (m instanceof PDFRef && !live.has(m.toString())) ctx.delete(m); });
+    ctx.delete(r);
+  });
+}
+// 刪除圖片: the clicked picture (this place, or every place it is drawn); asked first when it is drawn in more places or
+// covers almost the whole page
+async function deletePageImage(i, full){
+  const pre = findImageGroup(await geoDoc(), i, full);
+  if (!pre.group.length) { toast('這張圖片無法刪除或更換', 'err'); return; }
+  let all = false; const n = pre.places.length;
+  if (n > 1) {
+    const v = await openModal({title:'刪除圖片', body:`<div style="max-width:380px">這張圖片在文件裡出現 ${n} 次。</div>`, buttons:[{label:'取消', value:null}, {label:'只刪這一張', value:'one'}, {label:`全部 ${n} 處都刪`, value:'all', primary:true}]});
+    if (!v) return; all = v === 'all';
+  }
+  const vis = pre.group.map(d => d.box).reduce((a, b) => ({x0:Math.min(a.x0, b.x), y0:Math.min(a.y0, b.y), x1:Math.max(a.x1, b.x + b.w), y1:Math.max(a.y1, b.y + b.h)}), {x0:Infinity, y0:Infinity, x1:-Infinity, y1:-Infinity});
+  if ((vis.x1 - vis.x0) * (vis.y1 - vis.y0) >= .9 * S.pages[i].w * S.pages[i].h && !(await confirmDlg('刪除圖片', '這張圖片幾乎佔滿整頁，刪除後這頁會變成空白。', '刪除'))) return;
+  cancelXSel(true);
+  const count = all ? n : 1;
+  await mutate(count > 1 ? `已刪除 ${count} 處圖片` : '已刪除圖片', doc => {
+    const {group, places, pages} = findImageGroup(doc, i, full); if (!group.length) { toast('這張圖片無法刪除或更換', 'err'); return false; }
+    const targets = all ? places.flat() : group, edits = new Map(), memo = new Map(), touched = new Set();
+    targets.forEach(d0 => { const d = all ? d0 : cloneChain(doc, d0, pages, edits, memo); addEdit(edits, d.holder, {s:d.s, e:d.e, text:' '}); touched.add(d.i); });
+    // the scan's recognised text lies on the picture: the invisible text in the area goes with it (page content only)
+    const textAreas = targets.filter(d => d.chain.length === 0 && d.user).map(d => ({i:d.i, U:{x0:d.user[0], y0:d.user[1], x1:d.user[2], y1:d.user[3]}}));
+    edits.forEach(({holder, list}) => editHolder(doc, holder, list));
+    textAreas.forEach(({i:j, U}) => removePageText(doc, j, U, {invisibleOnly:true}));
+    touched.forEach(j => { const nd = doc.getPage(j).node; nd.delete(N_('Thumb')); nd.delete(N_('PieceInfo')); });   // out of date now (and may hold the picture)
+    purgeImages(doc, [...new Set(targets.filter(d => d.ref).map(d => d.ref))]);
+  });
 }
 
 /* ---------------- embedding system fonts ----------------
@@ -9464,6 +9582,8 @@ window.__pdfapp = {
     return {bbox:bb ? numArr(bb) : null, matrix:m ? numArr(m) : [1, 0, 0, 1, 0, 0]};
   },
   imageBoxes:i => detectImages(i),
+  imageObjects:async () => { const doc = await geoDoc(), out = []; doc.context.enumerateIndirectObjects().forEach(([, o]) => { if (o && o.dict && String(o.dict.get(N_('Subtype'))) === '/Image') { const n = k => { const v = o.dict.get(N_(k)); return v && v.asNumber ? v.asNumber() : 0; }; out.push({w:n('Width'), h:n('Height')}); } }); return out; },
+  pageKeys:async i => (await geoDoc()).getPage(i).node.keys().map(k => String(k).slice(1)),
   imageDraws:async i => { const doc = await geoDoc(); return imageDrawsIn(doc, i).map(d => ({full:d.full, box:d.box, inline:d.inline, key:imageKey(doc, d), px:d.px})); },
   annHas:async (i, id, k) => { const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); return !!ref && !!doc.context.lookup(ref, PDFDict).get(N_(k)); },
   apChain:async (i, id) => {   // (tests) an upright drawing and the drawings inside it (/B), outermost first
