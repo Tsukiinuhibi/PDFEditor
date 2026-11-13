@@ -136,5 +136,33 @@ check('頁面框線: a dark line round each page', edge.every(v => v < 90), edge
 await set('borders', false); await set('layout', 'normal');
 await close();
 
+// ---- part 3: booklets (手冊) -------------------------------------------------------------------------------------------
+await open();
+await set('layout', 'booklet'); await set('bind', 'left'); await set('bsides', 'both');
+s = await pst();
+const halves = async () => ({l:await prevAt(.27, .5, 99), r:await prevAt(.73, .5, 99)});
+const WHITE = [255, 255, 255];
+const b1 = await halves();
+check('手冊, 5 pages: made 8, 4 sides on 2 sheets, both sides (short edge); side 1: blank left (page 8), red right (page 1)',
+  s.sides === 4 && s.sheets === 2 && s.duplex === 'shortEdge' && s.paper.w > s.paper.h && near(b1.l, WHITE, 8) && near(b1.r, RGB[0]), {s, b1});
+await Ev(() => document.querySelector('#prFwd').click()); await win.waitForTimeout(800);
+const b2 = await halves();
+check('side 2 (its back): green left (page 2), blank right (page 7)', near(b2.l, RGB[1]) && near(b2.r, WHITE, 8), b2);
+await Ev(() => document.querySelector('#prBack').click()); await win.waitForTimeout(300);
+await set('bind', 'right');
+const b3 = await halves();
+check('右翻: side 1 red left, blank right', near(b3.l, RGB[0]) && near(b3.r, WHITE, 8), b3);
+await set('bind', 'left'); await set('bsides', 'front');
+const sf = await pst();
+await set('bsides', 'back');
+const sb = await pst();
+check('只印正面 / 只印背面: 2 sides each, printed on one side', sf.sides === 2 && sb.sides === 2 && sf.duplex === 'simplex' && sb.duplex === 'simplex', {sf:[sf.sides, sf.duplex], sb:[sb.sides, sb.duplex]});
+await set('bsides', 'both');
+await send('#prGo');
+const bj = (await printed()).at(-1);
+let bp = null;
+if (bj && bj.pdf) { const d = await PDFDocument.load(Buffer.from(bj.pdf, 'base64')); bp = d.getPages().map(p => p.getSize()).map(z => [Math.round(z.width), Math.round(z.height)]); }
+check('printed: both sides flipping on the short edge, lying paper; 4 pages of 842×595', !!bj && bj.opts.duplexMode === 'shortEdge' && bj.opts.landscape === true && !!bp && bp.length === 4 && bp.every(([w, h]) => Math.abs(w - 842) <= 1 && Math.abs(h - 595) <= 1), {opts:bj && bj.opts, bp});
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

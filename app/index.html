@@ -9482,7 +9482,24 @@ const placeAt = (i, s, rot, cx, cy) => { const [w, h] = pageWH(i), W = (rot % 18
 function printPlan(st){
   const pages = printPages(st), m = (+st.margin || 0) * MM_PT, first = pages.length ? pageWH(pages[0]) : [1, 1.4];
   let paper, sides = [];
-  if (st.layout === 'nup') {   // 多頁合一: a grid of pages, in the order chosen; the paper the way the first page comes out larger
+  if (!pages.length) return {paper:paperOf(st, st.orient === 'landscape'), sides:[], duplex:'simplex', sheets:0};
+  if (st.layout === 'booklet') {   // 手冊: each sheet lies and holds two pages a side; folded in the middle, the sheets make the booklet
+    paper = paperOf(st, true);
+    const N = Math.ceil(pages.length / 4) * 4, list = [...pages, ...Array(N - pages.length).fill(null)];   // filled up with blank pages
+    const hw = Math.max(1, paper.w - 2 * m) / 2, hh = Math.max(1, paper.h - 2 * m), gap = 4;
+    const put = (i, half) => {
+      if (i == null) return {i:null, x:m + half * hw, y:m, w:hw, h:hh, rot:0};
+      const [w, h] = pageWH(i), f = fitIn(w, h, hw - gap, hh - gap, false);
+      return placeAt(i, f.s, 0, m + (half + .5) * hw, m + hh / 2);
+    };
+    const name = pair => pair.map(i => i == null ? '空白' : `第 ${i + 1} 頁`).join('、');
+    for (let t = 0; t < N / 4; t++) {
+      const front = [list[N - 1 - 2 * t], list[2 * t]], back = [list[2 * t + 1], list[N - 2 - 2 * t]];
+      if (st.bind === 'right') { front.reverse(); back.reverse(); }   // 右翻 (vertical Chinese): the spine on the right
+      if (st.bsides !== 'back') sides.push({items:front.map(put), label:`第 ${t + 1} 張正面：${name(front)}`});
+      if (st.bsides !== 'front') sides.push({items:back.map(put), label:`第 ${t + 1} 張背面：${name(back)}`});
+    }
+  } else if (st.layout === 'nup') {   // 多頁合一: a grid of pages, in the order chosen; the paper the way the first page comes out larger
     const n = NUP_GRID[+st.nup] ? +st.nup : 4, gap = 4;
     const L = [false, true].filter(l => st.orient === 'auto' || (st.orient === 'landscape') === l).map(land => {
       const p = paperOf(st, land), [a, b] = NUP_GRID[n], [cols, rows] = land ? [a, b] : [b, a];
@@ -9512,8 +9529,11 @@ function printPlan(st){
       return {items:[placeAt(i, s, f.rot, paper.w / 2, paper.h / 2)], label:`第 ${i + 1} 頁`};
     });
   }
-  if (st.reverse) sides.reverse();
-  const duplex = st.duplex || 'simplex';
+  const duplex = st.layout === 'booklet' ? (st.bsides === 'both' ? 'shortEdge' : 'simplex') : (st.duplex || 'simplex');
+  if (st.reverse) {   // a booklet printed on both sides keeps each sheet's front and back together
+    if (st.layout === 'booklet' && duplex !== 'simplex') { const pairs = []; for (let k = 0; k < sides.length; k += 2) pairs.push(sides.slice(k, k + 2)); sides = pairs.reverse().flat(); }
+    else sides.reverse();
+  }
   return {paper, sides, duplex, sheets:duplex === 'simplex' ? sides.length : Math.ceil(sides.length / 2)};
 }
 // part of a page drawn for printing: the page at scale s (turned rot), the rectangle r of that picture (pixels)
@@ -9572,12 +9592,14 @@ function printFormHTML(st, printers){
         <label class="chk"><input type="checkbox" data-p="reverse"> 反向列印</label></div>
       <div class="pr-row"><div class="field"><label>紙張</label><select data-p="paper">${Object.entries(PAPERS).map(([k, v]) => opt(k, v[2] || k, st.paper)).join('')}</select></div>
         <div class="field"><label>方向</label><select data-p="orient">${opt('auto', '自動', st.orient)}${opt('portrait', '直向', st.orient)}${opt('landscape', '橫向', st.orient)}</select></div></div>
-      <div class="pr-row"><div class="field"><label>版面</label><select data-p="layout">${opt('normal', '一般（每面一頁）', st.layout)}${opt('nup', '多頁合一', st.layout)}</select></div>
+      <div class="pr-row"><div class="field"><label>版面</label><select data-p="layout">${opt('normal', '一般（每面一頁）', st.layout)}${opt('nup', '多頁合一', st.layout)}${opt('booklet', '手冊（對折裝訂）', st.layout)}</select></div>
         <div class="field" data-lay="normal"><label>縮放</label><select data-p="scale">${opt('fit', '符合紙張', st.scale)}${opt('shrink', '只縮小過大的頁面', st.scale)}${opt('actual', '實際大小', st.scale)}${opt('custom', '自訂比例', st.scale)}</select></div>
         <div class="field pr-copies" data-lay="normal" data-show="pct"><label>比例（%）</label><input type="number" data-p="pct" min="1" max="1000" value="${st.pct}"></div></div>
       <div class="pr-row" data-lay="nup"><div class="field pr-copies"><label>每面頁數</label><select data-p="nup">${[2, 4, 6, 9, 16].map(v => opt(v, `${v} 頁`, st.nup)).join('')}</select></div>
         <div class="field"><label>順序</label><select data-p="order">${opt('h', '橫向（左到右）', st.order)}${opt('hr', '橫向（右到左）', st.order)}${opt('v', '直向（上到下，左起）', st.order)}${opt('vr', '直向（上到下，右起）', st.order)}</select></div>
         <label class="chk"><input type="checkbox" data-p="borders"${st.borders ? ' checked' : ''}> 頁面框線</label></div>
+      <div class="pr-row" data-lay="booklet"><div class="field"><label>裝訂</label><select data-p="bind">${opt('left', '左翻（橫式文件）', st.bind)}${opt('right', '右翻（直式中文）', st.bind)}</select></div>
+        <div class="field"><label>印出的面</label><select data-p="bsides">${opt('both', '雙面', st.bsides)}${opt('front', '只印正面', st.bsides)}${opt('back', '只印背面', st.bsides)}</select></div></div>
       <div class="pr-row"><div class="field"><label>邊界</label><select data-p="margin">${opt(0, '無', st.margin)}${opt(5, '窄（5 mm）', st.margin)}${opt(10, '一般（10 mm）', st.margin)}</select></div>
         <div class="field"><label>雙面</label><select data-p="duplex">${opt('simplex', '單面', st.duplex)}${opt('longEdge', '雙面（長邊翻頁）', st.duplex)}${opt('shortEdge', '雙面（短邊翻頁）', st.duplex)}</select></div></div>
       <div class="pr-row"><div class="field"><label>色彩</label><select data-p="color">${opt('color', '彩色', st.color)}${opt('gray', '黑白（灰階）', st.color)}</select></div>
@@ -9616,6 +9638,7 @@ function refreshPrint(){
   const shown = {custom:st.range === 'custom', pct:st.scale === 'custom', copies:+st.copies > 1};
   shown.extra = shown.custom || shown.copies;
   body.querySelectorAll('[data-show],[data-lay]').forEach(el => { el.style.display = (!el.dataset.lay || el.dataset.lay === st.layout) && (!el.dataset.show || shown[el.dataset.show]) ? '' : 'none'; });
+  const dx = body.querySelector('[data-p="duplex"]'); dx.disabled = st.layout === 'booklet'; dx.title = dx.disabled ? '手冊雙面時固定用短邊翻頁' : '';
   const side = PR.plan.sides[PR.cur];
   body.querySelector('#prPos').textContent = n ? `第 ${PR.cur + 1}／${n} 面${side && side.label ? '　' + side.label : ''}` : '沒有要列印的頁面';
   body.querySelector('#prBack').disabled = PR.cur <= 0; body.querySelector('#prFwd').disabled = PR.cur >= n - 1;
