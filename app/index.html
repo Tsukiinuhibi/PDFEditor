@@ -491,6 +491,15 @@ svg.dsvg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;ov
 .fi-hint{grid-column:1/-1;font-size:11.5px;color:#a85400}
 .fi-note{margin:6px 0 0;font-size:11px;color:var(--ink3)}
 .fi-by{margin:8px 0 2px}
+/* 版本記錄 (what's new) */
+.wn{max-height:min(60vh,520px);overflow:auto;padding:0 2px;line-height:1.6}
+.wn .wn-v{margin:14px 0 4px;font-size:15px;color:var(--seal)}
+.wn .wn-v:first-child{margin-top:0}
+.wn h4{margin:8px 0 2px;font-size:13.5px}
+.wn ul{margin:2px 0 6px;padding-left:20px}
+.wn li{margin:2px 0}
+.wn p{margin:4px 0}
+.wn code{font-size:12px;padding:0 3px;border-radius:3px;background:var(--surface2)}
 .ocr-gf{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink2);cursor:pointer;user-select:none}
 html[data-theme="dark"] .fi-pct{color:#7fb3ff}
 html[data-theme="dark"] .fi-hint{color:#f2a65a}
@@ -986,6 +995,9 @@ window.gifenc = { GIFEncoder, quantize, applyPalette };
    ==================================================================== */
 const {PDFDocument, PDFName, PDFArray, PDFDict, PDFHexString, PDFString, PDFNumber, PDFRef, degrees, rgb, StandardFonts} = PDFLib;
 const DESK = window.desktop || null;
+// whether this computer has used the program before (read before anything is stored): a new install does not get the
+// 「已更新到」 window
+const PROFILE_USED = (() => { try { return Object.keys(localStorage).some(k => k.startsWith('pdfeditor.')); } catch (_) { return false; } })();
 // CJK character maps + standard fonts ship with the app, so Chinese PDFs without embedded fonts render correctly
 const PDF_OPTS = {
   isEvalSupported: false,
@@ -8639,6 +8651,34 @@ function notesHTML(sections){
     return html + (list ? '</ul>' : '');
   }).join('');
 }
+// which versions to show after starting version `current` (versions: newest first): those since the one last seen;
+// with no record on a computer that has used the program (the first version with this window), this one and the one
+// before; on a new install, after going back to an older version, or with nothing written in between: none
+const SEEN_KEY = 'pdfeditor.seenversion.v1';
+function whatsNewList({current, seen, used, versions}){
+  const upTo = versions.filter(v => cmpVersion(v, current) <= 0);
+  if (seen) return cmpVersion(seen, current) < 0 ? upTo.filter(v => cmpVersion(v, seen) > 0) : [];
+  return used ? upTo.slice(0, 2) : [];
+}
+async function checkWhatsNew(current, usedBefore = false){
+  let seen = null; try { seen = localStorage.getItem(SEEN_KEY); localStorage.setItem(SEEN_KEY, current); } catch (_) {}
+  if (seen === current) return;
+  const list = whatsNewList({current, seen, used:PROFILE_USED || usedBefore, versions:(await loadChangelog()).map(x => x.version)});
+  if (list.length) showWhatsNew(current, list);
+}
+// the 「已更新到」 window; another window open first (a password, the settings) is left alone until it closes
+function showWhatsNew(current, list){
+  const later = () => { if ($('#mask').classList.contains('show')) { setTimeout(() => showWhatsNew(current, list), 500); return true; } return false; };
+  if (later()) return;
+  loadChangelog().then(all => {
+    if (later()) return;
+    const body = document.createElement('div'); body.className = 'wn';
+    body.innerHTML = notesHTML(all.filter(x => list.includes(x.version)));
+    openModal({title:`已更新到 v${current}`, body, width:560, buttons:[
+      {label:'全部版本記錄', handler:el => { body.innerHTML = notesHTML(all); body.scrollTop = 0; el.remove(); return undefined; }},
+      {spacer:true}, {label:'知道了', value:true, primary:true}]});
+  });
+}
 // the history, read once ([] when it cannot be read)
 let changelogP = null;
 function loadChangelog(url = 'CHANGELOG.md'){
@@ -8698,7 +8738,7 @@ $('#updBar').addEventListener('click', e => {
 });
 if (DESK) {
   $('#grpApp').style.display = '';
-  DESK.info().then(info => { UPD.info = info; if (info.user) AUTHOR = info.user; $('#stVer').textContent = 'v' + info.version; $('#stVer').title = '檢查更新'; });
+  DESK.info().then(info => { UPD.info = info; if (info.user) AUTHOR = info.user; $('#stVer').textContent = 'v' + info.version; $('#stVer').title = '檢查更新'; checkWhatsNew(info.version, !!info.usedBefore); });
   $('#stVer').addEventListener('click', () => actions.checkUpdate());
   DESK.update.on(st => {
     const prev = UPD.state.state; UPD.state = st; renderUpdate();
@@ -8731,7 +8771,7 @@ function setTheme(t){
 if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyTheme();
 paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {
-  changelog:url => loadChangelog(url), notesHTML,
+  changelog:url => loadChangelog(url), notesHTML, whatsNewList, showWhatsNew,
   fontIdState:() => { const p = OCR.panel; if (!p) return null;
     const row = r => { const b = r.querySelector('button[data-fa]'), pct = r.querySelector('.fi-pct');
       return {key:r.dataset.key || '', label:(r.querySelector('.fi-label') || r.querySelector('.fi-name') || {}).textContent || '', src:(r.querySelector('.fi-src') || {}).textContent || '',

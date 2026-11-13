@@ -25,6 +25,9 @@ protocol.registerSchemesAsPrivileged([{
 const pdfArgs = argv => argv.slice(1).filter(a => /\.pdf$/i.test(a) && !a.startsWith('-'));
 // a separate profile (used by the end-to-end tests so they never touch the installed app's data)
 if (process.env.PDFE_USER_DATA) app.setPath('userData', process.env.PDFE_USER_DATA);
+// whether the program ran on this computer before (Chromium writes Preferences into the profile on every start; it is
+// looked at before this start writes it): a new install does not get the 「已更新到」 window
+const usedBefore = require('fs').existsSync(path.join(app.getPath('userData'), 'Preferences'));
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -207,7 +210,7 @@ ipcMain.handle('export:open-folder', (_e, dir) => { if (isAllowed(dir)) shell.op
 ipcMain.handle('app:info', () => {
   let user = '';
   try { user = require('os').userInfo().username || ''; } catch (_) {}
-  return { version: app.getVersion(), dev: isDev, platform: process.platform, user };
+  return { version: app.getVersion(), dev: isDev, platform: process.platform, user, usedBefore };
 });
 // 顯示模式: 'system' follows Windows; the title bar, dialogs and prefers-color-scheme all follow themeSource
 // 滴管: a snapshot of this window, sampled by the renderer

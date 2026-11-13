@@ -26,7 +26,40 @@ const h = await A(() => window.__pdfapp.notesHTML([{version:'9.9.9', md:'### 標
 check('notes HTML: heading, version, list, bold, code', h.includes('<h3 class="wn-v">v9.9.9</h3>') && h.includes('<h4>標題</h4>') && h.includes('<li>一 <b>粗</b> <code>碼</code></li>'), h);
 check('notes HTML: other markup shown as text', h.includes('&lt;script&gt;') && !h.includes('<script>'), h);
 check('missing changelog: empty, no error', JSON.stringify(await A(() => window.__pdfapp.changelog('nope.md'))) === '[]');
-await app.evaluate(({app}) => app.exit(0)).catch(() => {});
+const shown = () => A(() => document.querySelector('#mask').classList.contains('show') ? {title:document.querySelector('#modal .mh').textContent, vers:[...document.querySelectorAll('#modal .wn-v')].map(e => e.textContent), all:!!document.querySelector('#modal .mf button') && [...document.querySelectorAll('#modal .mf button')].some(b => b.textContent === '全部版本記錄')} : null);
+const seen = () => A(() => localStorage.getItem('pdfeditor.seenversion.v1'));
+check('a new install: no window, the version recorded', (await shown()) === null && (await seen()) === PKG.version, {shown:await shown(), seen:await seen()});
+await app.close();
+
+// ---- part 2: the window once after an update (the same profile, opened again) ---------------------------------
+const setSeen = async v => { await A(v => v == null ? localStorage.removeItem('pdfeditor.seenversion.v1') : localStorage.setItem('pdfeditor.seenversion.v1', v), v); await app.close(); ({ app, win, A } = await open('wn.pdf')); };
+({ app, win, A } = await open('wn2.pdf'));
+await setSeen('1.0.26');
+let w = await shown();
+const after126 = VERS.filter(v => cmp(v, '1.0.26') > 0 && cmp(v, PKG.version) <= 0).map(v => 'v' + v);
+check('updated from 1.0.26: 已更新到 the current version', !!w && w.title === `已更新到 v${PKG.version}`, w);
+check('updated from 1.0.26: every newer version, newest first', !!w && JSON.stringify(w.vers) === JSON.stringify(after126), w && w.vers);
+await win.click('#modal .mf button:has-text("知道了")'); await win.waitForTimeout(300);
+check('知道了 closes it; the version recorded', (await shown()) === null && (await seen()) === PKG.version);
+await app.close(); ({ app, win, A } = await open('wn3.pdf'));
+check('opened again: no window', (await shown()) === null);
+await setSeen(null);
+w = await shown();
+check('no record on a used computer: this version and the one before', !!w && JSON.stringify(w.vers) === JSON.stringify(VERS.filter(v => cmp(v, PKG.version) <= 0).slice(0, 2).map(v => 'v' + v)), w && w.vers);
+await win.click('#modal .mf button:has-text("全部版本記錄")'); await win.waitForTimeout(300);
+w = await shown();
+check('全部版本記錄: every version, the button gone', !!w && w.vers.length === VERS.length && w.vers[0] === 'v' + VERS[0] && !w.all, w && {n:w.vers.length, all:w.all});
+await win.click('#modal .mf button:has-text("知道了")'); await win.waitForTimeout(300);
+await setSeen('9.9.9');
+check('an older version installed again: no window, the version recorded', (await shown()) === null && (await seen()) === PKG.version, {shown:await shown(), seen:await seen()});
+check('nothing written between two versions: no empty window', JSON.stringify(await A(() => window.__pdfapp.whatsNewList({current:'1.0.30', seen:'1.0.29', used:true, versions:['1.0.28', '1.0.27']}))) === '[]');
+// another window open first (e.g. a password): the notes wait for it
+await win.click('#bSettings'); await win.waitForTimeout(500);
+await A(v => window.__pdfapp.showWhatsNew(v, [v]), PKG.version); await win.waitForTimeout(1200);
+check('another window open: it stays', (await shown() || {}).title === '設定', await shown());
+await win.click('#modal .mf button:has-text("關閉")'); await win.waitForTimeout(1200);
+check('then the notes', (await shown() || {}).title === `已更新到 v${PKG.version}`, await shown());
+await app.close();
 
 // the release check: the top of app/CHANGELOG.md must be this version and the same as RELEASE_NOTES.md
 const tmp = fs.mkdtempSync(path.join(TMP, 'chk-'));
