@@ -39,6 +39,12 @@ const p7 = page(content('q 0 100 -200 0 300 300 cm /ImR Do Q\n'), ctx.obj({XObje
 // page 8: a picture set at 20° on purpose (200 × 100, centred at 300 400)
 const a = 20 * Math.PI / 180, co = Math.cos(a), si = Math.sin(a), tm = [200 * co, 200 * si, -100 * si, 100 * co, 300 - 100 * co + 50 * si, 400 - 100 * si - 50 * co].map(v => v.toFixed(4)).join(' ');
 page(content(`q ${tm} cm /ImT Do Q\n`), ctx.obj({XObject:{ImT:T}}));
+// page 9: a scan whose invisible text is in a font without widths (its advance cannot be worked out)
+const S2 = image(31, 41, () => [210, 230, 250]), noW = ctx.register(ctx.obj({Type:'Font', Subtype:'Type1', BaseFont:'NoWidthsOCR'}));
+page(content('q 595 0 0 842 0 0 cm /ImS2 Do Q\nBT /F2 24 Tf 3 Tr 100 500 Td (HIDDENTWO) Tj ET\n'), ctx.obj({XObject:{ImS2:S2}, Font:{F2:noW}}));
+// page 10: a form without resources of its own (it uses the page's) drawing two pictures
+const F1a = image(56, 20), F2a = image(58, 20), Fm2 = ctx.register(ctx.flateStream(Buffer.from('q 100 0 0 50 100 600 cm /ImF1 Do Q\nq 100 0 0 50 300 600 cm /ImF2 Do Q\n'), {Type:'XObject', Subtype:'Form', BBox:[0, 0, 595, 842]}));
+page(content('q /Fm2 Do Q\n'), ctx.obj({XObject:{ImF1:F1a, ImF2:F2a, Fm2}}));
 const PDF = path.join(TMP, 'imgedit.pdf'); fs.writeFileSync(PDF, await doc.save());
 
 const { app } = await launchPath(PDF);
@@ -162,6 +168,15 @@ check('a picture inside a form, turned once with ↻: drawn a quarter turn round
 await rep(0, {x:100, y:342, w:100, h:100}, WIDE); await press('更換');
 const nB = (await draws(0)).find(d => d.px.w === 80 && near(d.box.y, 367, 1.5));
 check('a cropped picture: the new one fitted into the part that could be seen, centred', !!nB && same(nB.box, {x:100, y:367, w:100, h:50}), {nB, all:await draws(0)});
+
+// ---- part 4 (final review) --------------------------------------------------------------------------------------------
+await pick(8, {x:0, y:0, w:595, h:842}); await del();
+if (await modal()) await press('刪除');
+const t8 = await textOf(8);
+check('invisible text in a font without widths: removed with the picture, not just hidden', (await draws(8)).length === 0 && !t8.includes('HIDDENTWO'), {t8});
+await rep(9, {x:100, y:192, w:100, h:50}, WIDE); if (await modal()) await press('更換');
+const d9 = await draws(9);
+check('a form without resources of its own: after one picture is replaced, the other still shows', d9.some(d => d.px.w === 80) && d9.some(d => d.px.w === 58), d9);
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

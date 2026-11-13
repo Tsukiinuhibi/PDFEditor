@@ -88,5 +88,18 @@ const want = Buffer.from(await Ev(() => { const b = window.__pdfapp.S.bytes; let
 const f4 = await save();
 check('a signed document: saved exactly as it is', Buffer.compare(f4, want) === 0, {got:f4.length, want:want.length});
 
+// 5. (final review) files that must not be rewritten: encrypted, signed (not only in this session), partly unreadable
+const prune = async bytes => Buffer.from(await Ev(async b64 => { const b = Uint8Array.from(atob(b64), c => c.charCodeAt(0)), out = await window.__pdfapp.pruneUnused(b);
+  let s = ''; for (let k = 0; k < out.length; k += 0x8000) s += String.fromCharCode(...out.subarray(k, k + 0x8000)); return btoa(s); }, Buffer.from(bytes).toString('base64')), 'base64');
+const withLeftover = async extra => { const d = await PDFDocument.create(); d.addPage([200, 200]); d.context.register(d.context.obj({Marker:PDFString.of('LEFTOVER')})); await extra(d); return Buffer.from(await d.save({useObjectStreams:false})); };
+const enc = await withLeftover(async d => { d.context.trailerInfo.Encrypt = d.context.register(d.context.obj({Filter:'Standard', V:2, R:3, Length:128, P:-44, O:PDFHexString.of('00'.repeat(32)), U:PDFHexString.of('00'.repeat(32))})); });
+check('an encrypted file: not rewritten when saved', Buffer.compare(await prune(enc), enc) === 0);
+const signed = await withLeftover(async d => { const c = d.context, v = c.register(c.obj({Type:'Sig', Filter:'Adobe.PPKLite', SubFilter:'adbe.pkcs7.detached', ByteRange:[0, 10, 20, 10], Contents:PDFHexString.of('00')}));
+  const f = c.register(c.obj({FT:'Sig', T:PDFString.of('Signature1'), V:v, Type:'Annot', Subtype:'Widget', Rect:[0, 0, 0, 0], P:d.getPage(0).ref})); d.catalog.set(N('AcroForm'), c.obj({Fields:[f], SigFlags:3})); });
+check('a file signed elsewhere (a signature field with a value): not rewritten when saved', Buffer.compare(await prune(signed), signed) === 0);
+let bad = await withLeftover(async d => { const c = d.context, keep = c.register(c.obj({Kept:PDFString.of('KEEPME')})); d.catalog.set(N('PDFE_Test'), c.register(c.obj({Marker:PDFString.of('XXXX'), Keep:keep}))); });
+bad = Buffer.from(bad.toString('latin1').replace('(XXXX)', ')XXXX('), 'latin1');
+check('a file with an object pdf-lib cannot read: not rewritten (what it points to would be lost)', Buffer.compare(await prune(bad), bad) === 0);
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

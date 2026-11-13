@@ -4666,6 +4666,7 @@ function removePageText(doc, i, U, {invisibleOnly = false} = {}){
     const k = r.fsText * (r.vert ? 1 : r.Th), op = r.o.op;
     const lead = op === "'" ? 'T* ' : op === '"' ? `${r.Tw} Tw ${r.Tc} Tc T* ` : '';
     if (r.exact && Math.abs(k) > 1e-6) parts.push(enc8(` ${lead}[${(-r.adv * 1000 / k).toFixed(3)}] TJ `));   // same advance, no glyphs
+    else if (invisibleOnly) parts.push(enc8(` ${lead}`));   // text nobody sees, advance unknown: dropped (only other invisible text may shift)
     else parts.push(enc8(` /PDFE_Hide BMC ${r.tr >= 4 ? 7 : 3} Tr `), bytes.subarray(r.o.s, r.o.e), enc8(` ${r.tr} Tr EMC `));
     pos = r.o.e;
   });
@@ -4711,7 +4712,7 @@ function imageDrawsIn(doc, i, seen = null){   // seen: a Set that collects the r
           path = null; pending = false; break;
         case 'BI': {
           const head = new TextDecoder('latin1').decode(bytes.subarray(o.s, Math.min(o.e, o.s + 400))), m = k => { const r = head.match(new RegExp('/' + k + '\\s+(\\d+)')); return r ? +r[1] : 0; };
-          draw(o, g.ctm, g.clip, {holder, chain, name:null, ref:null, inline:true, px:{w:m('W') || m('Width'), h:m('H') || m('Height')}, raw:bytes.subarray(o.s, o.e)});
+          draw(o, g.ctm, g.clip, {holder, chain, res, name:null, ref:null, inline:true, px:{w:m('W') || m('Width'), h:m('H') || m('Height')}, raw:bytes.subarray(o.s, o.e)});
           break;
         }
         case 'Do': {
@@ -4719,11 +4720,11 @@ function imageDrawsIn(doc, i, seen = null){   // seen: a Set that collects the r
           if (!x || !x.dict) break;
           const sub = String(x.dict.get(N_('Subtype')));
           if (sub === '/Image') { const n = k => { const v = x.dict.get(N_(k)); return v && v.asNumber ? v.asNumber() : 0; };
-            draw(o, g.ctm, g.clip, {holder, chain, name, ref:ref instanceof PDFRef ? ref : null, inline:false, px:{w:n('Width'), h:n('Height')}}); }
+            draw(o, g.ctm, g.clip, {holder, chain, res, name, ref:ref instanceof PDFRef ? ref : null, inline:false, px:{w:n('Width'), h:n('Height')}}); }
           else if (sub === '/Form' && depth < 8 && ref instanceof PDFRef) {
             let fb; try { fb = streamBytes(x); } catch (_) { break; }
             const mx = x.dict.lookupMaybe(N_('Matrix'), PDFArray), M = MUL(mx ? numArr(mx) : [1, 0, 0, 1, 0, 0], g.ctm), bb = x.dict.lookupMaybe(N_('BBox'), PDFArray);
-            walk(fb, x.dict.lookupMaybe(N_('Resources'), PDFDict) || res, {form:ref}, [...chain, {form:ref, name, s:o.s, e:o.e, holder}], M, bb ? boxMeet(g.clip, userBox(numArr(bb), M)) || [0, 0, 0, 0] : g.clip, depth + 1);
+            walk(fb, x.dict.lookupMaybe(N_('Resources'), PDFDict) || res, {form:ref}, [...chain, {form:ref, name, s:o.s, e:o.e, holder, pres:res}], M, bb ? boxMeet(g.clip, userBox(numArr(bb), M)) || [0, 0, 0, 0] : g.clip, depth + 1);
           }
           break;
         }
@@ -4765,11 +4766,16 @@ function editHolder(doc, holder, edits){
   ctx.assign(holder.form, ctx.flateStream(apply(streamBytes(x)), dict));
 }
 const holderKey = h => h.page != null ? 'p' + h.page : 'f' + h.form.toString();
-// a name for a new XObject in the resources of a page or a form
-function addXObject(doc, holder, ref, prefix){
+// a name for a new XObject in the resources of a page or a form; a form without resources of its own (it uses those in
+// effect where it is drawn, `inherit`) first gets a copy of them, so what it already draws still resolves
+function addXObject(doc, holder, ref, prefix, inherit = null){
   const ctx = doc.context;
   let res = holder.page != null ? doc.getPage(holder.page).node.Resources() : ctx.lookup(holder.form).dict.lookupMaybe(N_('Resources'), PDFDict);
-  if (!res) { res = ctx.obj({}); if (holder.page != null) doc.getPage(holder.page).node.set(N_('Resources'), res); else ctx.lookup(holder.form).dict.set(N_('Resources'), res); }
+  if (!res) {
+    res = ctx.obj({});
+    if (inherit) { inherit.entries().forEach(([k, v]) => res.set(k, v)); const xi = inherit.lookupMaybe(N_('XObject'), PDFDict); if (xi) { const xc = ctx.obj({}); xi.entries().forEach(([k, v]) => xc.set(k, v)); res.set(N_('XObject'), xc); } }
+    if (holder.page != null) doc.getPage(holder.page).node.set(N_('Resources'), res); else ctx.lookup(holder.form).dict.set(N_('Resources'), res);
+  }
   let xo = res.lookupMaybe(N_('XObject'), PDFDict); if (!xo) { xo = ctx.obj({}); res.set(N_('XObject'), xo); }
   let n = 1; while (xo.get(N_(prefix + n))) n++;
   xo.set(N_(prefix + n), ref); return prefix + n;
@@ -4787,7 +4793,7 @@ function cloneChain(doc, d, pages, edits, memo){
       x.dict.entries().forEach(([key, v]) => { const n = String(key).slice(1); if (!['Length', 'Filter', 'DecodeParms'].includes(n)) dict[n] = v; });
       const r = x.dict.lookupMaybe(N_('Resources'), PDFDict);
       if (r) { const rc = ctx.obj({}); r.entries().forEach(([key, v]) => rc.set(key, v)); const xo = r.lookupMaybe(N_('XObject'), PDFDict); if (xo) { const xc = ctx.obj({}); xo.entries().forEach(([key, v]) => xc.set(key, v)); rc.set(N_('XObject'), xc); } dict.Resources = rc; }
-      const copy = ctx.register(ctx.flateStream(streamBytes(x), dict)), name = addXObject(doc, parent, copy, 'PDFE_Fm');
+      const copy = ctx.register(ctx.flateStream(streamBytes(x), dict)), name = addXObject(doc, parent, copy, 'PDFE_Fm', c.pres);
       addEdit(edits, parent, {s:c.s, e:c.e, text:`/${name} Do`});
       memo.set(mk, copy);
     }
@@ -4816,6 +4822,20 @@ function reachableRefs(doc){
   }
   return seen;
 }
+// a digital signature in the file (a signature field with a value, or signature permissions)
+function hasSignature(doc){
+  if (doc.catalog.get(N_('Perms'))) return true;
+  const af = doc.catalog.lookupMaybe(N_('AcroForm'), PDFDict), fields = af && af.lookupMaybe(N_('Fields'), PDFArray); if (!fields) return false;
+  const stack = fields.asArray().slice(); let n = 0;
+  while (stack.length && n++ < 20000) {
+    const f = doc.context.lookup(stack.pop()); if (!(f instanceof PDFDict)) continue;
+    if (String(f.get(N_('FT'))) === '/Sig' && f.get(N_('V'))) return true;
+    const kids = f.lookupMaybe(N_('Kids'), PDFArray); if (kids) stack.push(...kids.asArray());
+  }
+  return false;
+}
+// objects pdf-lib could not read: kept as raw bytes, so the objects they point to cannot be seen by reachableRefs
+const hasUnreadable = doc => !!PDFLib.PDFInvalidObject && doc.context.enumerateIndirectObjects().some(([, o]) => o instanceof PDFLib.PDFInvalidObject);
 // pictures no longer drawn anywhere: their names come out of the resources walked through, and the pictures (and their
 // masks) out of the file once nothing points to them any more
 function purgeImages(doc, refs){
@@ -4824,6 +4844,7 @@ function purgeImages(doc, refs){
   const gone = refs.filter(r => r && !drawn.has(r.toString())); if (!gone.length) return;
   const goneK = new Set(gone.map(r => r.toString()));
   seenRes.forEach(res => { const xo = res.lookupMaybe(N_('XObject'), PDFDict); if (!xo) return; xo.entries().forEach(([k, v]) => { if (v instanceof PDFRef && goneK.has(v.toString())) xo.delete(k); }); });
+  if (hasUnreadable(doc)) return;   // something unreadable may still point to them: keep the data
   const live = reachableRefs(doc), ctx = doc.context;
   gone.forEach(r => {
     if (live.has(r.toString())) return;
@@ -4836,7 +4857,11 @@ function purgeImages(doc, refs){
 // when there is nothing to drop, or when the file cannot be read)
 async function pruneUnused(bytes){
   try {
-    const doc = await PDFDocument.load(bytes, {ignoreEncryption:true, updateMetadata:false}), ctx = doc.context, live = reachableRefs(doc);
+    const doc = await PDFDocument.load(bytes, {ignoreEncryption:true, updateMetadata:false}), ctx = doc.context;
+    // left as they are: encrypted files (pdf-lib would put their still-encrypted strings into new object streams), signed
+    // files (any rewrite breaks a signature) and files with objects pdf-lib could not read (what those point to is unseen)
+    if (ctx.trailerInfo.Encrypt || hasSignature(doc) || hasUnreadable(doc)) return bytes;
+    const live = reachableRefs(doc);
     let n = 0;
     ctx.enumerateIndirectObjects().forEach(([ref]) => { if (!live.has(ref.toString())) { ctx.delete(ref); n++; } });
     return n ? await doc.save() : bytes;
@@ -4932,7 +4957,7 @@ async function replacePageImage(i, full){
       const d = opt.all ? d0 : cloneChain(doc, d0, pages, edits, memo), hk = holderKey(d.holder);
       touched.add(d.i); if (d.ref) old.push(d.ref);
       if (k > 0) { addEdit(edits, d.holder, {s:d.s, e:d.e, text:' '}); return; }   // pictures stacked under one red box: one new picture
-      if (!names.has(hk)) names.set(hk, addXObject(doc, d.holder, emb.ref, 'PDFE_Im'));
+      if (!names.has(hk)) names.set(hk, addXObject(doc, d.holder, emb.ref, 'PDFE_Im', d.res));
       addEdit(edits, d.holder, {s:d.s, e:d.e, text:` q ${replacePlacement(d, img, opt).map(v => +v.toFixed(6)).join(' ')} cm /${names.get(hk)} Do Q `});
     }));
     edits.forEach(({holder, list}) => editHolder(doc, holder, list));
@@ -9676,6 +9701,7 @@ window.__pdfapp = {
     return {bbox:bb ? numArr(bb) : null, matrix:m ? numArr(m) : [1, 0, 0, 1, 0, 0]};
   },
   imageBoxes:i => detectImages(i),
+  pruneUnused:b => pruneUnused(b),
   imageObjects:async () => { const doc = await geoDoc(), out = []; doc.context.enumerateIndirectObjects().forEach(([, o]) => { if (o && o.dict && String(o.dict.get(N_('Subtype'))) === '/Image') { const n = k => { const v = o.dict.get(N_(k)); return v && v.asNumber ? v.asNumber() : 0; }; out.push({w:n('Width'), h:n('Height')}); } }); return out; },
   pageKeys:async i => (await geoDoc()).getPage(i).node.keys().map(k => String(k).slice(1)),
   imageDraws:async i => { const doc = await geoDoc(), V = S.pages[i].vp1.transform; return imageDrawsIn(doc, i).map(d => { const o = MPT(V, ...MPT(d.M, 0, 0)), x = MPT(V, ...MPT(d.M, 1, 0));
