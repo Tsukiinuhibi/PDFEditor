@@ -107,5 +107,90 @@ const k8 = await order(), inks = k8.filter(o => o.sub === 'Ink'), at = id => k8.
 const strokes = await Ev(async () => (await window.__pdfapp.getAnns(0)).filter(a => a.subtype === 'Ink').map(a => a.ink.length));
 check('the eraser cuts the stroke in two; what is left stays under the square drawn after it', ink0.length === 1 && inks.length === 1 && inks[0].id !== ink0[0] && strokes[0] === 2 && at(inks[0].id) < at(sqR), {ink0, k8, strokes});
 
+// ---- part 2: the layers panel lists each page's objects front to back, marks the selection and reorders them ------------
+const LAYERABLE = new Set(['Square', 'Circle', 'Text', 'Ink', 'FreeText', 'Stamp', 'Line', 'Polygon', 'PolyLine', 'Highlight']);
+const front = async (i = 0) => (await order(i)).filter(o => LAYERABLE.has(o.sub)).map(o => o.id).reverse();
+// the panel as [{layer, pages:[{h, ids}]}]: every layer row with the page headings and object rows under it
+const panel = () => Ev(() => [...document.querySelectorAll('#p-layers .ly-row:not(.base)')].map(r => {
+  const box = r.nextElementSibling && r.nextElementSibling.classList.contains('ly-objs') ? r.nextElementSibling : null, pages = [];
+  if (box) [...box.children].forEach(c => { if (c.classList.contains('ly-pgh')) pages.push({h:c.textContent.trim(), ids:[]}); else if (c.classList.contains('ly-obj') && pages.length) pages[pages.length - 1].ids.push(c.dataset.oid); });
+  return {layer:r.dataset.id, pages};
+}));
+const marked = () => Ev(() => [...document.querySelectorAll('#p-layers .ly-obj.sel')].map(r => r.dataset.oid));
+const row = id => win.locator(`#p-layers .ly-obj[data-oid="${id}"]`);
+await win.click('[data-act="layers"]'); await win.waitForTimeout(900);
+let pn = await panel();
+check('the panel lists the objects without opening anything: 第 1 頁, 第 2 頁; on page 1 the topmost first',
+  pn.length === 1 && pn[0].pages.map(p => p.h).join() === '第 1 頁,第 2 頁' && JSON.stringify(pn[0].pages[0].ids) === JSON.stringify(await front(0)), {pn, front:await front(0)});
+await see(0, 200, 200);
+await tool('select');
+await win.mouse.click(...await P(0, 300, 300)); await win.waitForTimeout(900);
+const mk1 = await marked();
+await win.keyboard.down('Shift'); await win.mouse.click(...await P(0, 130, 120)); await win.keyboard.up('Shift'); await win.waitForTimeout(700);
+const mk2 = await marked();
+await win.keyboard.press('Escape'); await win.waitForTimeout(400);
+check('the selected object is marked in the panel (both of a group); Esc: none', JSON.stringify(mk1) === JSON.stringify([B]) && mk2.length === 2 && mk2.includes(A) && mk2.includes(B) && !(await marked()).length, {mk1, mk2});
+await row(A).click({button:'right'}); await win.waitForTimeout(300);
+const menu = await Ev(() => ['z-front', 'z-up', 'z-down', 'z-back'].every(k => !!document.querySelector(`#ctx button[data-m="${k}"]`)));
+await win.click('#ctx button[data-m="z-back"]'); await win.waitForTimeout(1800);
+pn = await panel();
+check('right-click a row → 移到最下層: A is the last row of page 1', menu && pn[0].pages[0].ids.at(-1) === A && JSON.stringify(pn[0].pages[0].ids) === JSON.stringify(await front(0)), {menu, pn:pn[0].pages[0].ids});
+const top0 = pn[0].pages[0].ids[0];
+await row(A).dragTo(row(top0), {targetPosition:{x:30, y:3}}); await win.waitForTimeout(1800);
+pn = await panel();
+check('a row dragged onto the upper half of the top row: it is on top now', pn[0].pages[0].ids[0] === A && (await front(0))[0] === A, pn[0].pages[0].ids);
+u0 = await undos();
+const D = pn[0].pages[1].ids[0];
+await row(B).dragTo(row(D), {targetPosition:{x:30, y:3}}); await win.waitForTimeout(1500);
+check('a row dragged onto another page\'s row: nothing changes', (await undos()) === u0 && JSON.stringify((await panel())[0].pages[0].ids) === JSON.stringify(pn[0].pages[0].ids));
+await win.click('#p-layers .ly-row[data-id="__v"] .ly-car'); await win.waitForTimeout(500);
+const shut1 = await Ev(() => document.querySelectorAll('#p-layers .ly-obj').length);
+await key('Control+BracketRight');   // nothing selected: nothing happens, but make a change to rebuild the panel
+await Ev(() => window.__pdfapp.actions.zoomIn()); await win.waitForTimeout(600);
+const shut2 = await Ev(() => document.querySelectorAll('#p-layers .ly-obj').length);
+await win.click('#p-layers .ly-row[data-id="__v"] .ly-car'); await win.waitForTimeout(500);
+check('▸ folds the list away and it stays folded; ▸ again opens it', shut1 === 0 && shut2 === 0 && (await Ev(() => document.querySelectorAll('#p-layers .ly-obj').length)) > 0, {shut1, shut2});
+
+// with layers: an object moves inside its own layer; dropped on a row of another layer it moves into that layer
+await win.click('#p-layers [data-ly="add"]'); await win.waitForTimeout(2500);
+const lys = await Ev(() => [...document.querySelectorAll('#p-layers .ly-row:not(.base):not(.loose)')].map(r => r.dataset.id));   // [圖層 2, 圖層 1]
+await see(0, 140, 130);
+const had = new Set(await ids());
+await tool('rect');
+await drag(await P(0, 110, 100), await P(0, 170, 160));
+const E = (await ids()).find(id => !had.has(id));
+await tool('select');
+await win.mouse.click(...await P(0, 240, 110)); await win.waitForTimeout(900);   // A (in 圖層 1), outside E and B
+u0 = await undos();
+await key('Control+Shift+BracketRight');
+const ord1 = await order(), at1 = id => ord1.findIndex(o => o.id === id), tt = await toastText();
+check('A, already the top of 圖層 1: 移到最上層 says so and leaves it under 圖層 2\'s square (E)', at1(A) < at1(E) && (await undos()) === u0 && tt.includes('已經是「圖層 1」最上面的物件'), {ord1, tt});
+await row(A).dragTo(row(E), {targetPosition:{x:30, y:3}}); await win.waitForTimeout(1800);
+const ord2 = await order(), at2 = id => ord2.findIndex(o => o.id === id), oc = id => (ord2.find(o => o.id === id) || {}).oc;
+check('A dropped on the upper half of E\'s row: in 圖層 2, above E', oc(A) === lys[0] && at2(A) === at2(E) + 1, {ord2, lys});
+await undo();
+const ord3 = await order();
+check('復原 once: A back in 圖層 1, under E', (ord3.find(o => o.id === A) || {}).oc === lys[1] && ord3.findIndex(o => o.id === A) < ord3.findIndex(o => o.id === E), ord3);
+await win.click(`#p-layers .ly-row[data-id="${lys[1]}"] .ly-lock`); await win.waitForTimeout(2000);
+const before = await ids();
+await row(B).dragTo(row(A), {targetPosition:{x:30, y:3}}); await win.waitForTimeout(1500);
+check('a locked layer: its rows cannot be dragged (order unchanged, a message)', JSON.stringify(await ids()) === JSON.stringify(before) && (await toastText()).includes('已鎖定'), await toastText());
+await win.click(`#p-layers .ly-row[data-id="${lys[1]}"] .ly-lock`); await win.waitForTimeout(2000);
+
+// a fill done again keeps its layer and its place (under a square drawn after it), whatever layer is current
+await win.click(`#p-layers .ly-row[data-id="${lys[1]}"] .ly-name`); await win.waitForTimeout(300);   // 圖層 1 current
+await see(1, 400, 560);
+await tool('fill');
+await win.mouse.click(...await P(1, 400, 520)); await win.waitForTimeout(2500);
+const F = (await order(1)).filter(o => o.sub === 'Stamp').map(o => o.id)[0];
+await tool('rect');
+await drag(await P(1, 420, 560), await P(1, 480, 620));
+const G = (await order(1)).filter(o => o.sub === 'Square').map(o => o.id).at(-1);
+await win.click(`#p-layers .ly-row[data-id="${lys[0]}"] .ly-name`); await win.waitForTimeout(300);   // 圖層 2 current
+await tool('fill');
+await win.mouse.click(...await P(1, 330, 520)); await win.waitForTimeout(2500);
+const o4 = await order(1), F2 = o4.filter(o => o.sub === 'Stamp').map(o => o.id), i4 = id => o4.findIndex(o => o.id === id);
+check('a fill done again: a new one in its place (圖層 1, under the square drawn after it)', !!F && F2.length === 1 && F2[0] !== F && (o4.find(o => o.id === F2[0]) || {}).oc === lys[1] && i4(F2[0]) < i4(G), {F, F2, o4});
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

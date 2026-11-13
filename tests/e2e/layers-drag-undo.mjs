@@ -25,8 +25,7 @@ await win.locator(`#p-layers .ly-row[data-id="${ids[0]}"]`).dragTo(tgt, {targetP
 console.log('r3', await rows());
 // drag object (textbox) onto 圖層 2
 const r3ids = await win.evaluate(() => [...document.querySelectorAll('#p-layers .ly-row:not(.base)')].map(r => r.dataset.id));
-await win.click(`#p-layers .ly-row[data-id="${ids[0]}"] .ly-car`); await win.waitForTimeout(400);
-await win.locator('#p-layers .ly-obj').first().dragTo(win.locator(`#p-layers .ly-row[data-id="${ids[1]}"]`)); await win.waitForTimeout(2500);
+await win.locator(`#p-layers .ly-row[data-id="${ids[0]}"] + .ly-objs .ly-obj`).first().dragTo(win.locator(`#p-layers .ly-row[data-id="${ids[1]}"]`)); await win.waitForTimeout(2500);
 console.log('r4', await rows());
 await win.keyboard.press('Control+z'); await win.waitForTimeout(2500);
 console.log('undo', await rows());

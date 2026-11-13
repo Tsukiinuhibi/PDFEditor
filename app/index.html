@@ -832,7 +832,10 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
 .ly-oeye{display:flex;align-items:center;justify-content:center;width:20px;height:20px;border:0;background:none;color:var(--ink3);cursor:pointer;border-radius:4px;padding:0}
 .ly-oeye:hover{background:#fff3bf;color:#1f2328}
 .ly-on{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ly-op{font-size:10.5px;color:var(--ink3)}
+.ly-pgh{font-size:10.5px;color:var(--ink3);padding:5px 0 1px 6px;letter-spacing:.02em}
+.ly-obj.sel{background:rgba(28,100,217,.14);color:var(--ink)}
+.ly-obj.drop-a{box-shadow:inset 0 2px 0 #1c64d9}
+.ly-obj.drop-b{box-shadow:inset 0 -2px 0 #1c64d9}
 .ly-ren{flex:1;min-width:0;height:22px;font-size:12.5px;padding:0 4px;border:1px solid #1c64d9;border-radius:4px;background:var(--surface);color:var(--ink)}
 .ly-adopt{margin:4px 0 2px 18px;padding:4px 8px;font-size:11.5px;border:1px dashed var(--line);border-radius:6px;background:var(--surface);color:var(--ink2);cursor:pointer}
 .ly-note{margin-top:10px;font-size:11.5px;line-height:1.6;color:var(--ink3)}
@@ -7185,6 +7188,7 @@ function tbObjStyle(rt){
 }
 let OBJBAR = null;   // the object the bar shows: {i, id, kind, doc, st (a text box's tbObjStyle)}
 async function paintObjBar(){
+  markLayerSel();
   const h = $('#hint');
   const drop = () => { OBJBAR = null; if (h.classList.contains('objbar')) { h.classList.remove('objbar', 'show', 'styl', 'multi'); h.innerHTML = ''; } };
   if (S.tool === 'select' && MS) {
@@ -8769,7 +8773,7 @@ async function buildAttsPanel(){
 const N_ = k => PDFName.of(k);
 const refId = r => r.objectNumber + 'R' + (r.generationNumber ? r.generationNumber : '');
 const LAYER_SKIP = new Set(['Popup', 'Link', 'Widget']);
-const LY_OPEN = new Set();
+const LY_FOLD = new Set();   // layers whose list of objects is folded away (the lists are open)
 let LM = {bytes:null, p:null}, HL = {pdf:null, p:null};
 const txt = v => v && v.decodeText ? v.decodeText() : '';
 
@@ -9133,12 +9137,13 @@ async function deleteLayer(id){
     removeLayer(doc, me, mode === 'delete' ? {deleteObjects:true} : {moveTo:to ? to.ref : null}); });
   if (S.activeLayer === id) S.activeLayer = other ? other.id : null;
 }
-async function moveObjToLayer(oids, id){
+async function moveObjToLayer(oids, id, {front = true} = {}){
   const lm = await layerModel(), list = oids.map(x => lm.byId.get(x)).filter(Boolean); if (!list.length) return;
   const name = id === '__loose' ? '不分層' : ((lm.layers.find(l => l.id === id) || {}).name || '圖層 1');
   await layerEdit(`已移到「${name}」`, doc => {
     const ref = id === '__loose' ? null : lyRef(doc, id); if (id !== '__loose' && !ref) return false;
     list.forEach(o => { const d = annDict(doc, o); if (!d) return; if (ref) d.set(N_('OC'), ref); else d.delete(N_('OC')); });
+    if (front) list.forEach(o => stackPlace(doc, o.i, o.id, 'front'));   // on top of the layer it went into
   });
 }
 async function toggleObjHidden(oid){
@@ -9181,19 +9186,21 @@ async function buildLayersPanel(){
   const bytes = S.bytes, lm = await layerModel(); if (bytes !== S.bytes) return;
   const virtual = !lm.layers.length, act = activeId(lm);
   const rows = virtual ? [{id:'__v', name:'圖層 1', visible:true, locked:false, app:true, virtual:true}] : lm.layers;
-  const objsOf = id => lm.objs.filter(o => id === '__v' ? true : id === '__loose' ? !o.layer : o.layer === id);
-  const loose = virtual ? [] : objsOf('__loose');
-  const objRow = o => `<div class="ly-obj${o.hidden ? ' hid' : ''}" data-oid="${o.id}" draggable="true" title="點一下前往並選取；拖曳到其他圖層可移動">
+  // a layer's objects page by page, the topmost first (the order they are drawn in, from the top)
+  const objsOf = id => lm.objs.filter(o => id === '__v' ? true : id === '__loose' ? !o.layer : o.layer === id).sort((a, b) => a.i - b.i || b.k - a.k);
+  const loose = virtual ? [] : objsOf('__loose'), locked = new Set(lm.layers.filter(l => l.locked).map(l => l.id));
+  const objRow = o => `<div class="ly-obj${o.hidden ? ' hid' : ''}" data-oid="${o.id}" data-i="${o.i}"${o.layer && locked.has(o.layer) ? ' data-lk="1"' : ''} draggable="true" title="點一下前往並選取；拖曳可調整前後順序或換圖層">
       <button class="ly-oeye" title="${o.hidden ? '顯示' : '隱藏'}這個物件">${o.hidden ? LY_ICON.eyeOff : LY_ICON.eye}</button>
-      <span class="ly-on">${esc(o.label)}${o.contents && o.sub !== 'Stamp' ? '：' + esc(o.contents.slice(0, 18)) : ''}</span><span class="ly-op">P${o.i + 1}</span></div>`;
+      <span class="ly-on">${esc(o.label)}${o.contents && o.sub !== 'Stamp' ? '：' + esc(o.contents.slice(0, 18)) : ''}</span></div>`;
+  const objList = list => { let pg = -1; return list.map(o => (o.i !== pg ? `<div class="ly-pgh">第 ${(pg = o.i) + 1} 頁</div>` : '') + objRow(o)).join(''); };
   const row = (l, d = 0) => {
-    const list = objsOf(l.id), open = LY_OPEN.has(l.id);
+    const list = objsOf(l.id), open = !LY_FOLD.has(l.id);
     return `<div class="ly-row${l.id === act ? ' act' : ''}${l.visible ? '' : ' off'}${l.locked ? ' lk' : ''}"${d ? ` style="--d:${d}"` : ''} data-id="${l.id}" draggable="${l.virtual ? 'false' : 'true'}">
       <button class="ly-car${open ? ' open' : ''}" title="展開／收合物件">${list.length ? '▸' : ''}</button>
       <button class="ly-eye" title="顯示／隱藏（Alt+點：只顯示這個圖層）">${l.visible ? LY_ICON.eye : LY_ICON.eyeOff}</button>
       <button class="ly-lock${l.locked ? ' on' : ''}" title="${l.locked ? '解除鎖定' : '鎖定（不能選取、移動或擦除）'}">${l.locked ? LY_ICON.lock : LY_ICON.unlock}</button>
       <span class="ly-name" title="雙擊重新命名">${esc(l.name)}</span>${l.app ? '' : '<span class="ly-tag" title="文件原有的圖層">文件</span>'}<span class="ly-n">${list.length}</span></div>
-      ${open && list.length ? `<div class="ly-objs"${d ? ` style="--d:${d}"` : ''}>${list.map(objRow).join('')}</div>` : ''}`;
+      ${open && list.length ? `<div class="ly-objs"${d ? ` style="--d:${d}"` : ''}>${objList(list)}</div>` : ''}`;
   };
   // a named group from the file: shows / hides and locks everything in it; layers can be dragged in and out
   const byId = new Map(rows.map(l => [l.id, l]));
@@ -9218,12 +9225,20 @@ async function buildLayersPanel(){
       <button data-ly="up" title="上移目前圖層">▲</button><button data-ly="down" title="下移目前圖層">▼</button>
       <button data-ly="merge" title="把目前圖層合併到下方圖層">⤓</button><button data-ly="del" title="刪除目前圖層">🗑</button></div>
     <div class="ly-list">${html.join('')}
-      ${loose.length ? `<div class="ly-row loose" data-id="__loose"><button class="ly-car${LY_OPEN.has('__loose') ? ' open' : ''}">▸</button><span class="ly-name">未分層的物件</span><span class="ly-n">${loose.length}</span></div>
-        ${LY_OPEN.has('__loose') ? `<div class="ly-objs">${loose.map(objRow).join('')}</div>` : ''}
+      ${loose.length ? `<div class="ly-row loose" data-id="__loose"><button class="ly-car${LY_FOLD.has('__loose') ? '' : ' open'}">▸</button><span class="ly-name">未分層的物件</span><span class="ly-n">${loose.length}</span></div>
+        ${LY_FOLD.has('__loose') ? '' : `<div class="ly-objs">${objList(loose)}</div>`}
         <button class="ly-adopt" data-ly="adopt">把未分層的物件放進目前圖層</button>` : ''}
       <div class="ly-row base" title="PDF 原本的頁面內容永遠在最底層"><span class="ly-car"></span><span class="ly-pg">📄</span><span class="ly-name">頁面內容</span></div>
     </div>
-    <div class="ly-note">${virtual ? '目前所有註解都在「圖層 1」。按「＋ 新增圖層」建立更多圖層，新畫的註解會放進選取（反白）的圖層。' : '反白的是目前圖層，新畫的註解會放在這裡。拖曳圖層調整上下順序，拖曳物件可換圖層；右鍵有更多選項。' + (lm.tree.some(n => n.group || n.kids.length) ? '拖到群組（或有子圖層的圖層）中間可以放進去；群組的眼睛和鎖會套用到整組。' : '')}</div>`;
+    <div class="ly-note">${virtual ? '目前所有註解都在「圖層 1」。按「＋ 新增圖層」建立更多圖層，新畫的註解會放進選取（反白）的圖層。' : '反白的是目前圖層，新畫的註解會放在這裡。拖曳圖層調整上下順序，物件拖到別的圖層就換過去；右鍵有更多選項。' + (lm.tree.some(n => n.group || n.kids.length) ? '拖到群組（或有子圖層的圖層）中間可以放進去；群組的眼睛和鎖會套用到整組。' : '')}
+      每一頁的物件，清單上面的蓋在下面的上面；拖曳物件可以調整前後順序。</div>`;
+  markLayerSel();
+}
+// the selected object (or the selected group) marked in the layers panel
+function markLayerSel(){
+  const p = lyPanel(); if (!p || !p.classList.contains('on')) return;
+  const ids = new Set(MS ? MS.items.map(a => a.id) : AS ? [AS.a.id] : []);
+  p.querySelectorAll('.ly-obj').forEach(r => r.classList.toggle('sel', ids.has(r.dataset.oid)));
 }
 const lyPanel = () => $('#p-layers');
 function wireLayersPanel(){
@@ -9233,7 +9248,7 @@ function wireLayersPanel(){
     if (tool) {
       const lm = await layerModel(), act = activeId(lm), k = tool.dataset.ly;
       if (k === 'add') return addLayer();
-      if (k === 'adopt') return moveObjToLayer(lm.objs.filter(o => !o.layer).map(o => o.id), act || (lm.layers[0] || {}).id);
+      if (k === 'adopt') return moveObjToLayer(lm.objs.filter(o => !o.layer).map(o => o.id), act || (lm.layers[0] || {}).id, {front:false});
       if (!act || act === '__v') { toast(k === 'del' ? '至少要有一個圖層' : '請先新增圖層'); return; }
       if (k === 'up') return moveLayer(act, null, -1);
       if (k === 'down') return moveLayer(act, null, 1);
@@ -9251,7 +9266,7 @@ function wireLayersPanel(){
       if (t.closest('.ly-lock')) return toggleLayerLock(id);
       return;
     }
-    if (t.closest('.ly-car')) { LY_OPEN.has(id) ? LY_OPEN.delete(id) : LY_OPEN.add(id); buildLayersPanel(); return; }
+    if (t.closest('.ly-car')) { LY_FOLD.has(id) ? LY_FOLD.delete(id) : LY_FOLD.add(id); buildLayersPanel(); return; }
     if (id === '__loose') return;
     if (t.closest('.ly-eye')) return toggleLayerVisible(id, e.altKey);
     if (t.closest('.ly-lock')) return toggleLayerLock(id);
@@ -9277,9 +9292,10 @@ function wireLayersPanel(){
       const o = lm.byId.get(ob.dataset.oid); if (!o) return;
       const targets = (lm.layers.length ? lm.layers : [{id:'__v', name:'圖層 1'}]).filter(l => l.id !== o.layer);
       showLyMenu(e, `<div class="hd">${esc(o.label)} · 第 ${o.i + 1} 頁</div><button data-m="go">前往並選取</button><button data-m="hide">${o.hidden ? '顯示' : '隱藏'}這個物件</button>
+        <hr>${Z_BTNS.map(([k, t, , kb]) => `<button data-m="${k}">${t}<kbd>${kb}</kbd></button>`).join('')}
         ${targets.length ? '<hr><div class="hd">移到圖層</div>' + targets.map(l => `<button data-m="to" data-v="${l.id}">→ ${esc(l.name)}</button>`).join('') : ''}
         ${o.layer && lm.layers.length ? '<button data-m="to" data-v="__loose">→ 不分層</button>' : ''}<hr><button data-m="del" class="danger">刪除</button>`,
-        (m, v) => { if (m === 'go') gotoObj(o.id); if (m === 'hide') toggleObjHidden(o.id); if (m === 'to') moveObjToLayer([o.id], v); if (m === 'del') deleteObjs([o.id]); });
+        (m, v) => { if (m === 'go') gotoObj(o.id); if (m === 'hide') toggleObjHidden(o.id); if (m === 'to') moveObjToLayer([o.id], v); if (m === 'del') deleteObjs([o.id]); if (Z_HOW[m]) stackObj(o.i, o.id, Z_HOW[m]); });
       return;
     }
     const id = r.dataset.id; if (id === '__loose') return;
@@ -9323,10 +9339,14 @@ function wireLayersPanel(){
   let drag = null;
   p.addEventListener('dragstart', e => {
     const ob = e.target.closest && e.target.closest('.ly-obj'), r = e.target.closest && e.target.closest('.ly-row');
-    if (ob) drag = {obj:ob.dataset.oid}; else if (r && r.draggable) drag = {layer:r.dataset.id}; else return;
+    if (ob && ob.dataset.lk) { e.preventDefault(); toast('這個圖層已鎖定，解鎖後才能調整', 'err'); return; }
+    if (ob) drag = {obj:ob.dataset.oid, i:+ob.dataset.i}; else if (r && r.draggable) drag = {layer:r.dataset.id}; else return;
     e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'pdfe-layer');
   });
-  const target = e => { const r = e.target.closest && e.target.closest('.ly-row'); return r && !r.classList.contains('base') && (drag && drag.obj ? !r.classList.contains('ly-grp') : !r.classList.contains('loose')) ? r : null; };
+  const target = e => { const r = e.target.closest && e.target.closest('.ly-row'); return r && !r.classList.contains('base') && (drag && drag.obj ? !r.classList.contains('ly-grp') && !r.classList.contains('lk') : !r.classList.contains('loose')) ? r : null; };
+  // an object row a dragged object can go above or under: another object of the same page, not on a locked layer
+  const objTarget = e => { if (!drag || !drag.obj) return null; const o = e.target.closest && e.target.closest('.ly-obj'); return o && o.dataset.oid !== drag.obj && +o.dataset.i === drag.i && !o.dataset.lk ? o : null; };
+  const upper = (o, y) => { const b = o.getBoundingClientRect(); return (y - b.top) / b.height < .5; };
   const clear = () => p.querySelectorAll('.drop-a,.drop-b,.drop-in').forEach(x => x.classList.remove('drop-a', 'drop-b', 'drop-in'));
   // where a dragged layer lands on row r: above it, inside it (an open group, or a layer that has layers under it), or below it
   const zone = (r, y) => {
@@ -9335,7 +9355,9 @@ function wireLayersPanel(){
     return f < .3 ? 'before' : (r.dataset.shut && f > .7) ? 'after' : 'into';
   };
   p.addEventListener('dragover', e => {
-    if (!drag) return; const r = target(e); clear(); if (!r) return;
+    if (!drag) return; clear();
+    const o = objTarget(e); if (o) { e.preventDefault(); e.stopPropagation(); o.classList.add(upper(o, e.clientY) ? 'drop-a' : 'drop-b'); return; }
+    const r = target(e); if (!r) return;
     e.preventDefault(); e.stopPropagation();
     if (drag.obj) r.classList.add('drop-in');
     else if (r.dataset.id !== drag.layer && r.dataset.id !== '__v') r.classList.add({before:'drop-a', after:'drop-b', into:'drop-in'}[zone(r, e.clientY)]);
@@ -9343,7 +9365,9 @@ function wireLayersPanel(){
   p.addEventListener('dragleave', e => { if (!p.contains(e.relatedTarget)) clear(); });
   p.addEventListener('drop', e => {
     if (!drag) return; e.preventDefault(); e.stopPropagation();
-    const r = target(e), d = drag; clear(); drag = null; if (!r) return;
+    const o = objTarget(e), r = target(e), d = drag; clear(); drag = null;
+    if (o) { stackObj(d.i, d.obj, {rel:o.dataset.oid, above:upper(o, e.clientY)}, '已調整前後順序'); return; }
+    if (!r) return;
     if (d.obj) moveObjToLayer([d.obj], r.dataset.id);
     else if (r.dataset.id !== d.layer && r.dataset.id !== '__v') { const z = zone(r, e.clientY); moveLayer(d.layer, r.dataset.id, z === 'into' ? 'into' : z === 'after'); }
   });

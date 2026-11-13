@@ -37,9 +37,8 @@ await win.click(`#p-layers .ly-row[data-id="${ids[0]}"] .ly-lock`); await win.wa
 // rename
 await win.dblclick(`#p-layers .ly-row[data-id="${ids[0]}"] .ly-name`); await win.waitForTimeout(200);
 await win.keyboard.press('Control+A'); await win.keyboard.type('背景色塊'); await win.keyboard.press('Enter'); await win.waitForTimeout(2500);
-// expand & move object via context menu
-await win.click(`#p-layers .ly-row[data-id="${ids[1]}"] .ly-car`); await win.waitForTimeout(400);
-await win.click('#p-layers .ly-obj', {button:'right'}); await win.waitForTimeout(300);
+// move object via context menu (the object lists are open)
+await win.click(`#p-layers .ly-row[data-id="${ids[1]}"] + .ly-objs .ly-obj`, {button:'right'}); await win.waitForTimeout(300);
 await win.click('#ctx button[data-m="to"]'); await win.waitForTimeout(2500);
 console.log('rows6', await rows());
 await win.screenshot({path:TMP + '/ly_a.png'});
