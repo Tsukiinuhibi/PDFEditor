@@ -17,6 +17,12 @@ const toasts = () => A(() => [...document.querySelectorAll('#toasts .toast')].ma
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 // a point on page i (PDF-space points from the top left of the page) in window coordinates, the page scrolled into view
 const P = async (i, x, y) => A(([i, x, y]) => { const r = window.__pdfapp.S.els[i].getBoundingClientRect(), s = window.__pdfapp.S.scale; return [r.left + x * s, r.top + y * s]; }, [i, x, y]);
+const see = async (i, x, y) => {
+  await A(([i, x, y]) => { const S = window.__pdfapp.S, vw = document.querySelector('#viewer'), vr = vw.getBoundingClientRect(), r = S.els[i].getBoundingClientRect();
+    vw.scrollTop += r.top + y * S.scale - (vr.top + vr.height / 2); vw.scrollLeft += r.left + x * S.scale - (vr.left + vr.width / 2); }, [i, x, y]);
+  await win.waitForTimeout(400); return P(i, x, y);
+};
+const onPage = (i, xy) => A(([i, x, y]) => { const e = document.elementFromPoint(x, y), pel = e && e.closest('.page'); return !!pel && +pel.dataset.i === i; }, [i, ...xy]);
 const show = async i => { await A(i => window.__pdfapp.scrollToPage(i), i); await win.waitForTimeout(500); };
 const anns = (i, sub) => A(async ([i, sub]) => (await window.__pdfapp.getAnns(i)).filter(a => !sub || a.subtype === sub).map(a => ({id:a.id, sub:a.subtype, author:a.author, contents:a.contents, x:a.x, y:a.y, w:a.w, h:a.h})), [i, sub]);
 const settingsPeople = async () => { await win.click('#bSettings'); await win.waitForTimeout(400); await win.click('#modal [data-st="people"]'); await win.waitForTimeout(300); };
@@ -73,13 +79,15 @@ await A(() => window.__pdfapp.setTool('select'));
 
 // ---- part 2: the author in the note, the delete button ----------------------------------------------------------------
 const tool = async t => { await A(t => window.__pdfapp.setTool(t), t); await win.waitForTimeout(200); };
-const openNote = async (i, a) => { await tool('select'); await win.mouse.click(...(await P(i, a.x + a.w / 2, a.y + a.h / 2))); await win.waitForTimeout(700); };
+const openNote = async (i, a) => { await tool('select'); await win.mouse.click(...(await see(i, a.x + a.w / 2, a.y + a.h / 2))); await win.waitForTimeout(700); };
 const author = () => A(() => { const b = document.querySelector('.npop .nau'); return b ? {text:b.textContent, tag:!!b.querySelector('i')} : null; });
 const auMenu = () => A(() => { const c = document.querySelector('#ctx'); if (c.style.display !== 'block' || !c.querySelector('[data-au]')) return null;
   return {items:[...c.querySelectorAll('[data-au]')].map(b => ({name:b.dataset.au, on:b.classList.contains('on'), text:b.textContent.trim()})), other:!!c.querySelector('#nauOther')}; });
 const noteText = async () => (await anns(0, 'Text')).sort((p, q) => p.id.localeCompare(q.id));
 let n0 = (await noteText())[0];
 await openNote(0, n0);
+const ndt = await A(() => { const e = document.querySelector('.npop .ndt'); return e ? {text:e.textContent, full:e.scrollWidth <= e.clientWidth + 1, title:e.title} : null; });
+check('the note shows its date and time in full (to the minute; the seconds in its tooltip)', !!ndt && ndt.full && /^\d{4}\/\d{1,2}\/\d{1,2} (上午|下午) \d\d:\d\d$/.test(ndt.text) && /:\d\d:\d\d$/.test(ndt.title), ndt);
 await win.click('.npop .nau'); await win.waitForTimeout(300);
 let m = await auMenu();
 check('the name in the note opens the list: its author first and ticked, the others, 其他名字…', !!m && same(m.items.map(x => x.name), ['王小明', user, '李大華']) && m.items[0].on && !m.items[1].on && m.other, m);
@@ -134,6 +142,90 @@ await openNote(0, fresh); await win.click('.npop .ndel'); await win.waitForTimeo
 check('a saved note deleted', (await count()) === c0 - 1 && !(await anns(0, 'Text')).some(x => x.id === fresh.id), await count());
 await win.keyboard.press('Control+z'); await win.waitForTimeout(1200);
 check('… and back with undo', (await count()) === c0, await count());
+
+
+// ---- part 3: the right-click menu on a placed note, copy and paste -------------------------------------------------------
+const at = a => [a.x + a.w / 2, a.y + a.h / 2];
+const rclick = async (i, a) => { await win.mouse.click(...(await see(i, ...at(a))), {button:'right'}); await win.waitForTimeout(400); };
+const noteMenu = () => A(() => { const c = document.querySelector('#ctx'); if (c.style.display !== 'block') return null;
+  return {hd:(c.querySelector('.hd') || {}).textContent || '', items:[...c.querySelectorAll('button[data-c]')].map(b => b.dataset.c + ':' + b.textContent.trim())}; });
+const byText = async (i, t) => (await anns(i, 'Text')).find(x => x.contents === t);
+const clipText = () => app.evaluate(({clipboard}) => clipboard.readText());
+const stClip = () => A(() => document.querySelector('#stClip').textContent);
+await tool('select'); await show(0);
+let a1 = await byText(0, '請確認這裡的日期'), aT = await byText(0, '臨時寫的'), aF = await byText(0, '新的');
+await rclick(0, a1);
+let nm = await noteMenu();
+check('right-click on a note (選取): its own menu, 編輯 複製 刪除', !!nm && nm.hd === '便利貼 · 王小明' && same(nm.items, ['edit:編輯', 'copy:複製', 'del:刪除']), nm);
+await win.keyboard.press('Escape'); await win.waitForTimeout(200);
+await tool('pen');
+const inks = async () => (await anns(0, 'Ink')).length, ink0 = await inks();
+await rclick(0, a1);
+nm = await noteMenu();
+check('right-click on a note with another tool (畫筆): the same menu, nothing drawn', !!nm && nm.hd === '便利貼 · 王小明' && nm.items.length === 3 && (await inks()) === ink0, nm);
+await win.click('#ctx [data-c="edit"]'); await win.waitForTimeout(700);
+check('〔編輯〕 opens the note', (await A(() => (document.querySelector('.npop textarea') || {}).value)) === '請確認這裡的日期');
+await win.click('.npop textarea', {button:'right'}); await win.waitForTimeout(300);
+check('right-click inside an open note: no menu', (await noteMenu()) === null, await noteMenu());
+await win.keyboard.press('Escape'); await win.waitForTimeout(800);
+// a note open and typed in (its window clear of the other note's icon), another note deleted from its menu
+await openNote(0, aF); await win.keyboard.press('End'); await win.keyboard.type('（補充）');
+await rclick(0, aT); await win.click('#ctx [data-c="del"]'); await win.waitForTimeout(1500);
+check('a note being typed in, another one deleted from its menu: the typing is kept', !!(await byText(0, '新的（補充）')) && !(await byText(0, '臨時寫的')), await anns(0, 'Text'));
+aF = await byText(0, '新的（補充）');
+a1 = await byText(0, '請確認這裡的日期');
+await rclick(0, a1); await win.click('#ctx [data-c="copy"]'); await win.waitForTimeout(500);
+check('〔複製〕: the text goes to the clipboard, the status bar says 便利貼', (await clipText()) === '請確認這裡的日期' && (await stClip()).includes('便利貼') && (await A(() => window.__pdfapp.clip())).last === 'note', {clip:await clipText(), st:await stClip()});
+// Ctrl+V: on the page under the mouse, at the mouse
+await win.mouse.move(...(await see(1, 250, 300))); await win.waitForTimeout(200);
+await win.keyboard.press('Control+v'); await win.waitForTimeout(1500);
+let pasted = await anns(1, 'Text');
+check('Ctrl+V: on the page under the mouse, at the mouse, same text and author', pasted.length === 1 && pasted[0].contents === a1.contents && pasted[0].author === a1.author && Math.abs(at(pasted[0])[0] - 250) < 2 && Math.abs(at(pasted[0])[1] - 300) < 2, pasted);
+await win.keyboard.press('Control+z'); await win.waitForTimeout(1200);
+check('one undo takes the pasted note away', (await anns(1, 'Text')).length === 0, await anns(1, 'Text'));
+const pg = await A(() => ({w:window.__pdfapp.S.pages[0].w, h:window.__pdfapp.S.pages[0].h}));
+const cornerXY = await see(0, pg.w - 1, pg.h - 1);
+const cornerOn = await onPage(0, cornerXY);
+await win.mouse.move(...cornerXY); await win.waitForTimeout(200);
+const before = (await anns(0, 'Text')).map(x => x.id);
+await win.keyboard.press('Control+v'); await win.waitForTimeout(1500);
+const corner = (await anns(0, 'Text')).find(x => !before.includes(x.id));
+check('pasted at the corner of a page: in the corner, the whole note on the page', cornerOn && !!corner && corner.x > pg.w - 25 && corner.y > pg.h - 25 && corner.x + corner.w <= pg.w + 0.5 && corner.y + corner.h <= pg.h + 0.5, {cornerOn, corner, pg});
+const cur = await A(() => window.__pdfapp.S.current);
+const beforeCur = (await anns(cur, 'Text')).map(x => x.id);
+await win.mouse.move(20, 20); await win.waitForTimeout(200);
+await win.keyboard.press('Control+v'); await win.waitForTimeout(1500);
+const off = (await anns(cur, 'Text')).find(x => !beforeCur.includes(x.id));
+check('the mouse not on a page: on the current page, a little right of and below the copied note', !!off && Math.abs(off.x - (a1.x + 16)) < 1 && Math.abs(off.y - (a1.y + 16)) < 1, {off, a1});
+// Ctrl+V while typing in a note pastes text into it, not another note
+const nBefore = (await anns(0, 'Text')).length;
+await openNote(0, a1); await win.keyboard.press('End'); await win.keyboard.press('Control+v'); await win.waitForTimeout(300);
+const typed = await A(() => document.querySelector('.npop textarea').value);
+await win.keyboard.press('Escape'); await win.waitForTimeout(1200);
+check('Ctrl+V while typing in a note: the text goes into the note, no new note', typed === a1.contents + a1.contents && (await anns(0, 'Text')).length === nBefore, {typed, n:(await anns(0, 'Text')).length});
+// Ctrl+C on a selected note (選取工具, dragged a little)
+await rclick(0, aF); await win.click('#ctx [data-c="copy"]'); await win.waitForTimeout(300);
+a1 = await byText(0, a1.contents + a1.contents);
+const p1 = await P(0, ...at(a1));
+await win.mouse.move(...p1); await win.mouse.down(); await win.mouse.move(p1[0] + 12, p1[1] + 8, {steps:4}); await win.mouse.up(); await win.waitForTimeout(1500);
+await win.keyboard.press('Control+c'); await win.waitForTimeout(400);
+check('Ctrl+C on a selected note copies that note', ((await A(() => window.__pdfapp.clip())).note || {}).contents === a1.contents, await A(() => window.__pdfapp.clip()));
+// paste into another open document
+await A(() => window.__pdfapp.makeSample()); await win.waitForTimeout(2500);
+await win.mouse.move(...(await see(0, 200, 200))); await win.waitForTimeout(200);
+await win.keyboard.press('Control+v'); await win.waitForTimeout(1500);
+check('Ctrl+V in another open document', (await anns(0, 'Text')).some(x => x.contents === a1.contents), await anns(0, 'Text'));
+// the last thing copied is what Ctrl+V pastes; 〔貼上頁〕 always pastes pages
+const nPages = () => A(() => window.__pdfapp.S.pages.length);
+let np0 = await nPages();
+await win.click('.thumb[data-i="0"]'); await win.waitForTimeout(200);
+await win.keyboard.press('Control+c'); await win.waitForTimeout(1500);
+await win.keyboard.press('Control+v'); await win.waitForTimeout(2500);
+check('pages copied last: Ctrl+V pastes pages', (await nPages()) === np0 + 1 && (await A(() => window.__pdfapp.clip())).last === 'pages', {n:await nPages(), np0});
+const t0 = (await anns(0, 'Text')).length; np0 = await nPages();
+await rclick(0, (await anns(0, 'Text'))[0]); await win.click('#ctx [data-c="copy"]'); await win.waitForTimeout(300);
+await win.click('#bPaste'); await win.waitForTimeout(2500);
+check('〔貼上頁〕 pastes pages even when a note was copied last', (await nPages()) === np0 + 1 && (await anns(0, 'Text')).length === t0, {n:await nPages(), np0});
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});   // the document has unsaved changes: no asking

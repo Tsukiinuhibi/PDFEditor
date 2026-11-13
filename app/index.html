@@ -309,7 +309,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .annhit.noap{background:none!important;border:0!important;width:20px!important;height:20px!important}
 .npend{position:absolute;pointer-events:none;z-index:5}
 .npop{position:absolute;z-index:7;background:#ffef3a;border:1px solid #8a7f00;border-radius:3px;box-shadow:2px 3px 10px rgba(0,0,0,.28);display:flex;flex-direction:column;resize:both;overflow:hidden;min-width:200px;min-height:110px;font-size:13px}
-.nhd{display:flex;align-items:center;gap:7px;padding:4px 5px 4px 6px;cursor:move;user-select:none;color:#2b2a00}
+.nhd{display:flex;align-items:center;gap:5px;padding:4px 5px 4px 6px;cursor:move;user-select:none;color:#2b2a00}
 .nhd .nic{width:20px;height:20px;flex:none}
 .nhd .ndt{flex:1;text-align:right;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nhd button{border:0;background:transparent;cursor:pointer;width:22px;height:22px;border-radius:50%;flex:none;font-size:13px;line-height:1;color:#4a4500}
@@ -1917,9 +1917,9 @@ window.addEventListener('keydown', e => {
   }
   if (mod && e.key.toLowerCase() === 'w') { e.preventDefault(); if (active >= 0) closeTab(active); return; }
   if (mod && e.key === 'Tab' && docs.length > 1) { e.preventDefault(); switchTab((active + (e.shiftKey ? -1 : 1) + docs.length) % docs.length); return; }
-  if (mod && !e.shiftKey && e.key.toLowerCase() === 'c' && !String(window.getSelection())) { e.preventDefault(); copySelected(false); return; }
+  if (mod && !e.shiftKey && e.key.toLowerCase() === 'c' && !String(window.getSelection())) { e.preventDefault(); if (AS && AS.a.subtype === 'Text') copyNote(AS.i, AS.a); else copySelected(false); return; }
   if (mod && !e.shiftKey && e.key.toLowerCase() === 'x') { e.preventDefault(); copySelected(true); return; }
-  if (mod && !e.shiftKey && e.key.toLowerCase() === 'v') { e.preventDefault(); pasteClip(); return; }
+  if (mod && !e.shiftKey && e.key.toLowerCase() === 'v') { e.preventDefault(); if (LAST_CLIP === 'note' && NOTE_CLIP) pasteNote(); else pasteClip(); return; }
   if (mod && e.key.toLowerCase() === 'a' && document.activeElement && document.activeElement.closest && document.activeElement.closest('#side')) { e.preventDefault(); S.thumbSel = new Set(S.pages.map((_, i) => i)); paintThumbSel(); return; }
   if (e.key === 'Delete' && document.activeElement && document.activeElement.closest && document.activeElement.closest('#side')) { e.preventDefault(); actions.delPage(); return; }
   if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); actions.undo(); return; }
@@ -2379,9 +2379,13 @@ function startExtractDraw(i, e){
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
 }
 
-pagesEl.addEventListener('contextmenu', e => {
+pagesEl.addEventListener('contextmenu', async e => {
   const pel = e.target.closest('.page'); if (!pel) return;
-  e.preventDefault(); const i = +pel.dataset.i;
+  e.preventDefault();
+  if (e.target.closest('.npop')) return;   // inside an open note: no menu
+  const i = +pel.dataset.i;
+  const note = await noteAt(i, e.clientX, e.clientY);   // a sticky note's own menu, whatever the tool
+  if (note) { showNoteMenu(e, i, note); return; }
   if (S.tool === 'textbox') { textboxAt(i, e); return; }   // right-click inserts a text box at the crosshair
   if (!S.thumbSel.has(i)) { S.thumbSel = new Set([i]); S.current = i; updatePager(); }
   showPageMenu(e, i);
@@ -3467,10 +3471,43 @@ function thumbClick(e, i){
 
 // the page clipboard is shared by every tab: copy in one file, paste in another
 let PAGE_CLIP = null;
+// a copied sticky note: {contents, author, i, x, y, pw, ph} (page points); LAST_CLIP says what Ctrl+V pastes
+let NOTE_CLIP = null, LAST_CLIP = null;   // 'pages' | 'note'
+let PTR = null;   // where the mouse last was (window coordinates): a note is pasted there
+window.addEventListener('pointermove', e => { PTR = {x:e.clientX, y:e.clientY}; }, {passive:true});
 function updateClipUI(){
   const el = $('#stClip'); if (!el) return;
-  el.innerHTML = PAGE_CLIP ? `<span title="可在任何分頁按 Ctrl+V 貼上">📋 剪貼簿：${PAGE_CLIP.count} 頁（${esc(PAGE_CLIP.from)} 第 ${esc(PAGE_CLIP.range)} 頁）</span>` : '';
-  const b = $('#bPaste'); if (b) b.disabled = !S.pdf || !PAGE_CLIP;
+  if (LAST_CLIP === 'note' && NOTE_CLIP) {
+    const t = NOTE_CLIP.contents.replace(/\s+/g, ' ').trim();
+    el.innerHTML = `<span title="按 Ctrl+V 貼到滑鼠所在的位置">📋 剪貼簿：便利貼「${esc(t.slice(0, 12))}${t.length > 12 ? '…' : ''}」</span>`;
+  } else el.innerHTML = PAGE_CLIP ? `<span title="可在任何分頁按 Ctrl+V 貼上">📋 剪貼簿：${PAGE_CLIP.count} 頁（${esc(PAGE_CLIP.from)} 第 ${esc(PAGE_CLIP.range)} 頁）</span>` : '';
+  const b = $('#bPaste'); if (b) { b.disabled = !S.pdf || !PAGE_CLIP; b.title = '貼上頁面到目前頁之後' + (LAST_CLIP === 'note' ? '' : ' (Ctrl+V)'); }
+}
+function copyNote(i, a){
+  const pb = a.popupBox;
+  NOTE_CLIP = {contents:a.contents || '', author:a.author || AUTHOR, i, x:a.x, y:a.y, pw:pb ? pb.w : 300 / PX, ph:pb ? pb.h : 170 / PX};
+  LAST_CLIP = 'note';
+  try { navigator.clipboard.writeText(NOTE_CLIP.contents).catch(() => {}); } catch (_) {}   // its text, for other programs
+  updateClipUI();
+  toast('已複製便利貼，按 Ctrl+V 貼到滑鼠所在的位置');
+}
+// on the page under the mouse, the icon centred on it; with the mouse elsewhere, on the current page a little right of
+// and below where the copied note was. The author stays who wrote it; one undo step.
+async function pasteNote(){
+  const clip = NOTE_CLIP; if (!clip || !S.pdf) return;
+  let i = -1, icon = null;
+  const over = PTR && document.elementFromPoint(PTR.x, PTR.y), pel = over && over.closest && over.closest('.page');
+  if (pel && pagesEl.contains(pel)) {
+    i = +pel.dataset.i;
+    const pg = S.pages[i], p = pagePointXY(i, PTR.x, PTR.y);
+    icon = {x:clamp(p.x - 10, 0, pg.w - 20), y:clamp(p.y - 10, 0, pg.h - 20), w:20, h:20};
+  } else {
+    i = S.current;
+    const pg = S.pages[i];
+    icon = {x:clamp(clip.x + 16, 0, pg.w - 20), y:clamp(clip.y + 16, 0, pg.h - 20), w:20, h:20};
+  }
+  const box = {...noteDefaults(icon, S.pages[i]), w:clip.pw, h:clip.ph};
+  await createNote(i, icon, clip.contents, box, {author:clip.author, label:'已貼上便利貼'});
 }
 async function copySelected(cut){
   if (!S.pdf) return;
@@ -3481,7 +3518,7 @@ async function copySelected(cut){
     const src = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false});
     const out = await PDFDocument.create();
     (await out.copyPages(src, sel)).forEach(p => out.addPage(p));
-    PAGE_CLIP = {bytes:await out.save(), count:sel.length, from:S.name, range:rangeText(sel)};
+    PAGE_CLIP = {bytes:await out.save(), count:sel.length, from:S.name, range:rangeText(sel)}; LAST_CLIP = 'pages';
   } catch (e) { console.error(e); toast('複製失敗：' + (e.message || e), 'err'); return; }
   finally { busy(false); }
   updateClipUI();
@@ -3517,7 +3554,7 @@ function showPageMenu(e, i){
     <button data-c="copy">${icon('copy')}複製 ${lbl}<kbd>Ctrl+C</kbd></button>
     <button data-c="cut"${k >= S.pages.length ? ' disabled' : ''}>${icon('cut')}剪下 ${lbl}<kbd>Ctrl+X</kbd></button>
     <button data-c="pasteBefore"${clip ? '' : ' disabled'}>${icon('paste')}貼上${clip ? ' ' + clip : ''}到第 ${i + 1} 頁之前</button>
-    <button data-c="pasteAfter"${clip ? '' : ' disabled'}>${icon('paste')}貼上${clip ? ' ' + clip : ''}到第 ${i + 1} 頁之後<kbd>Ctrl+V</kbd></button>
+    <button data-c="pasteAfter"${clip ? '' : ' disabled'}>${icon('paste')}貼上${clip ? ' ' + clip : ''}到第 ${i + 1} 頁之後${LAST_CLIP === 'note' ? '' : '<kbd>Ctrl+V</kbd>'}</button>
     <hr>
     <button data-c="add">${icon('pageAdd')}在第 ${i + 1} 頁之後加入空白頁…</button>
     <button data-c="rotL">${icon('rotL')}${lbl}向左轉</button>
@@ -3543,6 +3580,37 @@ function showPageMenu(e, i){
     if (c === 'rotR') rotate(90);
     if (c === 'export') openExportImages();
     if (c === 'del') actions.delPage();
+  };
+}
+
+// the sticky note under a point of page i: its icon, at least 20 × 20 pt (and as large as an icon drawn at a fixed size)
+async function noteAt(i, cx, cy){
+  const p = pagePointXY(i, cx, cy), min = Math.max(20, 20 / S.scale), list = (await getAnns(i)).filter(a => a.subtype === 'Text');
+  for (let k = list.length - 1; k >= 0; k--) {
+    const a = list[k];
+    if (p.x >= a.x && p.x <= a.x + Math.max(a.w, min) && p.y >= a.y && p.y <= a.y + Math.max(a.h, min)) return a;
+  }
+  return null;
+}
+function showNoteMenu(e, i, a){
+  ctx.innerHTML = `<div class="hd">便利貼${a.author ? ' · ' + esc(a.author) : ''}</div>
+    <button data-c="edit">${icon('note')}編輯</button>
+    <button data-c="copy">${icon('copy')}複製</button>
+    <hr>
+    <button data-c="del">${icon('trash')}刪除</button>`;
+  ctx.style.display = 'block'; ctxShownAt = performance.now();
+  const w = ctx.offsetWidth, h = ctx.offsetHeight;
+  ctx.style.left = Math.min(e.clientX, innerWidth - w - 8) + 'px';
+  ctx.style.top = Math.min(e.clientY, innerHeight - h - 8) + 'px';
+  ctx.onclick = async ev => {
+    const b = ev.target.closest('button[data-c]'); if (!b) return;
+    hideCtx();
+    const c = b.dataset.c;
+    if (c === 'del') { if (NP && NP.note.id === a.id) closeNoteDom(); else if (NP) await closeNote(true); await deleteAnnot(i, a.id); return; }
+    if (NP) await closeNote(true);   // an open note is written first (it may be this one, with new text)
+    const cur = (await getAnns(i)).find(x => x.id === a.id) || a;
+    if (c === 'edit') openNoteById(i, cur.id);
+    if (c === 'copy') copyNote(i, cur);
   };
 }
 
@@ -5284,6 +5352,13 @@ function zhDateTime(d){
   const h = d.getHours();
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}, ${h < 12 ? '上午' : '下午'} ${pad2(h % 12 || 12)}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
 }
+// a note's title shows the date and time to the minute (the author and delete buttons leave no room for more); the
+// seconds are in its tooltip
+function noteTime(d){
+  if (!(d instanceof Date) || isNaN(d)) return '';
+  const h = d.getHours();
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${h < 12 ? '上午' : '下午'} ${pad2(h % 12 || 12)}:${pad2(d.getMinutes())}`;
+}
 function pdfDate(s){ try { return s ? pdfjsLib.PDFDateString.toDateObject(s) : null; } catch (_) { return null; } }
 const hexRgb = h => hexColor(h).map(v => v.toFixed(3)).join(' ');
 const NOTE_ICON_OPS = '1 0.92 0.23 rg 0.42 0.37 0.05 RG 1 w 1 J 1 j 2.5 7.5 m 2.5 17.5 l 17.5 17.5 l 17.5 7.5 l 9.5 7.5 l 5 3 l 6 7.5 l h B 1.2 w 5.5 14.5 m 14.5 14.5 l S 5.5 11 m 12 11 l S';
@@ -5305,7 +5380,7 @@ function openNotePopup(i, note){
   call.innerHTML = '<polygon/>';
   const pop = document.createElement('div'); pop.className = 'npop';
   const d = note.date || new Date();
-  pop.innerHTML = `<div class="nhd"><span class="nic">${NOTE_SVG}</span><button class="nau" title="換作者"></button><span class="ndt">${esc(zhDateTime(d))}</span>
+  pop.innerHTML = `<div class="nhd"><span class="nic">${NOTE_SVG}</span><button class="nau" title="換作者"></button><span class="ndt" title="${esc(zhDateTime(d))}">${esc(noteTime(d))}</span>
       <button class="ndel" title="刪除這張便利貼">${icon('trash')}</button><button class="nx" title="關閉 (Esc)">×</button></div>
     <div class="nbd"><textarea placeholder="輸入註解…" spellcheck="false"></textarea></div>`;
   pop.style.width = Math.round(clamp(box.w * PX, 200, 640)) + 'px';
@@ -8891,6 +8966,7 @@ if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyThem
 paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {
   people:() => ({names:PEOPLE ? [...PEOPLE.names] : [], def:PEOPLE ? PEOPLE.def : '', author:AUTHOR}),
+  clip:() => ({last:LAST_CLIP, note:NOTE_CLIP ? {contents:NOTE_CLIP.contents, author:NOTE_CLIP.author} : null}),
   changelog:url => loadChangelog(url), notesHTML, whatsNewList, showWhatsNew, checkWhatsNew, updState:st => { UPD.state = st; renderUpdate(); },
   fontIdState:() => { const p = OCR.panel; if (!p) return null;
     const row = r => { const b = r.querySelector('button[data-fa]'), pct = r.querySelector('.fi-pct');

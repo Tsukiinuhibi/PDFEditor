@@ -153,6 +153,12 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 設定 → 軟體更新：〔更新內容〕在設定視窗裡展開全部版本（程式一次只開一個對話框）。
 - 下載好、還沒重新啟動時：主程序 `pointFeed` 記下 Forgejo 最新發佈（`latestRelease`），electron-updater 沒給更新內容（`latest.yml` 沒有）時用它的 `body`，提示列〔查看更新內容〕和設定頁才有內容。開發模式沒有自動更新，這段沒有自動測試。
 
+### 3.9.3 便利貼：人員名單、換作者、右鍵、複製貼上（v1.0.30）
+- 人員名單（設定 → 人員）：localStorage `pdfeditor.people.v1` `{names, def}`。`PEOPLE` 在模組讀取時載入（存的不是名字清單就是 `null`），`seedPeople(user)` 在啟動拿到電腦帳號（`DESK.info().user`，瀏覽器是「使用者」）時建立。預設的名字就是 `AUTHOR`：所有新註解的 `/T`。`addPerson`／`removePerson`（至少留一個，刪掉預設時第一個接手）／`setDefaultPerson`。
+- 便利貼視窗：標題的名字是按鈕（`.nau`），`showNoteAuthorMenu()` 在 `#ctx` 列出名單（目前作者在最上面打勾，不在名單裡也列）＋「其他名字…」（`#nauOther`，輸入的名字加進名單）。選的名字放在 `NP.author`，關閉時和文字一起存（`updateNote(..., author)` 只在作者改了才寫 `/T`；新便利貼 `createNote(..., {author})`）。點在 `#ctx` 裡不會關掉便利貼。垃圾桶（`.ndel`）每張都有：新的就不要，存過的刪除。
+- 右鍵：`pagesEl` 的 contextmenu 先用 `noteAt(i, x, y)` 找滑鼠下的便利貼（任何工具，圖示至少 20×20 pt），有就 `showNoteMenu`（〔編輯〕〔複製〕〔刪除〕，開著的便利貼先存），沒有才照舊（文字方塊工具插入、其他跳頁面選單）；點在打開的便利貼裡不跳選單。
+- 複製貼上：`copyNote(i, a)` → `NOTE_CLIP`（文字、作者、位置、視窗大小），文字也放進系統剪貼簿；`LAST_CLIP`（`'pages'`／`'note'`）記最後複製的是什麼，Ctrl+V 照它貼（〔貼上頁〕永遠貼頁面）。`pasteNote()`：`PTR`（最後的滑鼠位置）下面是頁面就貼在那裡，否則貼在目前頁、原位置右下 16 pt；作者不變，一次復原。選取工具選到便利貼時 Ctrl+C 也是複製它。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。
@@ -167,7 +173,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
   - 重新打開舊的文字方塊時，預設的字型、粗體、斜體、底線不會套到方塊本身（只給新方塊），否則按 Esc 就會把舊方塊整個改掉。
   - 目錄 v2（`pdfeditor.fontcat.v2`）多記 `embed`（OS/2 fsType：`ok`／`full`／`no`）、`vert`（`vhea`＋`vmtx`＋GSUB `vert`）、`bytes`，以及每個家族的所有字面 `faces`（`FONT_FACES` 存 `queryLocalFonts` 的原物件）。測試用 `registerTestFont` 把字型位元組當成已安裝字型（`TEST_FONTS`）。
   - 格式列與 `currentTBStyle` 讀游標旁邊那段文字的樣式（`caretStyleNode`）：游標在元素之間時（例如剛打開編輯器、游標在最後）取前一段文字。
-- localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, fontcat.v2, fontid.v1, fonts.recent.v1, lastact.v1, seenversion.v1, lasttool.v1, pagecolor, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
+- localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, fontcat.v2, fontid.v1, fonts.recent.v1, lastact.v1, seenversion.v1, lasttool.v1, pagecolor, people.v1, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
 - 測試用的鉤子：`window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars, getAnns, TBE, sel, …}`，端對端測試會用到，不要刪。
 
 ---
@@ -220,6 +226,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | textbox-font | 字型目錄（.ttc 的繁中名稱、中文／其他分組、快取）、只改反白的字、外觀用該字型、再次編輯保留、怪字型名稱、游標處換字型、預設字型、修改原文不記字型、字型選單（分組、搜尋、最近用過只列已安裝、Esc、缺字型提示、右鍵「字型…」）、600 個字型的開啟與搜尋速度、讀不到系統字型 |
 | edit-page-text | 修改與刪除 PDF 原文、再次編輯 |
 | whats-new | 版本記錄（讀取、排序、轉 HTML、跳脫、讀不到）；同一個使用者資料夾重開：新安裝不跳、從 1.0.26 更新列出之後每一版、知道了後不再跳、沒記錄但用過列兩版、全部版本記錄、裝回舊版不跳、別的視窗開著時等它關掉；設定的〔更新內容〕；`npm run check` 對版本記錄的檢查 |
+| sticky-notes | 人員名單（新增、重複、空白、改預設、刪預設、至少一個、重開還在、壞掉的資料重建、名字含 `<>`）；新註解的作者＝預設；便利貼換作者（名單、其他名字、名單外的作者、復原）；刪除鈕；右鍵選單（選取與畫筆工具、編輯、開著的便利貼先存、刪除）；複製（系統剪貼簿、狀態列）；Ctrl+V 貼在滑鼠位置／頁角／目前頁；文字框裡 Ctrl+V 貼文字；選取後 Ctrl+C；貼到另一個檔案；最後複製的是頁面就貼頁面、〔貼上頁〕只貼頁面 |
 | ocr | 文字辨識：PDF 文字一字不差、剪貼簿內容、乾淨掃描（橫書、直書）與低品質掃描的辨識率、強制影像辨識、Esc 關閉 |
 | font-identify-engine | 字型辨識引擎（不連網）：空白字型與缺字判斷（含 Type 1 字型）、取字（信心度、標點、`ilI1|`、只留一次、偏好字母、太小、白紙、鄰字筆畫、鬆的字框、直書粗略字框）、比對排名（DejaVu Serif、Liberation Sans 粗體、文泉驛正黑與等寬版合併、內建思源黑體、超大字、沒有字型有這些字、stop）、本機與 Google 同字形合併、750 個候選的時間與畫面不卡、Google 載入（分批、`text=`、粗體字重、快取、錯名逐一重試、沒網路、逾時）、Google 清單 |
 | font-identify | 「字型」頁（假的 Google 來源）：各種掃描（英文、粗體、中文、內建思源黑體、中英混排分組、直書、不是字）、Google 字型排第一與〔下載〕、關掉 Google、連不上 Google、比對中換框、長名稱不擋來源標籤；PDF 記錄的字型（已內嵌 DejaVu Serif、Big5 名稱、Helvetica 用同款代替、Google 名稱、沒有名稱、隱形文字層）、〔用字形比對找相似字型〕；〔套用〕、〔下載〕開的網址、字型選單「字型辨識結果」 |
