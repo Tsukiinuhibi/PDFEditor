@@ -52,5 +52,82 @@ const ft = (await anns(0, 'FreeText'))[0];
 if (ft) await pick(ft);
 check('a text box selected: no style bar (next version)', !!ft && (await sel())?.sub === 'FreeText' && (await bar()) === null, {ft, sel:await sel(), bar:await bar()});
 
+
+// ---- part 2: a change in the bar restyles the selected object ---------------------------------------------------------
+const cpk = async (key, v) => { await win.click(`#hint.objbar .cpick[data-cp="${key}"]`); await win.waitForTimeout(300); await win.click(`#cpMenu [data-v="${v}"]`); await win.waitForTimeout(1500); };
+const setSel = async (key, v) => { await win.selectOption(`#hint.objbar select[data-s="${key}"]`, String(v)); await win.waitForTimeout(1500); };
+const boxOf = async id => { const a = (await anns(0)).find(x => x.id === id); return a && {x:a.x, y:a.y, w:a.w, h:a.h}; };
+const STY0 = await A(() => localStorage.getItem('pdfeditor.styles.v1'));
+await pick(rect);
+await setSel('width', 4);
+check('粗細 4: the rectangle is 4 pt, still selected', (await style(0, rect.id))?.width === 4 && (await sel())?.id === rect.id, {st:await style(0, rect.id), sel:await sel()});
+await cpk('color', '#1c64d9');
+check('框線顏色: the rectangle\'s colour, the bar shows it', (await style(0, rect.id))?.color === '#1c64d9' && (await bar())?.color === '#1c64d9', {st:await style(0, rect.id), bar:await bar()});
+await cpk('fill', '#ffd43b');
+check('填色: filled', (await style(0, rect.id))?.fill === '#ffd43b', await style(0, rect.id));
+await cpk('fill', '');
+check('填色 無: no fill', (await style(0, rect.id))?.fill === '', await style(0, rect.id));
+await win.click('#hint.objbar input[data-s="dash"]'); await win.waitForTimeout(1500);
+check('虛線', (await style(0, rect.id))?.dash === true, await style(0, rect.id));
+await setSel('opacity', 0.5); const op1 = (await style(0, rect.id))?.opacity;
+await setSel('opacity', 1);
+check('透明度 50% then 100%', op1 === 0.5 && (await style(0, rect.id))?.opacity === 1, {op1, now:await style(0, rect.id)});
+await win.keyboard.press('Control+z'); await win.waitForTimeout(1500);
+check('one undo: back to 50%', (await style(0, rect.id))?.opacity === 0.5, await style(0, rect.id));
+check('the tool\'s own defaults are unchanged', (await A(() => localStorage.getItem('pdfeditor.styles.v1'))) === STY0);
+await pick(rect);
+const bx0 = await boxOf(rect.id); await setSel('width', 14); const bx1 = await boxOf(rect.id);
+check('粗細 14: the outer frame stays where it was', !!bx0 && !!bx1 && ['x', 'y', 'w', 'h'].every(k => Math.abs(bx1[k] - bx0[k]) < 0.6), {bx0, bx1});
+await win.selectOption('#hint.objbar select[data-s="width"]', '3'); await win.waitForTimeout(120);
+await win.selectOption('#hint.objbar select[data-s="width"]', '6'); await win.waitForTimeout(2500);
+check('two quick changes: both applied, 6 stays, still selected', (await style(0, rect.id))?.width === 6 && (await sel())?.id === rect.id, {st:await style(0, rect.id), sel:await sel()});
+await win.keyboard.press('Delete'); await win.waitForTimeout(1500);
+check('Delete after a change: this rectangle is deleted', !(await anns(0, 'Square')).some(a => a.id === rect.id));
+await win.keyboard.press('Control+z'); await win.waitForTimeout(1500);
+// the other kinds
+await tool('arrow'); await drag(await see(0, 100, 120), await P(0, 180, 170));
+const arrow = (await anns(0, 'Line'))[0]; await pick(arrow);
+await setSel('head', 'closed');
+check('箭頭: a closed head', (await style(0, arrow.id))?.head === 'closed' && (await bar())?.title.includes('箭頭'), {st:await style(0, arrow.id), bar:await bar()});
+await tool('line'); await drag(await see(0, 100, 220), await P(0, 200, 222));
+const line = (await anns(0, 'Line')).find(a => a.id !== arrow.id); await pick(line);
+await setSel('width', 6);
+check('線條: 6 pt', (await style(0, line.id))?.width === 6, await style(0, line.id));
+await tool('polygon'); for (const [x, y] of [[380, 120], [460, 120], [420, 180]]) await click(await see(0, x, y));
+await win.keyboard.press('Enter'); await win.waitForTimeout(1500);
+const poly = (await anns(0, 'Polygon'))[0]; await pick(poly);
+await cpk('color', '#2b8a3e');
+check('多邊形: its colour', (await style(0, poly.id))?.color === '#2b8a3e', await style(0, poly.id));
+await tool('pen'); await drag(await see(0, 400, 300), await P(0, 460, 340)); await tool('select'); await win.waitForTimeout(1500);
+const ink = (await anns(0, 'Ink'))[0]; await pick(ink);
+await cpk('color', '#7048e8');
+check('畫筆: its colour', (await style(0, ink.id))?.color === '#7048e8', await style(0, ink.id));
+await tool('fill'); await win.click('#hint [data-s="mode"][data-v="nodes"]'); await win.waitForTimeout(300);
+const polys0 = (await anns(0, 'Polygon')).map(a => a.id);
+for (const [x, y] of [[380, 450], [460, 450], [420, 520]]) await click(await see(0, x, y));
+await win.keyboard.press('Enter'); await win.waitForTimeout(1500);
+const fillp = (await anns(0, 'Polygon')).find(a => !polys0.includes(a.id)); await pick(fillp);
+const fb = await bar();
+await cpk('color', '#f76707');
+const fs1 = await style(0, fillp.id);
+check('填色 (nodes): only colour and opacity in its bar; its colour and fill change together', !!fb && fb.title.includes('填色') && fb.width === null && fs1?.color === '#f76707' && fs1?.fill === '#f76707', {fb, fs1});
+await pick(rect);
+const preset = await A(() => window.__pdfapp.presets('box')[1]);
+await win.click('#hint.objbar [data-p="1"]'); await win.waitForTimeout(1500);
+const ps = await style(0, rect.id);
+check('預設樣式: the rectangle takes the preset', !!preset && ps?.color === preset.color && ps?.width === (+preset.width || ps?.width), {preset, ps});
+await tool('rect'); await drag(await see(0, 440, 600), await P(0, 560, 680));   // right of the sample's signature field
+const r2 = (await anns(0, 'Square')).find(a => a.id !== rect.id); await pick(r2);
+const rh = await win.locator('.asel .rh').boundingBox({timeout:8000}), sb = await win.locator('.asel').boundingBox();
+const c0 = {x:sb.x + sb.width / 2, y:sb.y + sb.height / 2}, h0 = {x:rh.x + rh.width / 2, y:rh.y + rh.height / 2}, R = Math.hypot(h0.x - c0.x, h0.y - c0.y), a0 = Math.atan2(h0.y - c0.y, h0.x - c0.x);
+await win.mouse.move(h0.x, h0.y); await win.mouse.down();
+for (let k = 1; k <= 10; k++) { const ang = a0 + 30 * Math.PI / 180 * k / 10; await win.mouse.move(c0.x + R * Math.cos(ang), c0.y + R * Math.sin(ang)); }
+await win.mouse.up(); await win.waitForTimeout(2200);
+const d0 = (await style(0, r2.id))?.deg;
+if ((await sel())?.id !== r2.id) { const a2 = (await anns(0, 'Square')).find(a => a.id === r2.id); await pick(a2); }
+await cpk('color', '#c92a2a');
+const t2 = await style(0, r2.id);
+check('a turned rectangle: a new colour keeps its angle', Math.abs((d0 || 0) - 30) < 3 && t2?.color === '#c92a2a' && Math.abs(t2.deg - d0) < 0.5, {d0, t2});
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

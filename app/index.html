@@ -6752,6 +6752,81 @@ function readAnnStyle(dict){
   return {color:hex(nums('C')) || '#000000', fill:hex(nums('IC')) || '', width:W && W.asNumber ? W.asNumber() : 1,
     dash:!!(Sn && String(Sn) === '/D'), opacity:ca && ca.asNumber ? ca.asNumber() : 1};
 }
+// an object of ours drawn again from its geometry and the style st (resizing: map moves its points, nb is the new
+// box; restyling: neither). A turned rectangle / ellipse / cloud is drawn upright and turned again by its angle.
+function regenAP(doc, i, dict, st = readObjStyle(dict), map = p => p, nb = null){
+  const ctx = doc.context, sub = subOf(dict), rot = S.pages[i].rot, turned = ROT_BOX.has(sub) && boxTurn(dict);
+  let geom = null;
+  if (sub === 'Line') {
+    const le = dict.lookupMaybe(N_('LE'), PDFArray), names = le ? le.asArray().map(String) : ['/None', '/None'], arrow = names[1] !== '/None';
+    const sty = {...st, head:names[0] !== '/None' ? 'both' : names[1] === '/ClosedArrow' ? 'closed' : 'open'};
+    const [p0, p1] = flatPts(i, numArr(dict.lookup(N_('L'), PDFArray))).map(map);
+    geom = geomLine(p0, p1, sty, arrow);
+    dict.set(N_('L'), ctx.obj(toPdfPts(i, [p0, p1])));
+  } else if (sub === 'Square' || sub === 'Circle') {
+    geom = shapeGeom(dict, st, nb || vRect(i, turned ? turned.baseRect : numArr(dict.lookup(N_('Rect'), PDFArray))));
+  } else if (sub === 'Polygon' || sub === 'PolyLine') {
+    const pts = flatPts(i, numArr(dict.lookup(N_('Vertices'), PDFArray))).map(map);
+    geom = geomPoly(pts, st, sub === 'Polygon');
+    dict.set(N_('Vertices'), ctx.obj(toPdfPts(i, pts)));
+  } else if (sub === 'Ink') {
+    const strokes = dict.lookup(N_('InkList'), PDFArray).asArray().map(s => flatPts(i, numArr(s)).map(map));
+    geom = geomInk(strokes, st);
+    dict.set(N_('InkList'), ctx.obj(strokes.map(s => toPdfPts(i, s))));
+  } else return false;
+  const g = visToPdf(i, geom.b), ap = formAP(doc, geom.ops, geom.b.w, geom.b.h, rot, gsRes(st));
+  if (turned) { setTurn(doc, dict, ap, g.rect, turned.deg); return true; }
+  dict.set(N_('Rect'), ctx.obj(g.rect));
+  dict.set(N_('AP'), ctx.obj({N:ap}));
+  return true;
+}
+// a style change from the bar written into the object (one undo step): C, IC, BS, CA, LE, then drawn again
+async function restyleAnnot(i, id, patch){
+  return mutate('已變更樣式', doc => {
+    const ref = findAnnotRef(doc, i, id); if (!ref) { toast('找不到此註解', 'err'); return false; }
+    const ctx = doc.context, dict = ctx.lookup(ref, PDFDict), kind = objKind(dict); if (!kind) return false;
+    const st = {...readObjStyle(dict), ...patch};
+    if (kind === 'fill' && 'color' in patch) st.fill = st.color;   // a fill outline is one colour
+    dict.set(N_('C'), ctx.obj(hexColor(st.color)));
+    if (st.fill) dict.set(N_('IC'), ctx.obj(hexColor(st.fill))); else dict.delete(N_('IC'));
+    if ((st.opacity ?? 1) < 1) dict.set(N_('CA'), ctx.obj(st.opacity)); else dict.delete(N_('CA'));
+    if (subOf(dict) === 'Line') {
+      const arrow = kind === 'arrow';
+      dict.set(N_('LE'), ctx.obj(arrow ? [st.head === 'both' ? 'OpenArrow' : 'None', st.head === 'closed' ? 'ClosedArrow' : 'OpenArrow'] : ['None', 'None']));
+      if (arrow && st.head === 'closed') dict.set(N_('IC'), ctx.obj(hexColor(st.color))); else dict.delete(N_('IC'));   // a closed head is filled with the line's colour
+    }
+    if (REGEN.has(subOf(dict))) dict.set(N_('BS'), ctx.obj(bsDict(st)));
+    dict.set(N_('M'), nowStr());
+    if (!regenAP(doc, i, dict, st)) return false;
+  });
+}
+// changes are applied one after another, to the object that was selected when the change was made; it stays selected
+let restyleChain = Promise.resolve();
+function restyleSelected(patch, ob = OBJBAR){
+  if (!ob) return restyleChain;
+  return (restyleChain = restyleChain.then(async () => {
+    const {i, id} = ob;
+    if (AS && AS.a.id === id) holdSelection();
+    const ok = await restyleAnnot(i, id, patch);
+    if (!ok) clearHolds(i);
+    if (S.tool === 'select' && S.els[i]) { const a2 = (await getAnns(i)).find(x => x.id === id); if (a2) selectAnnot(i, a2); }
+  }).catch(err => console.error(err)));
+}
+$('#hint').addEventListener('click', e => {
+  if (!OBJBAR || !$('#hint').classList.contains('objbar')) return;
+  const ob = OBJBAR;
+  const cp = e.target.closest('.cpick');
+  if (cp) { const key = cp.dataset.cp; openColorPicker({anchor:cp, value:cp.style.getPropertyValue('--c').trim(), none:!!cp.dataset.none, title:key === 'fill' ? '填色顏色' : '顏色', onPick:v => restyleSelected({[key]:v}, ob)}); return; }
+  const p = e.target.closest('[data-p]');
+  if (p) { const pr = PRESETS[DRAW_TOOLS[ob.kind].kind][+p.dataset.p]; if (pr) { const {n, ...f} = pr; restyleSelected({opacity:1, dash:false, ...f}, ob); } }
+});
+$('#hint').addEventListener('change', e => {
+  if (!OBJBAR || !$('#hint').classList.contains('objbar')) return;
+  const el = e.target, k = el.dataset.s; if (!k) return;
+  const v = el.type === 'checkbox' ? el.checked : (k === 'width' || k === 'opacity') ? +el.value : el.value;
+  el.blur();   // Delete / arrows act on the object again
+  restyleSelected({[k]:v});
+});
 const flatPts = (i, arr) => { const out = [], vp = S.pages[i].vp1; for (let k = 0; k + 1 < arr.length; k += 2) { const v = vp.convertToViewportPoint(arr[k], arr[k + 1]); out.push({x:v[0], y:v[1]}); } return out; };
 const numArr = a => a.asArray().map(x => x.asNumber ? x.asNumber() : 0);
 async function commitAnnotBox(i, a, ob, nb){
@@ -6772,35 +6847,8 @@ async function commitAnnotBox(i, a, ob, nb){
       setTurn(doc, dict, base, br, turned.deg);
     }
     // our own shapes and pen strokes are redrawn from their geometry, so lines stay crisp at the new size
-    else if (REGEN.has(sub) && dict.get(N('PDFE'))) {
-      const st = readAnnStyle(dict), rot = S.pages[i].rot;
-      let geom = null;
-      if (sub === 'Line') {
-        const L = dict.lookupMaybe(N('L'), PDFArray), le = dict.lookupMaybe(N('LE'), PDFArray);
-        const names = le ? le.asArray().map(String) : ['/None', '/None'];
-        const arrow = names[1] !== '/None';
-        st.head = names[0] !== '/None' ? 'both' : names[1] === '/ClosedArrow' ? 'closed' : 'open';
-        const [p0, p1] = flatPts(i, numArr(L)).map(p => mapPt(p, ob, nb));
-        geom = geomLine(p0, p1, st, arrow);
-        dict.set(N('L'), ctx.obj(toPdfPts(i, [p0, p1])));
-      } else if (sub === 'Square' || sub === 'Circle') {
-        const cloud = !!dict.lookupMaybe(N('BE'), PDFDict);
-        const pad = st.width + (cloud ? Math.max(9, st.width * 6) * .62 : 0);
-        const r = {x:nb.x + pad, y:nb.y + pad, w:Math.max(2, nb.w - 2 * pad), h:Math.max(2, nb.h - 2 * pad)};
-        geom = geomBox(r, st, sub === 'Circle' ? 'ellipse' : cloud ? 'cloud' : 'rect');
-      } else if (sub === 'Polygon' || sub === 'PolyLine') {
-        const pts = flatPts(i, numArr(dict.lookup(N('Vertices'), PDFArray))).map(p => mapPt(p, ob, nb));
-        geom = geomPoly(pts, st, sub === 'Polygon');
-        dict.set(N('Vertices'), ctx.obj(toPdfPts(i, pts)));
-      } else if (sub === 'Ink') {
-        const strokes = dict.lookup(N('InkList'), PDFArray).asArray().map(s => flatPts(i, numArr(s)).map(p => mapPt(p, ob, nb)));
-        geom = geomInk(strokes, st);
-        dict.set(N('InkList'), ctx.obj(strokes.map(s => toPdfPts(i, s))));
-      }
-      const g = visToPdf(i, geom.b);
-      dict.set(N('Rect'), ctx.obj(g.rect));
-      dict.set(N('AP'), ctx.obj({N:formAP(doc, geom.ops, geom.b.w, geom.b.h, rot, gsRes(st))}));
-    } else {
+    else if (REGEN.has(sub) && dict.get(N('PDFE'))) regenAP(doc, i, dict, readAnnStyle(dict), p => mapPt(p, ob, nb), nb);
+    else {
       // everything else (stamps, text boxes, signatures, other apps' annotations): the appearance follows the new Rect
       dict.set(N('Rect'), ctx.obj(nR));
       const sx = (nR[2] - nR[0]) / (oR[2] - oR[0] || 1), sy = (nR[3] - nR[1]) / (oR[3] - oR[1] || 1);
@@ -9095,7 +9143,7 @@ if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyThem
 paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {
   people:() => ({names:PEOPLE ? [...PEOPLE.names] : [], def:PEOPLE ? PEOPLE.def : '', author:AUTHOR}),
-  settingsSnapshot, parseSettingsFile,
+  settingsSnapshot, parseSettingsFile, presets:k => PRESETS[k],
   annStyle:async (i, id) => { const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); if (!ref) return null; const d = doc.context.lookup(ref, PDFDict), t = boxTurn(d);
     return {kind:objKind(d), ...readObjStyle(d), deg:t ? t.deg : 0}; },
   clip:() => ({last:LAST_CLIP, note:NOTE_CLIP ? {contents:NOTE_CLIP.contents, author:NOTE_CLIP.author} : null}),
