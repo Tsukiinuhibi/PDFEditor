@@ -53,12 +53,21 @@ await win.click('#modal .mf button:has-text("知道了")'); await win.waitForTim
 await setSeen('9.9.9');
 check('an older version installed again: no window, the version recorded', (await shown()) === null && (await seen()) === PKG.version, {shown:await shown(), seen:await seen()});
 check('nothing written between two versions: no empty window', JSON.stringify(await A(() => window.__pdfapp.whatsNewList({current:'1.0.30', seen:'1.0.29', used:true, versions:['1.0.28', '1.0.27']}))) === '[]');
+check('this version has no notes: no window (not older ones under its title)', JSON.stringify(await A(() => [window.__pdfapp.whatsNewList({current:'1.0.30', seen:null, used:true, versions:['1.0.28', '1.0.27']}), window.__pdfapp.whatsNewList({current:'1.0.30', seen:'1.0.27', used:true, versions:['1.0.28', '1.0.27']})])) === '[[],[]]');
 // another window open first (e.g. a password): the notes wait for it
 await win.click('#bSettings'); await win.waitForTimeout(500);
 await A(v => window.__pdfapp.showWhatsNew(v, [v]), PKG.version); await win.waitForTimeout(1200);
 check('another window open: it stays', (await shown() || {}).title === '設定', await shown());
 await win.click('#modal .mf button:has-text("關閉")'); await win.waitForTimeout(1200);
 check('then the notes', (await shown() || {}).title === `已更新到 v${PKG.version}`, await shown());
+await win.click('#modal .mf button:has-text("知道了")'); await win.waitForTimeout(300);
+await A(() => localStorage.setItem('pdfeditor.seenversion.v1', '1.0.26'));
+await win.click('#bSettings'); await win.waitForTimeout(500);
+await A(v => window.__pdfapp.checkWhatsNew(v, true), PKG.version); await win.waitForTimeout(1000);
+check('waiting behind another window: not recorded yet', (await seen()) === '1.0.26' && (await shown() || {}).title === '設定', await seen());
+await win.click('#modal .mf button:has-text("關閉")'); await win.waitForTimeout(1200);
+check('shown: recorded then', (await shown() || {}).title === `已更新到 v${PKG.version}` && (await seen()) === PKG.version, {shown:await shown(), seen:await seen()});
+await win.click('#modal .mf button:has-text("知道了")'); await win.waitForTimeout(300);
 await app.close();
 
 // ---- part 3: the history in 設定 → 軟體更新 ------------------------------------------------------------------------
@@ -69,6 +78,13 @@ await win.click('#modal [data-st="update"]'); await win.waitForTimeout(300);
 await win.click('#modal [data-u2="notes"]'); await win.waitForTimeout(500);
 let nt = await A(() => { const el = document.querySelector('#updNotes'); return el && !el.hidden ? [...el.querySelectorAll('.wn-v')].map(e => e.textContent) : null; });
 check('設定: 更新內容 lists every version, this one first', !!nt && nt.length === VERS.length && nt[0] === 'v' + PKG.version, nt && nt.slice(0, 3));
+const notesView = () => A(() => { const el = document.querySelector('#updNotes'); return el && !el.hidden && el.getBoundingClientRect().height > 50 ? {n:el.querySelectorAll('.wn-v').length, top:el.scrollTop} : null; });
+await A(() => { const el = document.querySelector('#updNotes'); el.scrollTop = 120; });
+await A(() => window.__pdfapp.updState({state:'downloading', version:'9.9.9', percent:30})); await win.waitForTimeout(300);
+await A(() => window.__pdfapp.updState({state:'downloading', version:'9.9.9', percent:60})); await win.waitForTimeout(300);
+let nv = await notesView();
+check('設定: an update in progress leaves 更新內容 open where it was', !!nv && nv.n === VERS.length && nv.top >= 100, nv);
+await A(v => window.__pdfapp.updState({state:'latest', version:v}), PKG.version); await win.waitForTimeout(300);
 await win.click('#modal [data-u2="notes"]'); await win.waitForTimeout(300);
 check('設定: pressed again, folded away', await A(() => { const el = document.querySelector('#updNotes'); return !el || el.hidden; }));
 await app.close();

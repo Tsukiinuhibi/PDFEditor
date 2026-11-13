@@ -59,6 +59,8 @@ jobs:
           cache: npm
 
       - run: npm ci
+      # this version's notes head app/CHANGELOG.md and match RELEASE_NOTES.md (shown in the app after the update)
+      - run: npm run check
         if: steps.ver.outputs.build == 'true'
 
       - name: Build installer

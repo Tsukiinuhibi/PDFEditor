@@ -8587,7 +8587,8 @@ async function openSettings(tab = 'look'){
     if (k === 'keys') { keys = keyEditor(); pane.innerHTML = ''; pane.appendChild(keys.body); }
     else pane.innerHTML = panes[k]();
   };
-  SET = {tab, show, paintUpdate:() => { if (SET && SET.tab === 'update') pane.innerHTML = panes.update(); }};
+  // the update pane is drawn again on every updater event: an open 更新內容 (and where it is scrolled to) stays as it is
+  SET = {tab, show, paintUpdate:() => { if (!SET || SET.tab !== 'update') return; const keep = pane.querySelector('#updNotes'), top = keep ? keep.scrollTop : 0; pane.innerHTML = panes.update(); if (keep) { pane.querySelector('#updNotes').replaceWith(keep); keep.scrollTop = top; } }};
   body.addEventListener('click', e => {
     const t = e.target.closest('[data-st]'); if (t) { show(t.dataset.st); return; }
     const u = e.target.closest('[data-u2]'); if (!u || u.disabled) return;
@@ -8597,7 +8598,7 @@ async function openSettings(tab = 'look'){
     if (u.dataset.u2 === 'notes') {   // every version's notes, here in the settings window (it is the one window open)
       const el = pane.querySelector('#updNotes'); if (!el) return;
       if (!el.hidden) { el.hidden = true; return; }
-      loadChangelog().then(all => { el.innerHTML = all.length ? notesHTML(all) : '<p>讀不到版本記錄</p>'; el.hidden = false; el.scrollTop = 0; });
+      loadChangelog().then(all => { const box = pane.querySelector('#updNotes'); if (!box) return; box.innerHTML = all.length ? notesHTML(all) : '<p>讀不到版本記錄</p>'; box.hidden = false; box.scrollTop = 0; });
     }
   });
   body.addEventListener('change', e => {
@@ -8659,18 +8660,23 @@ function notesHTML(sections){
 }
 // which versions to show after starting version `current` (versions: newest first): those since the one last seen;
 // with no record on a computer that has used the program (the first version with this window), this one and the one
-// before; on a new install, after going back to an older version, or with nothing written in between: none
+// before; on a new install, after going back to an older version, with no notes for this version or nothing written
+// in between: none
 const SEEN_KEY = 'pdfeditor.seenversion.v1';
 function whatsNewList({current, seen, used, versions}){
+  if (!versions.includes(current)) return [];   // no notes for this version: nothing older under its title either
   const upTo = versions.filter(v => cmpVersion(v, current) <= 0);
   if (seen) return cmpVersion(seen, current) < 0 ? upTo.filter(v => cmpVersion(v, seen) > 0) : [];
   return used ? upTo.slice(0, 2) : [];
 }
+const markSeen = v => { try { localStorage.setItem(SEEN_KEY, v); } catch (_) {} };
+// the version is recorded once its notes are on screen (notes waiting behind another window are not lost if the
+// program is closed meanwhile), or at once when there is nothing to show
 async function checkWhatsNew(current, usedBefore = false){
-  let seen = null; try { seen = localStorage.getItem(SEEN_KEY); localStorage.setItem(SEEN_KEY, current); } catch (_) {}
+  let seen = null; try { seen = localStorage.getItem(SEEN_KEY); } catch (_) {}
   if (seen === current) return;
   const list = whatsNewList({current, seen, used:PROFILE_USED || usedBefore, versions:(await loadChangelog()).map(x => x.version)});
-  if (list.length) showWhatsNew(current, list);
+  if (list.length) showWhatsNew(current, list); else markSeen(current);
 }
 // the 「已更新到」 window; another window open first (a password, the settings) is left alone until it closes
 function showWhatsNew(current, list){
@@ -8680,6 +8686,7 @@ function showWhatsNew(current, list){
     if (later()) return;
     const body = document.createElement('div'); body.className = 'wn';
     body.innerHTML = notesHTML(all.filter(x => list.includes(x.version)));
+    markSeen(current);
     openModal({title:`已更新到 v${current}`, body, width:560, buttons:[
       {label:'全部版本記錄', handler:el => { body.innerHTML = notesHTML(all); body.scrollTop = 0; el.remove(); return undefined; }},
       {spacer:true}, {label:'知道了', value:true, primary:true}]});
@@ -8778,7 +8785,7 @@ function setTheme(t){
 if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyTheme();
 paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {
-  changelog:url => loadChangelog(url), notesHTML, whatsNewList, showWhatsNew,
+  changelog:url => loadChangelog(url), notesHTML, whatsNewList, showWhatsNew, checkWhatsNew, updState:st => { UPD.state = st; renderUpdate(); },
   fontIdState:() => { const p = OCR.panel; if (!p) return null;
     const row = r => { const b = r.querySelector('button[data-fa]'), pct = r.querySelector('.fi-pct');
       return {key:r.dataset.key || '', label:(r.querySelector('.fi-label') || r.querySelector('.fi-name') || {}).textContent || '', src:(r.querySelector('.fi-src') || {}).textContent || '',
