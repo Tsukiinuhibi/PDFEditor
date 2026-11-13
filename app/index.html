@@ -397,6 +397,8 @@ svg.dsvg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;ov
 .asel.geo-wait .h{visibility:hidden}
 .aturn{position:absolute;pointer-events:none;z-index:4}
 .aturn canvas{position:absolute;inset:0;width:100%;height:100%;opacity:.9}
+.asel.multi{cursor:move}
+.draft.marquee{border-color:#1c64d9;background:rgba(28,100,217,.08)}
 .aveil{position:absolute;background:rgba(255,255,255,.72);pointer-events:none;z-index:3;outline:1px dashed #adb5bd}
 .abar .hintk{color:#9aa2ab;font-size:11px}
 .abar button[data-x=del]{background:var(--seal)}
@@ -1376,7 +1378,7 @@ function mountDoc({scroll = 'current', anchorOffset = 0, scrollTop = 0, scrollLe
   });
   pagesEl.innerHTML = '';
   S.st = S.pages.map(() => ({rendered:0, ver:-1, task:null, ovlVer:-1}));
-  XS = null; AS = null; rulerPage = -1; clearSnapMarks(); if (NP) closeNoteDom(); POLY = null; paintObjBar();
+  XS = null; AS = null; MS = null; rulerPage = -1; clearSnapMarks(); if (NP) closeNoteDom(); POLY = null; paintObjBar();
   $('#welcome').style.display = 'none';
   $$('[data-need]').forEach(b => b.disabled = false);
   if (S.zoomMode !== 'custom') S.scale = fitScale(S.zoomMode);
@@ -1617,7 +1619,7 @@ async function ensureOverlay(i){
     if (a.subtype === 'Text') {
       if (a.noap) d.innerHTML = NOTE_SVG;
       d.title = (a.author ? a.author + '：' : '') + (a.contents || '').slice(0, 80);
-      d.addEventListener('pointerdown', ev => { if ((S.tool === 'select' || S.tool === 'note') && !S.spaceDown && ev.button === 0) { ev.stopPropagation(); if (S.tool === 'select') noteIconDown(ev, i, a); } });
+      d.addEventListener('pointerdown', ev => { if ((S.tool === 'select' || S.tool === 'note') && !S.spaceDown && ev.button === 0) { ev.stopPropagation(); if (S.tool === 'select') { if (ev.shiftKey) toggleMulti(i, a); else noteIconDown(ev, i, a); } } });
       d.addEventListener('click', ev => { if (S.tool === 'note' && !S.spaceDown) { ev.stopPropagation(); if (NP && NP.note.id === a.id) return; closeNote(true); openNoteById(i, a.id); } });
       ovl.appendChild(d); return;
     }
@@ -1628,6 +1630,7 @@ async function ensureOverlay(i){
       if (S.tool !== 'select' || S.spaceDown || ev.button !== 0) return;
       ev.stopPropagation(); hideTip();
       if (a.sig) return;
+      if (ev.shiftKey && movableAnn(a)) { toggleMulti(i, a); return; }
       selectAnnot(i, a);
       if (AS && AS.movable) dragAnnot(ev, 'move');
     });
@@ -1839,7 +1842,7 @@ function setTool(t){
   if (!S.pdf) return;
   if (t !== 'extract') cancelXSel();
   if (t !== 'ocr') closeOcr();
-  if (t !== 'select') deselectAnnot();
+  if (t !== 'select') { deselectAnnot(); clearMulti(); }
   if (t !== S.tool && S.tool === 'textbox' && TBE) {   // the text is saved first; when its check keeps the editor open (回去修改) the tool stays
     const done = commitTextEditor();
     if (TBE) { done.then(() => { if (!TBE && S.tool === 'textbox') setTool(t); }); return; }
@@ -1966,6 +1969,8 @@ window.addEventListener('keydown', e => {
   if (mod && (e.key === '=' || e.key === '+')) { e.preventDefault(); actions.zoomIn(); return; }
   if (mod && e.key === '-') { e.preventDefault(); actions.zoomOut(); return; }
   if (mod && e.key === '0') { e.preventDefault(); setZoomMode('actual'); return; }
+  if (MS && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); deleteMulti(); return; }
+  if (MS && e.key === 'Escape') { e.preventDefault(); clearMulti(); return; }
   if (AS && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); deleteSelected(); return; }
   if (AS && e.key === 'Escape') { e.preventDefault(); deselectAnnot(); return; }
   if (AS && AS.movable && /^Arrow/.test(e.key) && !mod) {
@@ -2454,7 +2459,8 @@ pagesEl.addEventListener('pointermove', e => textboxHover(e));
 pagesEl.addEventListener('pointerleave', () => { if (S.tool === 'textbox') clearTextMarks(); });
 pagesEl.addEventListener('pointerdown', e => {
   if (S.panning || S.spaceDown || e.button !== 0) return;
-  if (AS && !(e.target.closest && e.target.closest('.asel,.abar'))) deselectAnnot();
+  if (AS && !e.shiftKey && !(e.target.closest && e.target.closest('.asel,.abar'))) deselectAnnot();
+  if (MS && !e.shiftKey && !(e.target.closest && e.target.closest('.asel'))) clearMulti();
   const pel = e.target.closest('.page'); if (!pel) return;
   const i = +pel.dataset.i;
   if (S.current !== i) { S.current = i; updatePager(); }
@@ -2463,6 +2469,7 @@ pagesEl.addEventListener('pointerdown', e => {
   if (t === 'note') { if (NP) return; const p = snapPoint(i, pagePoint(i, e), {mark:false}); newNoteAt(i, p.x, p.y); return; }
   if (t === 'signature') { const p = snapPoint(i, pagePoint(i, e), {mark:false}); placeSignature(i, p.x, p.y); return; }
   if (t === 'extract') { e.preventDefault(); startExtractDraw(i, e); return; }
+  if (t === 'select') { e.preventDefault(); startMarquee(i, e, e.shiftKey); return; }
   if (t === 'ocr') { e.preventDefault(); startOcrDraw(i, e); return; }
   if (t === 'textbox') { e.preventDefault(); textboxDown(i, e); return; }
   if (t === 'image' || t === 'highlight' || t === 'digisign') {
@@ -6996,6 +7003,88 @@ function deselectAnnot(){
   AS = null; clearSnapMarks();
   paintObjBar();
 }
+/* ---------------- several objects selected (對齊) ----------------
+   Shift+click adds an object to the selection or takes it out; a box dragged over empty space selects what lies wholly
+   inside it. Only on one page, only objects that can be moved. MS = {i, items, els}; the bar above the pages shows it. */
+let MS = null;
+const movableAnn = a => !!a && !NO_MOVE.has(a.subtype) && !a.sig;
+function clearMulti(){
+  if (!MS) return;
+  MS.els.forEach(el => el.remove());
+  if (S.els[MS.i]) S.els[MS.i].style.zIndex = '';
+  MS = null; paintObjBar();
+}
+function setMulti(i, items){
+  clearMulti(); deselectAnnot();
+  const seen = new Set(); items = items.filter(a => movableAnn(a) && !seen.has(a.id) && seen.add(a.id));
+  if (items.length < 2) { if (items.length === 1 && S.els[i]) selectAnnot(i, items[0]); return; }
+  const ovl = S.els[i].querySelector('.ovl'), pg = S.pages[i];
+  const els = items.map(a => {
+    const el = document.createElement('div'); el.className = 'asel multi';
+    Object.assign(el.style, {left:a.x / pg.w * 100 + '%', top:a.y / pg.h * 100 + '%', width:a.w / pg.w * 100 + '%', height:a.h / pg.h * 100 + '%'});
+    el.addEventListener('pointerdown', e => { if (e.button !== 0 || S.spaceDown) return; e.preventDefault(); e.stopPropagation(); if (e.shiftKey) toggleMulti(i, a); else dragMulti(e); });
+    ovl.appendChild(el); return el;
+  });
+  S.els[i].style.zIndex = 4;
+  MS = {i, items, els};
+  paintObjBar();
+}
+function toggleMulti(i, a){
+  const list = MS && MS.i === i ? MS.items.slice() : AS && AS.i === i ? [AS.a] : [], k = list.findIndex(x => x.id === a.id);
+  if (k >= 0) list.splice(k, 1); else list.push(a);
+  if (!list.length) { clearMulti(); deselectAnnot(); return; }
+  setMulti(i, list);
+}
+// a box dragged over empty space with the select tool (add: keep what was selected)
+function startMarquee(i, e, add){
+  const pg = S.pages[i], p0 = pagePoint(i, e), base = add ? (MS && MS.i === i ? MS.items.slice() : AS && AS.i === i ? [AS.a] : []) : [];
+  const d = document.createElement('div'); d.className = 'draft marquee'; S.els[i].querySelector('.ovl').appendChild(d);
+  let box = null;
+  const move = ev => {
+    const p = pagePointXY(i, ev.clientX, ev.clientY);
+    box = {x:Math.min(p0.x, p.x), y:Math.min(p0.y, p.y), w:Math.abs(p.x - p0.x), h:Math.abs(p.y - p0.y)};
+    Object.assign(d.style, {left:box.x / pg.w * 100 + '%', top:box.y / pg.h * 100 + '%', width:box.w / pg.w * 100 + '%', height:box.h / pg.h * 100 + '%'});
+  };
+  const up = async () => {
+    window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); d.remove();
+    if (!box || box.w < 3 || box.h < 3) return;
+    const inside = (await getAnns(i)).filter(a => movableAnn(a) && a.x >= box.x - .5 && a.y >= box.y - .5 && a.x + a.w <= box.x + box.w + .5 && a.y + a.h <= box.y + box.h + .5);
+    if (S.tool === 'select' && S.els[i]) setMulti(i, [...base, ...inside]);
+  };
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+}
+// several objects moved together (each by its own page view box ob → nb), one undo step; still selected afterwards
+async function moveObjects(i, moves, label){
+  moves = moves.filter(m => Math.abs(m.nb.x - m.ob.x) > .01 || Math.abs(m.nb.y - m.ob.y) > .01);
+  if (!moves.length) return false;
+  const ids = MS && MS.i === i ? MS.items.map(a => a.id) : moves.map(m => m.a.id);
+  const ok = await mutate(label, doc => { for (const m of moves) if (!moveAnnotInDoc(doc, i, m.a.id, m.ob, m.nb)) { toast('找不到此註解', 'err'); return false; } });
+  if (S.tool === 'select' && S.els[i]) { const list = (await getAnns(i)).filter(x => ids.includes(x.id)); setMulti(i, list); }
+  return ok;
+}
+// drag one of the selected objects: all of them move by the same amount
+function dragMulti(e){
+  const {i, items, els} = MS, pg = S.pages[i], p0 = pagePointXY(i, e.clientX, e.clientY);
+  let dx = 0, dy = 0, moved = false;
+  const move = ev => {
+    const p = pagePointXY(i, ev.clientX, ev.clientY); dx = p.x - p0.x; dy = p.y - p0.y;
+    if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return;
+    moved = true;
+    els.forEach(el => { el.style.transform = `translate(${dx / pg.w * S.els[i].clientWidth}px, ${dy / pg.h * S.els[i].clientHeight}px)`; });
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+    if (!moved) { els.forEach(el => { el.style.transform = ''; }); return; }
+    const n = items.length;
+    moveObjects(i, items.map(a => ({a, ob:{x:a.x, y:a.y, w:a.w, h:a.h}, nb:{x:a.x + dx, y:a.y + dy, w:a.w, h:a.h}})), `已移動 ${n} 個物件`);
+  };
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+}
+async function deleteMulti(){
+  if (!MS) return;
+  const {i, items} = MS; clearMulti();
+  await mutate(`已刪除 ${items.length} 個物件`, doc => { items.forEach(a => { const ref = findAnnotRef(doc, i, a.id); if (ref) removeAnnotRefs(doc, i, ref); }); });
+}
 function snapshot(i, box){
   const src = S.els[i] && S.els[i].querySelector('canvas.pc'); if (!src) return null;
   const pg = S.pages[i], k = src.width / pg.w;
@@ -7018,6 +7107,7 @@ function selectAnnot(i, a){
   const hp = {nw:[0, 0], n:[50, 0], ne:[100, 0], e:[100, 50], se:[100, 100], s:[50, 100], sw:[0, 100], w:[0, 50]};
   el.querySelectorAll('.h').forEach(h => { const [x, y] = hp[h.dataset.d]; h.style.left = x + '%'; h.style.top = y + '%'; });
   el.addEventListener('pointerdown', e => { if (e.button !== 0 || S.spaceDown) return; e.preventDefault(); e.stopPropagation();
+    if (e.shiftKey && AS && AS.movable && !e.target.closest('.h,.rh,.eh')) { toggleMulti(AS.i, AS.a); return; }   // Shift on a handle keeps its own meaning (15° steps, proportions)
     if (!AS || !AS.movable) return;
     if (e.target.closest('.rh')) return geomDrag(e, 'rot');
     if (e.target.closest('.eh')) return geomDrag(e, 'end', +e.target.closest('.eh').dataset.e);
@@ -7070,7 +7160,13 @@ function tbObjStyle(rt){
 let OBJBAR = null;   // the object the bar shows: {i, id, kind, doc, st (a text box's tbObjStyle)}
 async function paintObjBar(){
   const h = $('#hint');
-  const drop = () => { OBJBAR = null; if (h.classList.contains('objbar')) { h.classList.remove('objbar', 'show', 'styl'); h.innerHTML = ''; } };
+  const drop = () => { OBJBAR = null; if (h.classList.contains('objbar')) { h.classList.remove('objbar', 'show', 'styl', 'multi'); h.innerHTML = ''; } };
+  if (S.tool === 'select' && MS) {
+    h.classList.remove('multi'); h.innerHTML = multiBarHTML(MS.items.length); h.classList.add('show', 'styl', 'objbar', 'multi');
+    OBJBAR = {multi:true, i:MS.i, doc:activeDoc()};
+    return;
+  }
+  h.classList.remove('multi');
   if (S.tool !== 'select' || !AS) return drop();
   const {i, a} = AS, doc = await geoDoc(), ref = findAnnotRef(doc, i, a.id);
   if (!AS || AS.a.id !== a.id) return;   // the selection changed meanwhile: that call paints
@@ -7080,6 +7176,10 @@ async function paintObjBar(){
   h.innerHTML = `<b class="sb-t">${icon(o.ic)}已選取：${esc(o.name)}</b><span class="sb-row">${o.html}</span>`;
   h.classList.add('show', 'styl', 'objbar');
   OBJBAR = {i, id:a.id, kind, doc:activeDoc(), st:o.st};
+}
+// the bar of several selected objects (the align buttons come with 對齊)
+function multiBarHTML(n){
+  return `<b class="sb-t">${icon('select')}已選取 ${n} 個物件</b><span class="sb-row"><button class="pchip" data-ma="del">${icon('trash')}刪除</button></span>`;
 }
 // the bar for one kind of object: {name, ic (icon), html, st}
 function objBarHTML(kind, dict){
@@ -7335,7 +7435,11 @@ async function changeImageOf(ob){
   if (img) objChange(ob, (i, id) => replaceImage(i, id, img));
 }
 $('#hint').addEventListener('click', e => {
-  if (!OBJBAR || !$('#hint').classList.contains('objbar')) return;
+  if (!OBJBAR || !OBJBAR.multi || !MS) return;
+  if (e.target.closest('[data-ma="del"]')) deleteMulti();
+});
+$('#hint').addEventListener('click', e => {
+  if (!OBJBAR || OBJBAR.multi || !$('#hint').classList.contains('objbar')) return;
   const ob = OBJBAR;
   if (ob.kind === 'textbox') {
     const fb = e.target.closest('[data-tbfont]');
@@ -7362,43 +7466,47 @@ $('#hint').addEventListener('change', e => {
 });
 const flatPts = (i, arr) => { const out = [], vp = S.pages[i].vp1; for (let k = 0; k + 1 < arr.length; k += 2) { const v = vp.convertToViewportPoint(arr[k], arr[k + 1]); out.push({x:v[0], y:v[1]}); } return out; };
 const numArr = a => a.asArray().map(x => x.asNumber ? x.asNumber() : 0);
+// move or resize one object in the document being changed (page view boxes ob → nb); false: it is not there
+function moveAnnotInDoc(doc, i, id, ob, nb){
+  const isMove = Math.abs(nb.w - ob.w) < .05 && Math.abs(nb.h - ob.h) < .05;
+  const ref = findAnnotRef(doc, i, id); if (!ref) return false;
+  const ctx = doc.context, dict = ctx.lookup(ref, PDFDict), N = k => PDFName.of(k);
+  const sub = String(dict.get(N('Subtype'))).slice(1);
+  const oR = visToPdf(i, ob).rect, nR = visToPdf(i, nb).rect, turned = ROT_BOX.has(sub) && boxTurn(dict);
+  if (turned) {   // a turned object: move or resize its upright box, then turn it again by the same angle
+    let base = turned.base, br = turned.baseRect;
+    if (isMove) { const dx = nR[0] - oR[0], dy = nR[1] - oR[1]; br = [br[0] + dx, br[1] + dy, br[2] + dx, br[3] + dy]; }
+    else if (REGEN.has(sub) && dict.get(N('PDFE'))) {
+      const st = readAnnStyle(dict), geom = shapeGeom(dict, st, nb);
+      base = formAP(doc, geom.ops, geom.b.w, geom.b.h, S.pages[i].rot, gsRes(st)); br = visToPdf(i, geom.b).rect;
+    } else br = nR;
+    setTurn(doc, dict, base, br, turned.deg);
+  }
+  // our own shapes and pen strokes are redrawn from their geometry, so lines stay crisp at the new size
+  else if (REGEN.has(sub) && dict.get(N('PDFE'))) regenAP(doc, i, dict, readAnnStyle(dict), p => mapPt(p, ob, nb), nb);
+  else {
+    // everything else (stamps, text boxes, signatures, other apps' annotations): the appearance follows the new Rect
+    dict.set(N('Rect'), ctx.obj(nR));
+    const sx = (nR[2] - nR[0]) / (oR[2] - oR[0] || 1), sy = (nR[3] - nR[1]) / (oR[3] - oR[1] || 1);
+    const fx = x => nR[0] + (x - oR[0]) * sx, fy = y => nR[1] + (y - oR[1]) * sy;
+    const remap = k => { const arr = dict.lookupMaybe(N(k), PDFArray); if (arr) dict.set(N(k), ctx.obj(numArr(arr).map((v, j) => j % 2 ? fy(v) : fx(v)))); };
+    ['L', 'Vertices', 'CL', 'QuadPoints'].forEach(remap);
+    const ink = dict.lookupMaybe(N('InkList'), PDFArray);
+    if (ink) dict.set(N('InkList'), ctx.obj(ink.asArray().map(s => numArr(s).map((v, j) => j % 2 ? fy(v) : fx(v)))));
+  }
+  dict.set(N('M'), nowStr());
+  // a note's popup window moves along with its icon
+  const pref = dict.get(N('Popup'));
+  if (pref instanceof PDFRef) {
+    const pd = ctx.lookup(pref, PDFDict), pr = pd.lookupMaybe(N('Rect'), PDFArray);
+    if (pr) { const v = numArr(pr), dx = nR[0] - oR[0], dy = nR[1] - oR[1]; pd.set(N('Rect'), ctx.obj([v[0] + dx, v[1] + dy, v[2] + dx, v[3] + dy])); }
+  }
+  return true;
+}
 async function commitAnnotBox(i, a, ob, nb){
   const id = a.id, isMove = Math.abs(nb.w - ob.w) < .05 && Math.abs(nb.h - ob.h) < .05;
   holdSelection();
-  const ok = await mutate(isMove ? '已移動' : '已調整大小', doc => {
-    const ref = findAnnotRef(doc, i, id); if (!ref) { toast('找不到此註解', 'err'); return false; }
-    const ctx = doc.context, dict = ctx.lookup(ref, PDFDict), N = k => PDFName.of(k);
-    const sub = String(dict.get(N('Subtype'))).slice(1);
-    const oR = visToPdf(i, ob).rect, nR = visToPdf(i, nb).rect, turned = ROT_BOX.has(sub) && boxTurn(dict);
-    if (turned) {   // a turned object: move or resize its upright box, then turn it again by the same angle
-      let base = turned.base, br = turned.baseRect;
-      if (isMove) { const dx = nR[0] - oR[0], dy = nR[1] - oR[1]; br = [br[0] + dx, br[1] + dy, br[2] + dx, br[3] + dy]; }
-      else if (REGEN.has(sub) && dict.get(N('PDFE'))) {
-        const st = readAnnStyle(dict), geom = shapeGeom(dict, st, nb);
-        base = formAP(doc, geom.ops, geom.b.w, geom.b.h, S.pages[i].rot, gsRes(st)); br = visToPdf(i, geom.b).rect;
-      } else br = nR;
-      setTurn(doc, dict, base, br, turned.deg);
-    }
-    // our own shapes and pen strokes are redrawn from their geometry, so lines stay crisp at the new size
-    else if (REGEN.has(sub) && dict.get(N('PDFE'))) regenAP(doc, i, dict, readAnnStyle(dict), p => mapPt(p, ob, nb), nb);
-    else {
-      // everything else (stamps, text boxes, signatures, other apps' annotations): the appearance follows the new Rect
-      dict.set(N('Rect'), ctx.obj(nR));
-      const sx = (nR[2] - nR[0]) / (oR[2] - oR[0] || 1), sy = (nR[3] - nR[1]) / (oR[3] - oR[1] || 1);
-      const fx = x => nR[0] + (x - oR[0]) * sx, fy = y => nR[1] + (y - oR[1]) * sy;
-      const remap = k => { const arr = dict.lookupMaybe(N(k), PDFArray); if (arr) dict.set(N(k), ctx.obj(numArr(arr).map((v, j) => j % 2 ? fy(v) : fx(v)))); };
-      ['L', 'Vertices', 'CL', 'QuadPoints'].forEach(remap);
-      const ink = dict.lookupMaybe(N('InkList'), PDFArray);
-      if (ink) dict.set(N('InkList'), ctx.obj(ink.asArray().map(s => numArr(s).map((v, j) => j % 2 ? fy(v) : fx(v)))));
-    }
-    dict.set(N('M'), nowStr());
-    // a note's popup window moves along with its icon
-    const pref = dict.get(N('Popup'));
-    if (pref instanceof PDFRef) {
-      const pd = ctx.lookup(pref, PDFDict), pr = pd.lookupMaybe(N('Rect'), PDFArray);
-      if (pr) { const v = numArr(pr), dx = nR[0] - oR[0], dy = nR[1] - oR[1]; pd.set(N('Rect'), ctx.obj([v[0] + dx, v[1] + dy, v[2] + dx, v[3] + dy])); }
-    }
-  });
+  const ok = await mutate(isMove ? '已移動' : '已調整大小', doc => { if (!moveAnnotInDoc(doc, i, id, ob, nb)) { toast('找不到此註解', 'err'); return false; } });
   if (!ok) clearHolds(i);
   if (ok && S.tool === 'select') {   // keep it selected at its new place
     const a2 = (await getAnns(i)).find(x => x.id === id);
@@ -9701,6 +9809,7 @@ window.__pdfapp = {
     return {bbox:bb ? numArr(bb) : null, matrix:m ? numArr(m) : [1, 0, 0, 1, 0, 0]};
   },
   imageBoxes:i => detectImages(i),
+  multi:() => MS ? {i:MS.i, ids:MS.items.map(a => a.id)} : null,
   pruneUnused:b => pruneUnused(b),
   imageObjects:async () => { const doc = await geoDoc(), out = []; doc.context.enumerateIndirectObjects().forEach(([, o]) => { if (o && o.dict && String(o.dict.get(N_('Subtype'))) === '/Image') { const n = k => { const v = o.dict.get(N_(k)); return v && v.asNumber ? v.asNumber() : 0; }; out.push({w:n('Width'), h:n('Height')}); } }); return out; },
   pageKeys:async i => (await geoDoc()).getPage(i).node.keys().map(k => String(k).slice(1)),
