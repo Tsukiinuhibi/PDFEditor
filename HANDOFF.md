@@ -168,6 +168,11 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 設定 → 設定檔：〔匯出設定…〕`exportSettings()` 把 `settingsSnapshot()` 存成「PDF工作台-設定-YYYYMMDD.json」（桌面版走另存新檔，瀏覽器版下載）：`{app:'PDF 工作台', kind:'settings', version, exported, settings:{鍵: localStorage 原文}}`，收所有 `pdfeditor.` 開頭的鍵，`SETTINGS_SKIP`（字型清單快取 `fontcat.v2`、版本記錄 `seenversion.v1`）除外。新增的設定鍵自動包含；只屬於這台電腦的新鍵要加進 `SETTINGS_SKIP`。
 - 〔匯入設定…〕`chooseSettingsFile()` → `importSettings(file)`：`parseSettingsFile` 不是本程式的設定檔或沒有可用項目就提示「這不是 PDF 工作台的設定檔」；有還沒另存的修改（`anyDirty()`）就先擋下、什麼都不寫（重新載入時若在「不儲存並關閉」按取消，設定會只套用一半）；否則先關掉設定視窗（一次只開一個視窗），確認「匯入設定」後寫入檔案裡的項目（其他的不動），`location.reload()`。匯出的另存對話框帶 `avoid`（開著的 PDF 與它另存的檔），不會蓋掉原檔。
 
+### 3.9.6 選到物件時工具列換成它的編輯功能（v1.0.33）
+- 選取工具選到本程式畫的物件（有 `PDFE`）：`selectAnnot`／`deselectAnnot` 呼叫 `paintObjBar()`，`#hint.objbar` 顯示「已選取：<名稱>」＋`styleBar(kind, readObjStyle(dict), true)`（`objKind(dict)` 依 Subtype／`BE`／`LE`／主旨對到工具：rect、ellipse、cloud、line、arrow、polygon、polyline、pen、hlText、underline、strike、fill；填色只有顏色與透明度）。其他軟體的物件、文字方塊、戳記、圖片、「點選區塊」的填色沒有樣式列（v1.0.34 再做文字方塊、戳記、圖片）。
+- 改樣式：`#hint` 的物件模式點擊／變更 → `restyleSelected(patch)`（排隊一個接一個，對著改的當下選的那個物件）→ `restyleAnnot`：一次 `mutate('已變更樣式')` 寫 `C`、`IC`、`BS`、`CA`、`LE`（封閉箭頭的 `IC`＝線條顏色；填色的顏色與填色一起改）後 `regenAP` 重畫，然後重新選取。工具預設（`STYLES`）不變。
+- `regenAP(doc, i, dict, st, map, nb)`：Line／Square／Circle／Polygon／PolyLine／Ink 依幾何重畫（調整大小 `commitAnnotBox` 也用它，傳 `map`、`nb`）；旋轉過的矩形類用 `boxTurn` 的 `baseRect` 重畫再 `setTurn` 同角度；Highlight／Underline／StrikeOut 從 `QuadPoints` 用 `markupGeom` 重畫（`createTextMark` 也用它）。區域螢光筆（`addHighlight`）從這版起有 `PDFE` 與主旨「區域螢光筆」。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。
@@ -239,6 +244,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | sticky-notes | 人員名單（新增、重複、空白、改預設、刪預設、至少一個、重開還在、壞掉的資料重建、名字含 `<>`）；新註解的作者＝預設；便利貼換作者（名單、其他名字、名單外的作者、復原）；刪除鈕；右鍵選單（選取與畫筆工具、編輯、開著的便利貼先存、刪除）；複製（系統剪貼簿、狀態列）；Ctrl+V 貼在滑鼠位置／頁角／目前頁；文字框裡 Ctrl+V 貼文字；選取後 Ctrl+C；貼到另一個檔案；最後複製的是頁面就貼頁面、〔貼上頁〕只貼頁面 |
 | right-click | 選取工具右鍵空白處（沒有選單、取消選取）；每種工具右鍵空白處回到選取；文字方塊不再右鍵新增；打字中的文字方塊、新便利貼、畫筆、多邊形（3 點／1 點）、填色節點都先收好；文字辨識結果關閉；頁面之間的灰色處；縮圖仍有頁面選單；便利貼仍有便利貼選單；右鍵物件就選到它；右鍵選取工具列不變 |
 | settings-file | 匯出（格式、版本、原樣的設定、不含字型快取與版本記錄、檔名、取消另存）；匯入（一般 JSON／壞檔／沒有可用項目都拒絕、只取可用項目、先確認、取消不變、匯入後重新載入並生效、檔案裡沒有的設定保留、版本記錄不動） |
+| object-style | 其他軟體的物件、文字方塊沒有樣式列；選到矩形顯示它的顏色粗細；改粗細／顏色／填色／無填色／虛線／透明度、復原、工具預設不變、外框不跑、連改兩次、改完按 Delete；箭頭樣式、線條、多邊形、畫筆、節點填色、預設樣式；旋轉過的矩形改色角度不變；高亮文字、底線文字、區域螢光筆 |
 | ocr | 文字辨識：PDF 文字一字不差、剪貼簿內容、乾淨掃描（橫書、直書）與低品質掃描的辨識率、強制影像辨識、Esc 關閉 |
 | font-identify-engine | 字型辨識引擎（不連網）：空白字型與缺字判斷（含 Type 1 字型）、取字（信心度、標點、`ilI1|`、只留一次、偏好字母、太小、白紙、鄰字筆畫、鬆的字框、直書粗略字框）、比對排名（DejaVu Serif、Liberation Sans 粗體、文泉驛正黑與等寬版合併、內建思源黑體、超大字、沒有字型有這些字、stop）、本機與 Google 同字形合併、750 個候選的時間與畫面不卡、Google 載入（分批、`text=`、粗體字重、快取、錯名逐一重試、沒網路、逾時）、Google 清單 |
 | font-identify | 「字型」頁（假的 Google 來源）：各種掃描（英文、粗體、中文、內建思源黑體、中英混排分組、直書、不是字）、Google 字型排第一與〔下載〕、關掉 Google、連不上 Google、比對中換框、長名稱不擋來源標籤；PDF 記錄的字型（已內嵌 DejaVu Serif、Big5 名稱、Helvetica 用同款代替、Google 名稱、沒有名稱、隱形文字層）、〔用字形比對找相似字型〕；〔套用〕、〔下載〕開的網址、字型選單「字型辨識結果」 |

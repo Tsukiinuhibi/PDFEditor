@@ -129,5 +129,29 @@ await cpk('color', '#c92a2a');
 const t2 = await style(0, r2.id);
 check('a turned rectangle: a new colour keeps its angle', Math.abs((d0 || 0) - 30) < 3 && t2?.color === '#c92a2a' && Math.abs(t2.deg - d0) < 0.5, {d0, t2});
 
+
+// ---- part 3: text markup and area highlights -------------------------------------------------------------------------
+const chars = await A(() => window.__pdfapp.pageChars(0));
+const lineOf = k => chars.filter(c => c.item === k), mid = c => [(c.x0 + c.x1) / 2, (c.y0 + c.y1) / 2];
+const L0 = lineOf(chars[0].item), L1 = lineOf(chars.find(c => c.item !== chars[0].item).item);
+await tool('hlText'); await drag(await see(0, ...mid(L0[0])), await P(0, ...mid(L0[L0.length - 1])));
+const hl = (await anns(0, 'Highlight'))[0];
+if (hl) await pick(hl);
+const hb = await bar();
+if (hb) await cpk('color', '#8ce99a');
+check('高亮文字: its bar, then its colour', !!hb && hb.title.includes('高亮文字') && (await style(0, hl.id))?.color === '#8ce99a', {hb, st:hl && await style(0, hl.id)});
+await tool('underline'); await drag(await see(0, ...mid(L1[0])), await P(0, ...mid(L1[Math.min(8, L1.length - 1)])));
+const ul = (await anns(0, 'Underline'))[0];
+if (ul) await pick(ul);
+if (await bar()) await setSel('opacity', 0.5);
+check('底線文字: 50%', !!ul && (await style(0, ul.id))?.opacity === 0.5, ul && await style(0, ul.id));
+const hl0 = (await anns(0, 'Highlight')).map(a => a.id);
+await tool('highlight'); await drag(await see(0, 100, 770), await P(0, 220, 810));
+const area = (await anns(0, 'Highlight')).find(a => !hl0.includes(a.id));
+if (area) await pick(area);
+const ab = await bar();
+if (ab) await cpk('color', '#74c0fc');
+check('區域螢光筆 (newly drawn): its bar, then its colour', !!ab && ab.title.includes('區域螢光筆') && (await style(0, area.id))?.color === '#74c0fc', {ab, st:area && await style(0, area.id)});
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

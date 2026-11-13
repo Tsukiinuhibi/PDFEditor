@@ -3758,7 +3758,7 @@ async function addHighlight(i, box){
     const ap = formAP(doc, `/GS0 gs ${c.map(v => v.toFixed(3)).join(' ')} rg 0 0 ${box.w.toFixed(2)} ${box.h.toFixed(2)} re f`, box.w, box.h, g.rot,
       {ExtGState:{GS0:{Type:'ExtGState', BM:'Multiply', ca:1}}});
     addAnnot(doc, i, {Type:'Annot', Subtype:'Highlight', Rect:g.rect, QuadPoints:[x1, y2, x2, y2, x1, y1, x2, y1], C:c,
-      T:PDFHexString.fromText(AUTHOR), M:nowStr(), F:4, AP:{N:ap}});
+      T:PDFHexString.fromText(AUTHOR), M:nowStr(), F:4, PDFE:true, Subj:PDFHexString.fromText('區域螢光筆'), AP:{N:ap}});
   });
 }
 async function deleteAnnot(i, id, label = '已刪除註解'){
@@ -6174,22 +6174,26 @@ function selectionQuads(chars, a, b){
   return runs.map(r => r.q);
 }
 async function createTextMark(i, quads, t){
-  const st = STYLES[t], def = DRAW_TOOLS[t];
+  const st = STYLES[t], def = DRAW_TOOLS[t], {b, ops, res} = markupGeom(def.sub, quads, st);
+  const qp = quads.flatMap(q => toPdfPts(i, q));
+  await addGeomAnnot(i, def.label.replace('文字工具', '').replace('工具', ''), {b, ops}, baseDict(def.sub, def.label.replace('工具', ''), st, {QuadPoints:qp}), res);
+}
+// highlight / underline / strike-out over quads ([tl, tr, bl, br] in page view points)
+function markupGeom(sub, quads, st){
   const b = bboxOf(quads.flat(), 2);
   let ops;
-  if (def.sub === 'Highlight') {
+  if (sub === 'Highlight') {
     ops = `/GS1 gs ${hexRgb(st.color)} rg ` + quads.map(([tl, tr, bl, br]) => `${loc(b, tl).join(' ')} m ${loc(b, tr).join(' ')} l ${loc(b, br).join(' ')} l ${loc(b, bl).join(' ')} l h f`).join(' ');
   } else {
     ops = `${(st.opacity ?? 1) < 1 ? '/GS0 gs ' : ''}${hexRgb(st.color)} RG 1 J ` + quads.map(([tl, tr, bl, br]) => {
       const h = Math.hypot(tl.x - bl.x, tl.y - bl.y), w = Math.max(.8, h * .07).toFixed(2);
-      const f = def.sub === 'StrikeOut' ? .5 : .9;
+      const f = sub === 'StrikeOut' ? .5 : .9;
       const a = {x:tl.x + (bl.x - tl.x) * f, y:tl.y + (bl.y - tl.y) * f}, z = {x:tr.x + (br.x - tr.x) * f, y:tr.y + (br.y - tr.y) * f};
       return `${w} w ${loc(b, a).join(' ')} m ${loc(b, z).join(' ')} l S`;
     }).join(' ');
   }
-  const res = def.sub === 'Highlight' ? {ExtGState:{GS1:{Type:'ExtGState', BM:'Multiply', CA:st.opacity ?? 1, ca:st.opacity ?? 1}}} : gsRes(st);
-  const qp = quads.flatMap(q => toPdfPts(i, q));
-  await addGeomAnnot(i, def.label.replace('文字工具', '').replace('工具', ''), {b, ops}, baseDict(def.sub, def.label.replace('工具', ''), st, {QuadPoints:qp}), res);
+  const res = sub === 'Highlight' ? {ExtGState:{GS1:{Type:'ExtGState', BM:'Multiply', CA:st.opacity ?? 1, ca:st.opacity ?? 1}}} : gsRes(st);
+  return {b, ops, res};
 }
 
 /* ---------- pen: strokes are buffered and committed together ---------- */
@@ -6631,9 +6635,10 @@ function selectAnnot(i, a){
 }
 /* 選到物件時工具列換成它的編輯功能: an object this program drew (PDFE) shows the settings of the tool that draws it, with
    its own values, in the bar above the pages (#hint.objbar) */
+const subjOf = dict => { const s = dict.lookup(N_('Subj')); return s && s.decodeText ? s.decodeText() : ''; };
 function objKind(dict){
   if (!dict.get(N_('PDFE'))) return null;   // another program's object: move and delete only
-  const sub = subOf(dict), subjObj = dict.lookup(N_('Subj')), subj = subjObj && subjObj.decodeText ? subjObj.decodeText() : '';
+  const sub = subOf(dict), subj = subjOf(dict);
   const cloud = !!dict.lookupMaybe(N_('BE'), PDFDict);
   if (sub === 'Square') return cloud ? 'cloud' : 'rect';
   if (sub === 'Circle') return cloud ? 'cloud' : 'ellipse';
@@ -6664,7 +6669,8 @@ async function paintObjBar(){
   const dict = ref && doc.context.lookup(ref, PDFDict), kind = dict && objKind(dict);
   if (!kind || S.tool !== 'select') return drop();
   const def = DRAW_TOOLS[kind];
-  h.innerHTML = `<b class="sb-t">${icon(def.ic)}已選取：${esc(def.label.replace('工具', ''))}</b><span class="sb-row">${styleBar(kind, readObjStyle(dict), true)}</span>`;
+  const name = subjOf(dict) === '區域螢光筆' ? '區域螢光筆' : def.label.replace('工具', '');
+  h.innerHTML = `<b class="sb-t">${icon(def.ic)}已選取：${esc(name)}</b><span class="sb-row">${styleBar(kind, readObjStyle(dict), true)}</span>`;
   h.classList.add('show', 'styl', 'objbar');
   OBJBAR = {i, id:a.id, kind};
 }
@@ -6756,6 +6762,14 @@ function readAnnStyle(dict){
 // box; restyling: neither). A turned rectangle / ellipse / cloud is drawn upright and turned again by its angle.
 function regenAP(doc, i, dict, st = readObjStyle(dict), map = p => p, nb = null){
   const ctx = doc.context, sub = subOf(dict), rot = S.pages[i].rot, turned = ROT_BOX.has(sub) && boxTurn(dict);
+  if (sub === 'Highlight' || sub === 'Underline' || sub === 'StrikeOut') {
+    const pts = flatPts(i, numArr(dict.lookup(N_('QuadPoints'), PDFArray))).map(map), quads = [];
+    for (let k = 0; k + 3 < pts.length; k += 4) quads.push(pts.slice(k, k + 4));
+    const m = markupGeom(sub, quads, st);
+    dict.set(N_('Rect'), ctx.obj(visToPdf(i, m.b).rect));
+    dict.set(N_('AP'), ctx.obj({N:formAP(doc, m.ops, m.b.w, m.b.h, rot, m.res)}));
+    return true;
+  }
   let geom = null;
   if (sub === 'Line') {
     const le = dict.lookupMaybe(N_('LE'), PDFArray), names = le ? le.asArray().map(String) : ['/None', '/None'], arrow = names[1] !== '/None';
