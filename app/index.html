@@ -5336,9 +5336,10 @@ async function pictureAP(doc, img, b, rot){
 async function replaceImage(i, id, img){
   return mutate('已更換圖片', async doc => {
     const ref = findAnnotRef(doc, i, id); if (!ref) { toast('找不到此註解', 'err'); return false; }
-    const dict = doc.context.lookup(ref, PDFDict), ob = uprightBox(i, dict), k = Math.min(ob.w / img.w, ob.h / img.h);
-    const w = img.w * k, h = img.h * k, b = {x:ob.x + (ob.w - w) / 2, y:ob.y + (ob.h - h) / 2, w, h}, g = visToPdf(i, b);
-    setUpright(doc, dict, fadeAP(doc, await pictureAP(doc, img, b, g.rot), readAnnStyle(dict).opacity), g.rect);
+    const dict = doc.context.lookup(ref, PDFDict), fr = ownFrame(doc, dict); if (!fr) return false;
+    const k = Math.min(fr.w / img.w, fr.h / img.h), emb = img.kind === 'jpg' ? await doc.embedJpg(img.bytes) : await doc.embedPng(img.bytes);
+    const {ap, rect} = ownPicture(doc, fr, emb.ref, img.w * k, img.h * k);
+    setUpright(doc, dict, fadeAP(doc, ap, readAnnStyle(dict).opacity), rect);
     dict.set(N_('Contents'), PDFHexString.fromText(img.name || '圖片')); dict.set(N_('M'), nowStr());
   });
 }
@@ -6441,10 +6442,10 @@ async function replaceStamp(i, id, spec){
   const {canvas, wPt, hPt} = drawStamp(sp, 5, when), png = new Uint8Array(await (await blobOf(canvas, 'image/png')).arrayBuffer());
   return mutate(`已更換戳記「${sp.t}」`, async doc => {
     const ref = findAnnotRef(doc, i, id); if (!ref) { toast('找不到此註解', 'err'); return false; }
-    const ctx = doc.context, dict = ctx.lookup(ref, PDFDict), old = stampSpec(dict), ob = uprightBox(i, dict);
-    const k = old ? ob.w / drawStamp(old, 1).wPt : 1;
-    const b = {x:ob.x + ob.w / 2 - wPt * k / 2, y:ob.y + ob.h / 2 - hPt * k / 2, w:wPt * k, h:hPt * k}, g = visToPdf(i, b);
-    setUpright(doc, dict, fadeAP(doc, await imageAP(doc, png, b.w, b.h, g.rot), readAnnStyle(dict).opacity), g.rect);
+    const ctx = doc.context, dict = ctx.lookup(ref, PDFDict), old = stampSpec(dict), fr = ownFrame(doc, dict); if (!fr) return false;
+    const k = old ? fr.w / drawStamp(old, 1).wPt : fr.h / hPt;   // the old one's zoom; without its settings: as tall as it was
+    const {ap, rect} = ownPicture(doc, fr, (await doc.embedPng(png)).ref, wPt * k, hPt * k);
+    setUpright(doc, dict, fadeAP(doc, ap, readAnnStyle(dict).opacity), rect);
     dict.set(N_('Name'), N_(STAMP_NAMES[sp.t] || 'Draft'));
     dict.set(N_('Contents'), PDFHexString.fromText(sp.kind === 'box' ? sp.t : `${sp.t} ${sp.who} ${zhDateTime(when)}`));
     dict.set(N_('T'), PDFHexString.fromText(AUTHOR)); dict.set(N_('M'), nowStr());
@@ -6905,9 +6906,29 @@ async function restyleAnnot(i, id, patch){
     if (!regenAP(doc, i, dict, st, p => p, null, prev)) return false;
   });
 }
-// a box object's upright drawing (a turned one keeps it as PDFE_Base) and its upright box (page view points)
+// a box object's upright drawing (a turned one keeps it as PDFE_Base)
 function uprightAP(dict){ const t = boxTurn(dict); if (t) return t.base; const ap = dict.lookupMaybe(N_('AP'), PDFDict), n = ap && ap.get(N_('N')); return n instanceof PDFRef ? n : null; }
-function uprightBox(i, dict){ const t = boxTurn(dict); return vRect(i, t ? t.baseRect : numArr(dict.lookup(N_('Rect'), PDFArray))); }
+// that drawing (an opacity layer taken off) in its own frame: its form, BBox and /Matrix (the page turn it was drawn for, which
+// is not the page's turn when the page was turned afterwards), how large it shows along its own sides (w, h) and the centre
+// of where it shows (PDF). Stamps, pictures and fills are drawn again in this frame, so they keep their size and direction.
+function ownFrame(doc, dict){
+  const ref = innerAP(doc, uprightAP(dict)), st = ref && doc.context.lookup(ref); if (!st || !st.dict) return null;
+  const m = st.dict.lookupMaybe(N_('Matrix'), PDFArray), M = m ? numArr(m) : [1, 0, 0, 1, 0, 0], side = Math.abs(M[1]) > Math.abs(M[0]);
+  const t = boxTurn(dict), R = t ? t.baseRect : numArr(dict.lookup(N_('Rect'), PDFArray)), rw = Math.abs(R[2] - R[0]), rh = Math.abs(R[3] - R[1]);
+  const bb = st.dict.lookupMaybe(N_('BBox'), PDFArray), w = side ? rh : rw, h = side ? rw : rh;
+  return {ref, M, B:bb ? numArr(bb) : [0, 0, w, h], w, h, cx:(R[0] + R[2]) / 2, cy:(R[1] + R[3]) / 2};
+}
+// a new picture (image ref) w × h in its own frame, turned like fr's drawing; shown at that size, centred where fr's was: {ap, rect}
+function ownPicture(doc, fr, img, w, h){
+  const a = Math.atan2(fr.M[1], fr.M[0]), c = Math.round(Math.cos(a)), s = Math.round(Math.sin(a)), fw = s ? h : w, fh = s ? w : h;   // its quarter turn only
+  const ap = doc.context.register(doc.context.stream(`q ${w.toFixed(3)} 0 0 ${h.toFixed(3)} 0 0 cm /Im0 Do Q`, {Type:'XObject', Subtype:'Form', BBox:[0, 0, w, h], Matrix:[c, s, -s || 0, c, 0, 0], Resources:{XObject:{Im0:img}}}));
+  return {ap, rect:[fr.cx - fw / 2, fr.cy - fh / 2, fr.cx + fw / 2, fr.cy + fh / 2]};
+}
+// the same drawing with new pixels (image ref): its frame and turn kept exactly, so it stays where it shows
+function samePicture(doc, fr, img){
+  const [x0, y0, x1, y1] = fr.B;
+  return doc.context.register(doc.context.stream(`q ${(x1 - x0).toFixed(3)} 0 0 ${(y1 - y0).toFixed(3)} ${x0.toFixed(3)} ${y0.toFixed(3)} cm /Im0 Do Q`, {Type:'XObject', Subtype:'Form', BBox:fr.B, Matrix:fr.M, Resources:{XObject:{Im0:img}}}));
+}
 // show the upright drawing ap (filling rect, PDF; default: where it is), turned again by the object's angle
 function setUpright(doc, dict, ap, rect = null){
   const t = boxTurn(dict);
@@ -6929,11 +6950,11 @@ async function restyleStamp(doc, i, dict, kind, patch){
   const ctx = doc.context, op = 'opacity' in patch ? +patch.opacity : readAnnStyle(dict).opacity;
   let ap = uprightAP(dict); if (!ap) return false;
   if (kind === 'stamp' && 'color' in patch) {
-    const spec = stampSpec(dict); if (!spec || !patch.color) return false;
-    const sp = {...spec, c:patch.color}, when = new Date(spec.when), b = uprightBox(i, dict);
+    const spec = stampSpec(dict), fr = ownFrame(doc, dict); if (!spec || !patch.color || !fr) return false;
+    const sp = {...spec, c:patch.color}, when = new Date(spec.when);
     await ensureStampFont();
     const {canvas} = drawStamp(sp, 5, isNaN(when) ? new Date() : when), png = new Uint8Array(await (await blobOf(canvas, 'image/png')).arrayBuffer());
-    ap = await imageAP(doc, png, b.w, b.h, visToPdf(i, b).rot);
+    ap = samePicture(doc, fr, (await doc.embedPng(png)).ref);
     dict.set(N_('PDFE_Stamp'), PDFHexString.fromText(JSON.stringify(sp)));
   }
   if (op < 1) dict.set(N_('CA'), ctx.obj(op)); else dict.delete(N_('CA'));
@@ -6943,7 +6964,7 @@ async function restyleStamp(doc, i, dict, kind, patch){
 // an area fill (a picture of the area in one colour) in a new colour / opacity: the area is the picture's alpha mask, so
 // it is not detected again; without a new opacity each pixel keeps its own alpha
 async function refillStamp(doc, i, dict, patch){
-  const ctx = doc.context, st = readAnnStyle(dict), color = patch.color || st.color, ap = innerAP(doc, uprightAP(dict));
+  const ctx = doc.context, st = readAnnStyle(dict), color = patch.color || st.color, fr = ownFrame(doc, dict), ap = fr && fr.ref;
   const form = ap && ctx.lookup(ap), res = form && form.dict && form.dict.lookupMaybe(N_('Resources'), PDFDict), xo = res && res.lookupMaybe(N_('XObject'), PDFDict);
   const im = xo && xo.get(N_('Im0')), img = im && ctx.lookup(im);
   if (!img || !img.dict) { toast('無法變更這個填色', 'err'); return false; }
@@ -6954,10 +6975,10 @@ async function refillStamp(doc, i, dict, patch){
   const g = c.getContext('2d'), d = g.createImageData(W, H);
   for (let k = 0; k < W * H; k++) { const a = alpha ? alpha[k] : 255; if (!a) continue; const o = k * 4; d.data[o] = n >> 16 & 255; d.data[o + 1] = n >> 8 & 255; d.data[o + 2] = n & 255; d.data[o + 3] = A == null ? a : A; }
   g.putImageData(d, 0, 0);
-  const png = new Uint8Array(await (await blobOf(c, 'image/png')).arrayBuffer()), b = uprightBox(i, dict), o2 = op == null ? st.opacity : op;
+  const png = new Uint8Array(await (await blobOf(c, 'image/png')).arrayBuffer()), o2 = op == null ? st.opacity : op;
   dict.set(N_('C'), ctx.obj(hexColor(color)));
   if (o2 < 1) dict.set(N_('CA'), ctx.obj(o2)); else dict.delete(N_('CA'));
-  setUpright(doc, dict, await imageAP(doc, png, b.w, b.h, visToPdf(i, b).rot));
+  setUpright(doc, dict, samePicture(doc, fr, (await doc.embedPng(png)).ref));
   dict.set(N_('M'), nowStr());
 }
 // changes are applied one after another, to the object that was selected when the change was made; it stays selected
@@ -9344,6 +9365,12 @@ window.__pdfapp = {
   },
   annStyle:async (i, id) => { const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); if (!ref) return null; const d = doc.context.lookup(ref, PDFDict), t = boxTurn(d);
     return {kind:objKind(d), ...readObjStyle(d), deg:t ? t.deg : 0, rt:readRT(d), spec:stampSpec(d)}; },
+  apFrame:async (i, id) => {   // (tests) the drawing an object shows upright (an opacity layer taken off): its BBox and /Matrix
+    const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); if (!ref) return null;
+    const n = innerAP(doc, uprightAP(doc.context.lookup(ref, PDFDict))), st = n && doc.context.lookup(n); if (!st || !st.dict) return null;
+    const bb = st.dict.lookupMaybe(N_('BBox'), PDFArray), m = st.dict.lookupMaybe(N_('Matrix'), PDFArray);
+    return {bbox:bb ? numArr(bb) : null, matrix:m ? numArr(m) : [1, 0, 0, 1, 0, 0]};
+  },
   annHas:async (i, id, k) => { const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); return !!ref && !!doc.context.lookup(ref, PDFDict).get(N_(k)); },
   apChain:async (i, id) => {   // (tests) an upright drawing and the drawings inside it (/B), outermost first
     const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); if (!ref) return null;

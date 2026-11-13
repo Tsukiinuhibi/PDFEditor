@@ -14,6 +14,8 @@ pg.drawRectangle({x:330, y:60, width:200, height:140, borderColor:rgb(0, 0, 0), 
 const oldAP = doc.context.register(doc.context.stream('q 0.8 0.1 0.1 RG 3 w 2 2 96 36 re S Q', {Type:'XObject', Subtype:'Form', BBox:[0, 0, 100, 40]}));
 pg.node.set(PDFName.of('Annots'), doc.context.obj([doc.context.register(doc.context.obj({Type:'Annot', Subtype:'Stamp', Rect:[60, 60, 160, 100], Name:'Approved', Contents:PDFHexString.fromText('核准'),
   Subj:PDFHexString.fromText('戳記'), T:PDFHexString.fromText('old'), F:4, AP:{N:oldAP}}))]));
+const pg2 = doc.addPage([595, 842]);   // an oval frame: an area fill that is not a rectangle
+pg2.drawEllipse({x:300, y:420, xScale:120, yScale:60, borderColor:rgb(0, 0, 0), borderWidth:2});
 const PDF = path.join(TMP, 'os2.pdf'); fs.writeFileSync(PDF, await doc.save());
 
 const { app } = await launchPath(PDF);
@@ -31,6 +33,7 @@ const click = async xy => { await win.mouse.click(...xy); await win.waitForTimeo
 const anns = (i, sub) => A(async ([i, sub]) => (await window.__pdfapp.getAnns(i)).filter(a => !sub || a.subtype === sub).map(a => ({id:a.id, sub:a.subtype, x:a.x, y:a.y, w:a.w, h:a.h, contents:a.contents})), [i, sub]);
 const sel = () => A(() => window.__pdfapp.sel());
 const style = id => A(id => window.__pdfapp.annStyle(0, id), id);
+const style1 = id => A(id => window.__pdfapp.annStyle(1, id), id);
 const pick = async a => { await tool('select'); await click(await see(0, a.x + Math.min(6, a.w / 2), a.y + a.h / 2)); };
 const settle = () => win.waitForTimeout(1800);
 const near = (a, b, d = .6) => Math.abs(a - b) <= d;
@@ -63,7 +66,8 @@ const boldOn = runs(st).every(r => r.bold), barBold = (await tbar())?.bold;
 await win.click('#hint.objbar .tfmt[data-tb="bold"]'); await settle();
 st = await style(tb.id);
 check('粗體: on for every run, then off again', boldOn && barBold === true && runs(st).every(r => !r.bold), {boldOn, barBold, runs:runs(st)});
-await win.click('#hint.objbar .tfmt[data-tb="bold"]'); await win.click('#hint.objbar .tfmt[data-tb="bold"]'); await win.waitForTimeout(3000);
+// both presses before the first one is applied (a mouse's second press would land on the busy veil): two queued toggles
+await A(() => { const b = () => document.querySelector('#hint.objbar .tfmt[data-tb="bold"]'); b().click(); b().click(); }); await win.waitForTimeout(3500);
 st = await style(tb.id);
 check('粗體 pressed twice quickly: not bold', runs(st).every(r => !r.bold), runs(st));
 await tbc('boxBg', '#fff3bf');
@@ -187,6 +191,51 @@ check('填色 透明度 50%: on the fill, paler on the page', fs2?.opacity === .
 await cpk('color', '#1c64d9');
 const fs3 = fl && await style(fl.id), pc3 = await px(430, 712);
 check('填色: a new colour keeps 50%', fs3?.opacity === .5 && close(pc3, '#8eb2ec', 14), {op:fs3?.opacity, pc3});
+
+// ---- part 4 (final review): objects made before their page was turned keep how they look ---------------------------------
+await win.keyboard.press('Escape');
+const anns1 = sub => A(async sub => (await window.__pdfapp.getAnns(1)).filter(a => !sub || a.subtype === sub).map(a => ({id:a.id, x:a.x, y:a.y, w:a.w, h:a.h, cx:a.x + a.w / 2, cy:a.y + a.h / 2, contents:a.contents})), sub);
+const frame1 = id => A(id => window.__pdfapp.apFrame(1, id), id);
+const pick1 = async a => { await tool('select'); await click(await see(1, a.cx, a.cy)); };
+const same = (a, b, d = .6) => !!a && !!b && a.length === b.length && a.every((v, k) => Math.abs(v - b[k]) <= d);
+const st1 = (await anns1('Stamp')).map(a => a.id);
+await tool('stamp'); await click(await see(1, 150, 150)); await settle();
+const S1 = (await anns1('Stamp')).find(a => !st1.includes(a.id));
+await tool('image'); await click(await see(1, 450, 700)); await settle();   // wide.png is still ready to place
+const I1 = (await anns1('Stamp')).find(a => a.contents === 'wide.png');
+await win.keyboard.press('Escape');
+await tool('fill'); await click(await see(1, 300, 422)); await win.waitForTimeout(2500);
+const F1 = (await anns1('Stamp')).find(a => a.contents === '填色區塊');
+const fr0 = {s:S1 && await frame1(S1.id), i:I1 && await frame1(I1.id), f:F1 && await frame1(F1.id)};
+await win.keyboard.press('Escape'); await tool('select');
+await A(() => { const s = window.__pdfapp.S; s.thumbSel = new Set([1]); return window.__pdfapp.actions.rotR(); }); await win.waitForTimeout(2500);
+const now1 = async id => (await anns1('Stamp')).find(a => a.id === id);
+let sv = await now1(S1.id);
+check('page turned after: the stamp shows turned with it', !!sv && near(sv.w, S1.h, 1) && near(sv.h, S1.w, 1), {S1, sv});
+await pick1(sv); await cpk('color', '#c92a2a');
+let fr = await frame1(S1.id), sv2 = await now1(S1.id);
+check('page turned after: a stamp\'s new colour keeps its drawing (size, direction) and place', (await style1(S1.id))?.spec?.c === '#c92a2a' && same(fr?.bbox, fr0.s?.bbox) && same(fr?.matrix, fr0.s?.matrix, .01)
+  && near(sv2.w, sv.w) && near(sv2.h, sv.h) && near(sv2.cx, sv.cx) && near(sv2.cy, sv.cy), {fr0:fr0.s, fr, sv, sv2});
+await win.click('#hint.objbar [data-o="stamp"]'); await win.waitForTimeout(800);
+await win.click('#stGrid .st-item:nth-child(2)'); await win.waitForTimeout(200);
+await win.click('#modal .mf button:has-text("使用此戳記")'); await settle();
+fr = await frame1(S1.id); sv2 = await now1(S1.id);
+check('page turned after: 更換戳記 keeps the direction and zoom (as tall as before, same centre)', (await style1(S1.id))?.spec?.t === '不核准' && same(fr?.matrix, fr0.s?.matrix, .01) && near(fr?.bbox?.[3], fr0.s?.bbox?.[3])
+  && near(sv2.w, sv.w) && near(sv2.cx, sv.cx, 1) && near(sv2.cy, sv.cy, 1), {fr0:fr0.s, fr, sv, sv2});
+await win.keyboard.press('Escape');
+let fv = await now1(F1.id);
+await pick1(fv); await cpk('color', '#1c64d9');
+fr = await frame1(F1.id); const fv2 = await now1(F1.id), pf = await A(([x, y]) => { const S = window.__pdfapp.S, c = S.els[1].querySelector('canvas.pc'), k = c.width / S.pages[1].w;
+  const d = c.getContext('2d').getImageData(Math.round(x * k), Math.round(y * k), 1, 1).data; return [d[0], d[1], d[2]]; }, [fv.cx, fv.cy]);
+check('page turned after: an oval fill\'s new colour keeps its shape where it was', same(fr?.bbox, fr0.f?.bbox) && same(fr?.matrix, fr0.f?.matrix, .01) && near(fv2.w, fv.w) && near(fv2.h, fv.h) && close(pf, '#1c64d9'), {fr0:fr0.f, fr, fv, fv2, pf});
+await win.keyboard.press('Escape');
+const iv = await now1(I1.id);
+await pick1(iv);
+const [fc4] = await Promise.all([win.waitForEvent('filechooser', {timeout:8000}), win.click('#hint.objbar [data-o="image"]')]);
+await fc4.setFiles(TALL); await win.waitForTimeout(600); await settle();
+fr = await frame1(I1.id); const iv2 = await now1(I1.id);
+check('page turned after: 更換圖片 keeps the direction, fits the frame, same centre', iv2?.contents === 'tall.png' && same(fr?.matrix, fr0.i?.matrix, .01) && Math.abs(fr.bbox[2] / fr.bbox[3] - .5) < .02
+  && iv2.w <= iv.w + .5 && iv2.h <= iv.h + .5 && near(iv2.cx, iv.cx, 1) && near(iv2.cy, iv.cy, 1), {fr0:fr0.i, fr, iv, iv2});
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
