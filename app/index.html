@@ -243,6 +243,14 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .xbar .dim{color:#cfd3d8;margin-right:4px;font-variant-numeric:tabular-nums}
 .xbar button{border:0;border-radius:5px;padding:4px 10px;cursor:pointer;font:inherit;font-size:12px;background:rgba(255,255,255,.14);color:#fff}
 .xbar button[data-x=ok]{background:var(--seal)}
+.rp{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap}
+.rp-prev{width:260px;height:190px;display:flex;align-items:center;justify-content:center;background:var(--paper2, #f1f3f5);border-radius:8px}
+.rp-frame{position:relative;outline:1px dashed var(--ink3, #868e96);background:#fff;overflow:hidden}
+.rp-frame img{position:absolute;left:50%;top:50%}
+.rp-opts{display:flex;flex-direction:column;gap:6px;min-width:240px}
+.rp-opts label{display:flex;gap:6px;align-items:center;cursor:pointer}
+.rp-h{font-weight:600;margin-top:4px}
+.rp-turn{display:flex;gap:6px}
 .aidmenu{min-width:250px}
 .aidmenu button .ck{width:14px;color:var(--seal);font-weight:700;display:inline-block}
 .aidmenu .aid-row{display:flex;align-items:center;justify-content:space-between;padding:4px 10px;font-size:12.5px}
@@ -2334,7 +2342,7 @@ function showXSel(i, box, meta){
   el.querySelectorAll('.h').forEach(h => { const [x, y] = hp[h.dataset.d]; h.style.left = x + '%'; h.style.top = y + '%'; });
   el.addEventListener('pointerdown', e => { if (e.button !== 0 || S.spaceDown) return; e.preventDefault(); e.stopPropagation(); adjustXSel(e, e.target.dataset.d || 'move'); });
   bar.addEventListener('pointerdown', e => e.stopPropagation());
-  bar.addEventListener('click', e => { const x = e.target.dataset.x; if (x === 'ok') confirmXSel(); if (x === 'cancel') cancelXSel(); if (x === 'del') deletePageImage(i, meta.full); });
+  bar.addEventListener('click', e => { const x = e.target.dataset.x; if (x === 'ok') confirmXSel(); if (x === 'cancel') cancelXSel(); if (x === 'del') deletePageImage(i, meta.full); if (x === 'rep') replacePageImage(i, meta.full); });
   drawXSel();
 }
 function adjustXSel(e, d){
@@ -4526,6 +4534,7 @@ function csTokens(b){
 }
 const MUL = (m1, m2) => [m1[0] * m2[0] + m1[1] * m2[2], m1[0] * m2[1] + m1[1] * m2[3], m1[2] * m2[0] + m1[3] * m2[2], m1[2] * m2[1] + m1[3] * m2[3], m1[4] * m2[0] + m1[5] * m2[2] + m2[4], m1[4] * m2[1] + m1[5] * m2[3] + m2[5]];
 const MPT = (m, x, y) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+const INVM = m => { const d = m[0] * m[3] - m[1] * m[2] || 1e-12; return [m[3] / d, -m[1] / d, -m[2] / d, m[0] / d, (m[2] * m[5] - m[3] * m[4]) / d, (m[1] * m[4] - m[0] * m[5]) / d]; };
 function fontMetrics(doc, res, name){
   const ctx = doc.context, N = k => PDFName.of(k), num = v => { v = ctx.lookup(v); return v && v.asNumber ? v.asNumber() : 0; };
   const fonts = res && res.lookupMaybe(N('Font'), PDFDict), f = fonts && name && fonts.lookupMaybe(N(name), PDFDict);
@@ -4844,6 +4853,78 @@ async function deletePageImage(i, full){
     textAreas.forEach(({i:j, U}) => removePageText(doc, j, U, {invisibleOnly:true}));
     touched.forEach(j => { const nd = doc.getPage(j).node; nd.delete(N_('Thumb')); nd.delete(N_('PieceInfo')); });   // out of date now (and may hold the picture)
     purgeImages(doc, [...new Set(targets.filter(d => d.ref).map(d => d.ref))]);
+  });
+}
+
+// where a new picture goes for the command d (page view): the area (what could be seen of the old picture; a picture set at
+// an angle on purpose: its own sides) and that angle. Quarter turns and flips that only stood the stored pixels up are not
+// kept: the new picture is upright on screen.
+function replaceArea(d){
+  const V = S.pages[d.i].vp1.transform, o = MPT(V, ...MPT(d.M, 0, 0)), px = MPT(V, ...MPT(d.M, 1, 0)), py = MPT(V, ...MPT(d.M, 0, 1));
+  const ex = [px[0] - o[0], px[1] - o[1]], ey = [py[0] - o[0], py[1] - o[1]], th = Math.atan2(ex[1], ex[0]) * 180 / Math.PI;
+  let tilt = th - Math.round(th / 90) * 90; if (Math.abs(tilt) < 1) tilt = 0;
+  if (!tilt) { const b = d.box; return {cx:b.x + b.w / 2, cy:b.y + b.h / 2, aw:b.w, ah:b.h, tilt}; }
+  const c = MPT(V, ...MPT(d.M, .5, .5));
+  return {cx:c[0], cy:c[1], aw:Math.hypot(ex[0], ex[1]), ah:Math.hypot(ey[0], ey[1]), tilt};
+}
+// the matrix T that draws the new picture img (its pixel size w × h) in place of command d: `q T cm /Name Do Q` where d was;
+// fit 'contain' keeps its proportions inside the area, 'fill' covers the area; turn: quarter turns clockwise on screen
+function replacePlacement(d, img, {fit = 'contain', turn = 0} = {}){
+  const V = S.pages[d.i].vp1.transform, A = replaceArea(d), q = ((turn % 360) + 360) % 360, side = q === 90 || q === 270;
+  let w, h;
+  if (fit === 'fill') { w = side ? A.ah : A.aw; h = side ? A.aw : A.ah; }
+  else { const k = Math.min(A.aw / (side ? img.h : img.w), A.ah / (side ? img.w : img.h)); w = img.w * k; h = img.h * k; }
+  const f = (A.tilt + q) * Math.PI / 180, co = Math.cos(f), si = Math.sin(f);
+  const N = MUL(MUL([w, 0, 0, -h, -w / 2, h / 2], [co, si, -si, co, 0, 0]), [1, 0, 0, 1, A.cx, A.cy]);   // unit square → screen (y down)
+  return MUL(MUL(N, INVM(V)), INVM(d.M));
+}
+// 更換圖片: how the new picture goes in. Resolves {fit, turn, all} or null.
+function openReplaceDialog(img, area, n){
+  const body = document.createElement('div'); body.className = 'rp';
+  const fw0 = 240, fh0 = 170, s0 = Math.min(fw0 / area.w, fh0 / area.h), fw = area.w * s0, fh = area.h * s0;
+  body.innerHTML = `<div class="rp-prev"><div class="rp-frame" style="width:${fw}px;height:${fh}px"><img alt="" src="${img.url}"></div></div>
+    <div class="rp-opts"><div class="rp-h">放法</div>
+      <label><input type="radio" name="rfit" value="contain" checked>保持比例，放在原本範圍的中間</label>
+      <label><input type="radio" name="rfit" value="fill">填滿原本的範圍（可能變形）</label>
+      <div class="rp-turn"><button class="btn" data-turn="-90" title="向左轉 90°">↺</button><button class="btn" data-turn="90" title="向右轉 90°">↻</button></div>
+      ${n > 1 ? `<div class="rp-h">範圍</div><label><input type="radio" name="rscope" value="one" checked>只有這一張</label><label><input type="radio" name="rscope" value="all">全部 ${n} 處</label>` : ''}</div>`;
+  let turn = 0;
+  const paint = () => {   // the new picture as it will sit in the old picture's area
+    const fit = body.querySelector('[name="rfit"]:checked').value, side = turn % 180 !== 0, im = body.querySelector('.rp-frame img');
+    let w, h;
+    if (fit === 'fill') { w = side ? fh : fw; h = side ? fw : fh; }
+    else { const k = Math.min(fw / (side ? img.h : img.w), fh / (side ? img.w : img.h)); w = img.w * k; h = img.h * k; }
+    Object.assign(im.style, {width:w + 'px', height:h + 'px', transform:`translate(-50%, -50%) rotate(${turn}deg)`});
+  };
+  body.addEventListener('change', paint);
+  body.addEventListener('click', e => { const b = e.target.closest('[data-turn]'); if (b) { turn = ((turn + +b.dataset.turn) % 360 + 360) % 360; paint(); } });
+  paint();
+  return openModal({title:'更換圖片', body, buttons:[{label:'取消', value:null}, {label:'更換', primary:true, handler:() => ({fit:body.querySelector('[name="rfit"]:checked').value, turn,
+    all:!!body.querySelector('[name="rscope"][value="all"]:checked')})}]});
+}
+// 更換圖片: the clicked picture (this place, or every place it is drawn) becomes another file
+async function replacePageImage(i, full){
+  const img = await pickImage(); if (!img) return;
+  const pre = findImageGroup(await geoDoc(), i, full);
+  if (!pre.group.length) { toast('這張圖片無法刪除或更換', 'err'); return; }
+  const n = pre.places.length, A = replaceArea(pre.group[0]);
+  const opt = await openReplaceDialog(img, {w:A.aw, h:A.ah}, n); if (!opt) return;
+  cancelXSel(true);
+  const count = opt.all ? n : 1;
+  await mutate(count > 1 ? `已更換 ${count} 處圖片` : '已更換圖片', async doc => {
+    const {group, places, pages} = findImageGroup(doc, i, full); if (!group.length) { toast('這張圖片無法刪除或更換', 'err'); return false; }
+    const emb = img.kind === 'jpg' ? await doc.embedJpg(img.bytes) : await doc.embedPng(img.bytes);
+    const edits = new Map(), memo = new Map(), names = new Map(), touched = new Set(), old = [];
+    (opt.all ? places : [group]).forEach(pl => pl.forEach((d0, k) => {
+      const d = opt.all ? d0 : cloneChain(doc, d0, pages, edits, memo), hk = holderKey(d.holder);
+      touched.add(d.i); if (d.ref) old.push(d.ref);
+      if (k > 0) { addEdit(edits, d.holder, {s:d.s, e:d.e, text:' '}); return; }   // pictures stacked under one red box: one new picture
+      if (!names.has(hk)) names.set(hk, addXObject(doc, d.holder, emb.ref, 'PDFE_Im'));
+      addEdit(edits, d.holder, {s:d.s, e:d.e, text:` q ${replacePlacement(d, img, opt).map(v => +v.toFixed(6)).join(' ')} cm /${names.get(hk)} Do Q `});
+    }));
+    edits.forEach(({holder, list}) => editHolder(doc, holder, list));
+    touched.forEach(j => { const nd = doc.getPage(j).node; nd.delete(N_('Thumb')); nd.delete(N_('PieceInfo')); });
+    purgeImages(doc, [...new Set(old)]);
   });
 }
 
@@ -9584,7 +9665,8 @@ window.__pdfapp = {
   imageBoxes:i => detectImages(i),
   imageObjects:async () => { const doc = await geoDoc(), out = []; doc.context.enumerateIndirectObjects().forEach(([, o]) => { if (o && o.dict && String(o.dict.get(N_('Subtype'))) === '/Image') { const n = k => { const v = o.dict.get(N_(k)); return v && v.asNumber ? v.asNumber() : 0; }; out.push({w:n('Width'), h:n('Height')}); } }); return out; },
   pageKeys:async i => (await geoDoc()).getPage(i).node.keys().map(k => String(k).slice(1)),
-  imageDraws:async i => { const doc = await geoDoc(); return imageDrawsIn(doc, i).map(d => ({full:d.full, box:d.box, inline:d.inline, key:imageKey(doc, d), px:d.px})); },
+  imageDraws:async i => { const doc = await geoDoc(), V = S.pages[i].vp1.transform; return imageDrawsIn(doc, i).map(d => { const o = MPT(V, ...MPT(d.M, 0, 0)), x = MPT(V, ...MPT(d.M, 1, 0));
+    return {full:d.full, box:d.box, inline:d.inline, key:imageKey(doc, d), px:d.px, deg:Math.atan2(x[1] - o[1], x[0] - o[0]) * 180 / Math.PI}; }); },
   annHas:async (i, id, k) => { const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); return !!ref && !!doc.context.lookup(ref, PDFDict).get(N_(k)); },
   apChain:async (i, id) => {   // (tests) an upright drawing and the drawings inside it (/B), outermost first
     const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); if (!ref) return null;

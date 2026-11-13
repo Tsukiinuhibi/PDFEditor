@@ -124,5 +124,44 @@ await pick(0, {x:420, y:362, w:60, h:60}); await del();
 const m6 = await modal(); if (m6) await press('取消');
 check('an inline picture: deleted, nothing asked', !m6 && !(await draws(0)).some(d => d.inline), m6);
 
+// ---- part 3: replace ---------------------------------------------------------------------------------------------------
+const pngOf = (w, h) => Ev(([w, h]) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d');
+  g.fillStyle = '#ff0000'; g.fillRect(0, 0, w / 2, h); g.fillStyle = '#0000ff'; g.fillRect(w / 2, 0, w - w / 2, h); return c.toDataURL('image/png').split(',')[1]; }, [w, h]);
+const WIDE = path.join(TMP, 'wide.png'), TALL = path.join(TMP, 'tall.png');
+fs.writeFileSync(WIDE, Buffer.from(await pngOf(80, 40), 'base64')); fs.writeFileSync(TALL, Buffer.from(await pngOf(40, 80), 'base64'));
+const rep = async (i, b, file) => {
+  await pick(i, b);
+  const [fc] = await Promise.all([win.waitForEvent('filechooser', {timeout:8000}), win.click('.xbar [data-x="rep"]')]);
+  await fc.setFiles(file); await win.waitForTimeout(900);
+};
+const scopeRow = () => Ev(() => !!document.querySelector('#modal [name="rscope"]'));
+await undo();   // the inline picture back (the last thing part 2 deleted)
+const bI = {x:420, y:362, w:60, h:60};
+await rep(0, bI, WIDE);
+const m7 = await modal(), sr7 = await scopeRow();
+if (m7) await press('更換');
+const nI = (await draws(0)).find(d => d.px.w === 80 && d.px.h === 40 && near(d.box.x + d.box.w / 2, 450, 1.5));
+check('更換圖片: the dialog (no scope row for one place); the inline picture becomes the new one, kept in proportion, centred', !!m7 && m7.title === '更換圖片' && !sr7 && !!nI && !nI.inline && same(nI.box, {x:420, y:377, w:60, h:30}), {m7, sr7, nI});
+const r0 = (await draws(6))[0];
+await rep(6, r0.box, WIDE); await press('更換');
+const r1 = (await draws(6))[0], rl = r1 && await pixel(6, r1.box.x + r1.box.w * .25, r1.box.y + r1.box.h / 2), rr = r1 && await pixel(6, r1.box.x + r1.box.w * .75, r1.box.y + r1.box.h / 2);
+check('a page turned by /Rotate whose picture was stored turned: the new picture is upright on screen (red left, blue right)', !!r1 && r1.px.w === 80 && rl[0] > 200 && rl[2] < 80 && rr[2] > 200 && rr[0] < 80, {r0, r1, rl, rr});
+const t0 = (await draws(7))[0];
+await rep(7, t0.box, WIDE); await press('更換');
+const t1 = (await draws(7))[0];
+check('a picture set at 20°: the new one at the same angle', !!t0 && !!t1 && t1.px.w === 80 && Math.abs(Math.abs(t0.deg) - 20) < 1 && Math.abs(t1.deg - t0.deg) < 1, {t0:t0 && t0.deg, t1:t1 && t1.deg});
+await rep(4, {x:100, y:192, w:100, h:50}, TALL);
+const sr5 = await scopeRow();
+await win.click('#modal [name="rfit"][value="fill"]'); await win.click('#modal [name="rscope"][value="all"]'); await press('更換');
+const d5 = await draws(4);
+check('填滿, 全部 2 處: both places take the new picture over their whole area; the old data gone', sr5 && d5.length === 2 && d5.every(d => d.px.w === 40 && d.px.h === 80) && d5.some(d => same(d.box, {x:100, y:192, w:100, h:50})) && d5.some(d => same(d.box, {x:300, y:192, w:100, h:50})) && !(await objects()).some(o => o.w === 50 && o.h === 20), {sr5, d5});
+await rep(3, {x:100, y:142, w:100, h:100}, WIDE);
+await win.click('#modal [data-turn="90"]'); await win.waitForTimeout(200); await press('更換');
+const d3 = (await draws(3))[0];
+check('a picture inside a form, turned once with ↻: drawn a quarter turn round, fitted (50 × 100)', !!d3 && d3.px.w === 80 && near(d3.box.w, 50) && near(d3.box.h, 100) && near(Math.abs(d3.deg), 90, 1), d3);
+await rep(0, {x:100, y:342, w:100, h:100}, WIDE); await press('更換');
+const nB = (await draws(0)).find(d => d.px.w === 80 && near(d.box.y, 367, 1.5));
+check('a cropped picture: the new one fitted into the part that could be seen, centred', !!nB && same(nB.box, {x:100, y:367, w:100, h:50}), {nB, all:await draws(0)});
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
