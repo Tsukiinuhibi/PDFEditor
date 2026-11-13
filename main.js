@@ -223,7 +223,7 @@ ipcMain.handle('app:set-theme', (_e, t) => {
   if (win && !win.isDestroyed()) win.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#141416' : '#cfcbc2');
   return nativeTheme.shouldUseDarkColors;
 });
-ipcMain.handle('app:open-external', (_e, url) => { if (/^https:\/\//i.test(url)) shell.openExternal(url); });
+ipcMain.handle('app:open-external', (_e, url) => { if (/^(https?:\/\/|mailto:)/i.test(String(url))) shell.openExternal(url); });
 
 /* ---------------- 從網址開啟 ---------------- */
 // a PDF downloaded into memory through Chromium's network (redirects, the system's proxy and certificates); the page sees

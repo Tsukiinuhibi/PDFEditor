@@ -516,7 +516,10 @@ svg.dsvg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;ov
 .page .ovl{position:absolute;inset:0}
 .page .ld{position:absolute;inset:0;display:grid;place-items:center;color:#c9c5bc;font-size:12px}
 .tool-note .page,.tool-textbox .page,.tool-signature .page{cursor:crosshair}
-.tool-highlight .page,.tool-digisign .page,.tool-extract .page,.tool-ocr .page{cursor:crosshair}
+.tool-highlight .page,.tool-digisign .page,.tool-extract .page,.tool-ocr .page,.tool-link .page{cursor:crosshair}
+.lnk{position:absolute;display:none;outline:1.5px solid rgba(28,100,217,.75);background:rgba(28,100,217,.08);border-radius:2px;cursor:pointer;z-index:3}
+.tool-link .lnk{display:block}
+.lnk:hover{background:rgba(28,100,217,.18)}
 /* 文字辨識: the box stays marked while its result is shown */
 .ocrmark{position:absolute;border:2px dashed #1c64d9;background:rgba(28,100,217,.08);pointer-events:none;z-index:5;border-radius:2px}
 .ocrp{position:fixed;z-index:60;width:380px;max-width:calc(100vw - 24px);background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 36px rgba(0,0,0,.22);display:flex;flex-direction:column;font-size:13px}
@@ -940,7 +943,7 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
   <div class="grp"><div class="btns">
     <button class="rb" data-tool="note" data-need title="便利貼註解"><i data-i="note"></i>便利貼</button>
     <button class="rb" data-tool="textbox" data-need title="文字方塊：點一下直接在十字處輸入；反白文字即可修改字級、顏色與底色"><i data-i="text"></i>文字方塊</button>
-    <button class="rb" data-act="insertImage" data-need title="插入圖片：選擇圖片後點一下放置或拖曳決定大小；也可以直接把圖片檔拖到頁面上"><i data-i="insImg"></i>插入圖片</button>
+    <button class="rb split" data-amenu="insert" data-need title="插入：點按執行，點 ▾ 選擇（插入圖片、連結）"><span class="sp-main"></span><span class="sp-arr">▾</span></button>
     <button class="rb split" data-menu="markText" data-need title="文字標記：點按使用目前工具，點 ▾ 選擇其他（高亮、刪除線、底線、區域螢光筆）"><span class="sp-main"><i data-i="hlText"></i><span class="sp-lab">高亮</span></span><span class="sp-arr" title="選擇其他文字標記工具">▾</span></button>
     <button class="rb split" data-menu="drawMenu" data-need title="繪圖：點按使用目前工具，點 ▾ 選擇其他（箭頭、線條、矩形、橢圓形、多邊形、雲狀）"><span class="sp-main"><i data-i="arrow"></i><span class="sp-lab">箭頭</span></span><span class="sp-arr" title="選擇其他繪圖工具">▾</span></button>
     <button class="rb" data-tool="pen" data-need title="畫筆：自由手繪"><i data-i="pen2"></i>畫筆</button>
@@ -1104,6 +1107,7 @@ const FONT = '"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif';
 const ICONS = {
   open:'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
   save:'M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14',
+  link:'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1',
   web:'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M3.5 9h17M3.5 15h17M12 3c2.4 2.5 3.6 5.5 3.6 9s-1.2 6.5-3.6 9M12 3c-2.4 2.5-3.6 5.5-3.6 9s1.2 6.5 3.6 9',
   print:'M7 9V4h10v5M7 17H5.5A2.5 2.5 0 0 1 3 14.5v-3A2.5 2.5 0 0 1 5.5 9h13a2.5 2.5 0 0 1 2.5 2.5v3a2.5 2.5 0 0 1-2.5 2.5H17M7 14h10v6H7z',
   undo:'M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11',
@@ -1897,6 +1901,7 @@ function updateUI(){
 
 /* ---------------- tools ---------------- */
 const HINTS = {
+  link:'在頁面上拖曳一個框（通常框住要點的那幾個字）建立連結：連到網址、本文件的某一頁或電子郵件。點一下已有的連結（藍色框）可以修改或刪除；任何工具下 Ctrl＋點連結都可以開啟它。',
   ocr:'在頁面上拖曳框選要辨識的區塊：PDF 本身的文字會直接取出，掃描檔或圖片會用影像辨識（OCR）；辨識結果可以修改後再複製。結果視窗的「字型」頁會比對出可能的字型。',
   extract:'點選紅框的圖片，或在頁面上拖曳框選（按住不放畫面會慢慢拉近）；放開後可拖曳把手慢慢拉大／縮小範圍，按 Enter 或「確定擷取」。',
   note:'在頁面上點一下新增便利貼並直接輸入文字；點頁面上的便利貼圖示可開啟、編輯。',
@@ -2554,6 +2559,7 @@ pagesEl.addEventListener('pointerdown', e => {
   if (t === 'extract') { e.preventDefault(); startExtractDraw(i, e); return; }
   if (t === 'select') { e.preventDefault(); startMarquee(i, e, e.shiftKey); return; }
   if (t === 'ocr') { e.preventDefault(); startOcrDraw(i, e); return; }
+  if (t === 'link') { e.preventDefault(); startLinkDraw(i, e); return; }
   if (t === 'textbox') { e.preventDefault(); textboxDown(i, e); return; }
   if (t === 'image' || t === 'highlight' || t === 'digisign') {
     e.preventDefault();
@@ -7064,6 +7070,7 @@ function showToolMenu(btn, which){
 document.addEventListener('pointerdown', e => { const m = $('#toolMenu'); if (m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('[data-menu],[data-amenu]')) m.style.display = 'none'; }, true);
 /* buttons that gather a few related actions (加頁、旋轉、簽署): the main part repeats the one used last, ▾ lists them all */
 const ACTION_MENUS = {
+  insert:[{tool:'image', ic:'insImg', label:'插入圖片', long:'插入圖片…（也可以把圖片檔拖到頁面上）'}, {tool:'link', ic:'link', label:'連結', long:'連結（網址、本文件的頁面、電子郵件）'}],
   openm:[{act:'open', ic:'open', label:'開啟', long:'開啟檔案…（Ctrl+O）'}, {act:'openUrl', ic:'web', label:'從網址', long:'從網址開啟…（Ctrl+Shift+O）'}],
   output:[{act:'print', ic:'print', label:'列印', long:'列印…（Ctrl+P）'}, {act:'exportImages', ic:'toImage', label:'轉存圖片', long:'將頁面轉存成圖片…'}],
   pageAdd:[{act:'addPage', ic:'pageAdd', label:'加頁', long:'加入空白頁…'}, {act:'insertPdf', ic:'pageIns', label:'插入PDF', long:'從 PDF 插入頁面…'}],
@@ -10200,6 +10207,113 @@ async function urlDialog(pre, auto){
 }
 
 /* ====================================================================
+   連結: standard /Link annotations, so every reader follows them: a web address or e-mail (/A /URI) or a page of this
+   document (/Dest [page /Fit]). The link tool draws a box and asks where it goes; with the tool on, the links show and
+   can be changed or deleted; Ctrl+click follows one with any tool.
+   ==================================================================== */
+const LINKS = new Map(), LINKS_NOW = new Map();   // per version and page: the promise, and the links once known
+// the links on page i: their box on screen, the address or page they go to (named destinations looked up), how they look
+function pageLinks(i){
+  const key = S.version + ':' + i; if (LINKS.has(key)) return LINKS.get(key);
+  if (LINKS.size > 200) { LINKS.clear(); LINKS_NOW.clear(); }
+  const pg = S.pages[i];
+  const p = pg.page.getAnnotations().then(async list => {
+    const out = [];
+    for (const a of list) {
+      if (a.subtype !== 'Link' || !a.rect || (a.annotationFlags & 2)) continue;   // (a hidden link is not followed by any reader)
+      const r = pg.vp1.convertToViewportRectangle(a.rect), box = {x:Math.min(r[0], r[2]), y:Math.min(r[1], r[3]), w:Math.abs(r[2] - r[0]), h:Math.abs(r[3] - r[1])};
+      let page = null;
+      try {
+        let dest = a.dest; if (typeof dest === 'string') dest = await S.pdf.getDestination(dest);
+        if (Array.isArray(dest) && dest[0] != null) page = typeof dest[0] === 'number' ? dest[0] : await S.pdf.getPageIndex(dest[0]);
+      } catch (_) {}
+      const w = a.borderStyle ? a.borderStyle.width : 0;
+      // url: the address as written in the file (shown and changed); href: the same as pdf.js checked it (followed), or ''
+      out.push({id:a.id, box, url:a.unsafeUrl || a.url || '', href:a.url || '', page, look:w > 0 ? 'blue' : 'none'});
+    }
+    LINKS_NOW.set(key, out); return out;
+  }).catch(() => []);
+  LINKS.set(key, p); return p;
+}
+const linkText = l => l.page != null ? `跳到第 ${l.page + 1} 頁` : /^mailto:/i.test(l.url) ? '寄信給：' + l.url.slice(7) : l.url ? '開啟網址：' + l.url : '（沒有目的地）';
+// a box dragged with the link tool (as 文字辨識 does), then where it goes
+function startLinkDraw(i, e){
+  const pg = S.pages[i], p0 = pagePoint(i, e);
+  const d = document.createElement('div'); d.className = 'draft'; S.els[i].querySelector('.ovl').appendChild(d);
+  let box = {x:p0.x, y:p0.y, w:0, h:0};
+  const move = ev => {
+    const p = pagePoint(i, ev);
+    box = {x:Math.max(0, Math.min(p0.x, p.x)), y:Math.max(0, Math.min(p0.y, p.y))}; box.w = Math.min(pg.w, Math.max(p0.x, p.x)) - box.x; box.h = Math.min(pg.h, Math.max(p0.y, p.y)) - box.y;
+    Object.assign(d.style, {left:box.x / pg.w * 100 + '%', top:box.y / pg.h * 100 + '%', width:box.w / pg.w * 100 + '%', height:box.h / pg.h * 100 + '%'});
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+    if (box.w < 4 || box.h < 4) { d.remove(); return; }
+    openLinkDialog(i, {box}).finally(() => d.remove());
+  };
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+}
+// the window for a new link (box) or one already there (link): returns nothing; makes, changes or deletes it
+async function openLinkDialog(i, {box = null, link = null} = {}){
+  const n = S.pages.length, cur = link ? (link.page != null ? {kind:'page', page:link.page + 1} : /^mailto:/i.test(link.url) ? {kind:'mail', mail:link.url.slice(7)} : {kind:'url', url:link.url}) : {kind:'url'};
+  const body = document.createElement('div'); body.style.width = 'min(460px, 80vw)';
+  body.innerHTML = `<div class="pr-row"><div class="field"><label>連到</label><select id="lkKind"><option value="url">網址</option><option value="page">本文件的頁面</option><option value="mail">電子郵件</option></select></div>
+      <div class="field"><label>外觀</label><select id="lkLook"><option value="none">不顯示框</option><option value="blue">細藍框</option></select></div></div>
+    <div class="field" data-k="url"><label>網址</label><input type="text" id="lkUrl" placeholder="https://example.com" spellcheck="false" autocomplete="off"></div>
+    <div class="field" data-k="page"><label>頁碼（1～${n}）</label><input type="number" id="lkPage" min="1" max="${n}"></div>
+    <div class="field" data-k="mail"><label>電子郵件地址</label><input type="text" id="lkMail" placeholder="name@example.com" spellcheck="false" autocomplete="off"></div>
+    <div class="pr-err" id="lkErr"></div>`;
+  const $b = q => body.querySelector(q);
+  // where it goes as typed: {kind, url, page (0-based), mail, look} or {err}
+  const read = () => {
+    const kind = $b('#lkKind').value, look = $b('#lkLook').value;
+    if (kind === 'url') {
+      let u = $b('#lkUrl').value.trim(); if (!u) return {err:'', empty:true};
+      if (!/^[a-z][a-z0-9+.-]*:/i.test(u)) u = 'https://' + u;
+      let ok = false; try { const x = new URL(u); ok = /^https?:$/.test(x.protocol) && !!x.hostname; if (ok && /[^\x20-\x7e]/.test(u)) u = x.href; } catch (_) {}
+      return ok ? {kind, url:u, look} : {err:'網址要是 http:// 或 https:// 開頭的網址'};
+    }
+    if (kind === 'page') {
+      const v = $b('#lkPage').value.trim(), p = +v; if (!v) return {err:'', empty:true};
+      return Number.isInteger(p) && p >= 1 && p <= n ? {kind, page:p - 1, look} : {err:`頁碼要在 1～${n} 之間`};
+    }
+    const m = $b('#lkMail').value.trim(); if (!m) return {err:'', empty:true};
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(m) ? {kind, mail:m, look} : {err:'電子郵件地址的格式不對'};
+  };
+  const refresh = () => {
+    const k = $b('#lkKind').value; body.querySelectorAll('[data-k]').forEach(el => { el.style.display = el.dataset.k === k ? '' : 'none'; });
+    const r = read(); $b('#lkErr').textContent = r.err || ''; const g = $('#lkGo'); if (g) g.disabled = !!(r.err != null);
+  };
+  const r = await openModal({title:link ? '修改連結' : '建立連結', body, buttons:[
+    {label:'取消', value:null}, ...(link ? [{label:'刪除連結', id:'lkDel', value:'del'}] : []),
+    {label:link ? '儲存' : '建立', id:'lkGo', primary:true, handler:() => { const t = read(); return t.err != null ? undefined : t; }},
+  ], onOpen:() => {
+    $b('#lkKind').value = cur.kind; $b('#lkLook').value = link ? link.look : 'none';
+    if (cur.url) $b('#lkUrl').value = cur.url; if (cur.page) $b('#lkPage').value = cur.page; if (cur.mail) $b('#lkMail').value = cur.mail;
+    body.addEventListener('input', refresh); body.addEventListener('change', refresh);
+    body.addEventListener('keydown', e => { if (e.key === 'Enter' && !$('#lkGo').disabled) { e.preventDefault(); $('#lkGo').click(); } });
+    refresh(); const f = $b(`[data-k="${cur.kind}"] input`); if (f) { f.focus(); f.select(); }
+  }});
+  if (r === 'del' && link) return mutate('已刪除連結', doc => { const ref = findAnnotRef(doc, i, link.id); if (!ref) return false; removeAnnotRefs(doc, i, ref); });
+  if (!r || r === 'del') return;
+  if (link) return mutate('已修改連結', doc => {
+    const ref = findAnnotRef(doc, i, link.id); if (!ref) return false;
+    const d = doc.context.lookup(ref, PDFDict), keys = r.look !== link.look ? ['A', 'Dest', 'Border', 'C', 'AP'] : ['A', 'Dest'];
+    keys.forEach(k => d.delete(N_(k)));
+    Object.entries({...linkTarget(doc, r), ...(r.look !== link.look ? linkLook(doc, r, i, link.box) : {})}).forEach(([k, v]) => d.set(N_(k), doc.context.obj(v)));
+  });
+  return mutate('已建立連結', doc => { addAnnot(doc, i, {Type:'Annot', Subtype:'Link', Rect:visToPdf(i, box).rect, ...linkTarget(doc, r), ...linkLook(doc, r, i, box)}); });
+}
+// where a link goes, as PDF entries (strings become names in ctx.obj)
+const linkTarget = (doc, t) => t.kind === 'page' ? {Dest:[doc.getPage(t.page).ref, 'Fit']} : {A:{S:'URI', URI:PDFString.of(t.kind === 'mail' ? 'mailto:' + t.mail : t.url)}};
+// how it looks: no frame, or a thin blue one drawn as its appearance too (pdf.js, Edge and Chrome draw only that); no print
+// flag, so the frame shows on screen and is not printed, as Acrobat does with link frames
+function linkLook(doc, t, i, box){
+  if (t.look !== 'blue') return {Border:[0, 0, 0]};
+  return {Border:[0, 0, 1], C:[0, 0, 1], AP:{N:formAP(doc, `0 0 1 RG 1 w 0.5 0.5 ${Math.max(0, box.w - 1).toFixed(2)} ${Math.max(0, box.h - 1).toFixed(2)} re S`, box.w, box.h, visToPdf(i, box).rot)}};
+}
+
+/* ====================================================================
    Sample document
    ==================================================================== */
 async function makeSample(){
@@ -10788,6 +10902,13 @@ window.__pdfapp = {
   },
   imageBoxes:i => detectImages(i),
   multi:() => MS ? {i:MS.i, ids:MS.items.map(a => a.id)} : null,
+  links:async i => {   // (tests) page i's links: on screen, where they go, how they look
+    const doc = await geoDoc();
+    return Promise.all((await pageLinks(i)).map(async l => {
+      const ref = findAnnotRef(doc, i, l.id), d = ref && doc.context.lookup(ref, PDFDict), b = d && d.lookupMaybe(N_('Border'), PDFArray), c = d && d.lookupMaybe(N_('C'), PDFArray), dest = d && d.get(N_('Dest'));
+      return {id:l.id, box:l.box, url:l.url || null, page:l.page, fit:dest instanceof PDFArray && String(dest.get(1)) === '/Fit', border:b ? numArr(b)[2] : 1, blue:!!c && numArr(c).join() === '0,0,1', ap:!!(d && d.get(N_('AP'))), printed:!!(d && d.get(N_('F')) && (d.get(N_('F')).asNumber() & 4))};
+    }));
+  },
   switchTab,
   lineTexts:async i => (await findLines(i)).map(l => l.text),
   blockRTs:async i => {   // (tests) our own text blocks on page i: their editing data (lines and runs), in page order
