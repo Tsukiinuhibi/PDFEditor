@@ -4,6 +4,7 @@ import { launch } from './_env.mjs';
 const { app } = await launch('pf.pdf');
 const win = await app.firstWindow(); win.on('pageerror', e => console.log('PAGEERR', e.message));
 await win.waitForTimeout(3500);
+await win.waitForFunction(() => !!(window.__pdfapp && window.__pdfapp.S.pages.length), null, {timeout:30000});   // a slow start (e.g. right after the OCR test)
 await win.evaluate(() => {
   window.__fl = {frames:0, blank:0, blankPages:new Set(), veil:0};
   const tick = () => {
