@@ -102,5 +102,21 @@ const barXY = await A(() => { const b = document.querySelector('.abar'); if (!b)
 if (barXY) await rclick(barXY);
 check('a right-click on the bar beside the selection: still selected, no menu', !!barXY && (await A(() => window.__pdfapp.sel()))?.id === sq.id && (await menu()) === null, {barXY, sel:await A(() => window.__pdfapp.sel())});
 
+// a stroke still being written when an object is right-clicked: the object stays selected after the save
+await tool('pen'); await drag(await see(0, 330, 430), await P(0, 380, 460));
+await rclick(await onSq()); await win.waitForTimeout(1500);
+const s3 = await A(() => window.__pdfapp.sel());
+check('畫筆 stroke still being written, then a right-click on the rectangle: it stays selected', (await curTool()) === 'select' && s3?.id === sq.id, {tool:await curTool(), s3});
+// Windows: the menu event comes when the right button is released (a person holds it about 0.1 s)
+const ft1 = (await anns(0, 'FreeText')).length;
+await tool('textbox'); await click(await see(0, 100, 700)); await win.keyboard.type('視窗順序'); await win.waitForTimeout(200);
+const wxy = await blank();
+await A(([x, y]) => { const t = document.elementFromPoint(x, y); t.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true, cancelable:true, composed:true, button:2, buttons:2, clientX:x, clientY:y, pointerType:'mouse', isPrimary:true})); }, wxy);
+await win.waitForTimeout(80);
+await A(([x, y]) => { const t = document.elementFromPoint(x, y); t.dispatchEvent(new PointerEvent('pointerup', {bubbles:true, cancelable:true, composed:true, button:2, buttons:0, clientX:x, clientY:y, pointerType:'mouse', isPrimary:true})); t.dispatchEvent(new MouseEvent('contextmenu', {bubbles:true, cancelable:true, composed:true, button:2, clientX:x, clientY:y})); }, wxy);
+await win.waitForTimeout(1500);
+const fts2 = await anns(0, 'FreeText');
+check('Windows order: typing in a text box, then a right-click (menu event on release) → the text is kept, back to 選取', fts2.length === ft1 + 1 && fts2.some(a => (a.contents || '').includes('視窗順序')) && (await curTool()) === 'select', {n:fts2.length, ft1, tool:await curTool()});
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});   // unsaved changes: no asking

@@ -2389,7 +2389,7 @@ viewer.addEventListener('contextmenu', async e => {
   if (e.target.closest('.npop, .abar, .xbar')) return;   // an open note, the bar beside a selection: nothing
   const pel = e.target.closest('.page'), i = pel ? +pel.dataset.i : -1;
   const pt = pel ? pagePointXY(i, e.clientX, e.clientY) : null;   // now: leaving a tool closes its bar above, and the pages move up
-  if (pel) { const note = await noteAt(i, e.clientX, e.clientY); if (note) { showNoteMenu(e, i, note); return; } }
+  if (pel) { const note = await noteAt(i, e.clientX, e.clientY); if (note) { if (TBE) await commitTextEditor(); showNoteMenu(e, i, note); return; } }
   await backToSelect();
   if (pt && S.tool === 'select' && S.els[i]) { const a = await annAt(i, pt); if (a) selectAnnot(i, a); }   // on an object: select it
 });
@@ -2405,8 +2405,13 @@ async function annAt(i, p){
 async function backToSelect(){
   if (NP) await closeNote(true);   // an open note is written first
   if (POLY) { const need = DRAW_TOOLS[S.tool] && DRAW_TOOLS[S.tool].closed ? 3 : 2; if (POLY.pts.length >= need) await finishPoly(); else cancelPoly(); }
-  if (FPOLY) { if (FPOLY.pts.length >= 3) finishFillPoly(); else cancelFillPoly(); }
-  if (S.tool !== 'select') setTool('select'); else deselectAnnot();
+  if (FPOLY) { if (FPOLY.pts.length >= 3) await finishFillPoly(); else cancelFillPoly(); }
+  if (S.tool === 'pen' || PEN.strokes.length || PEN.busy) await flushPen();
+  if (S.tool !== 'select') {
+    setTool('select');   // a text box being typed in is saved first, then the tool changes
+    await tbSaving; await noteSaving;
+    if (S.tool !== 'select' && !TBE) setTool('select');
+  } else deselectAnnot();
 }
 pagesEl.addEventListener('pointermove', e => textboxHover(e));
 pagesEl.addEventListener('pointerleave', () => { if (S.tool === 'textbox') clearTextMarks(); });
@@ -4398,7 +4403,7 @@ async function editTextBox(i, a){
   openTextEditor(i, a.x, a.y, {id:a.id, lines, box:rt ? rt.box : {boxBg:'', border:false}, veilBox:a});
 }
 let tbCommittedAt = 0;
-document.addEventListener('pointerdown', e => { if (TBE && !TBE.el.contains(e.target) && !e.target.closest('#hint,#cpMenu,#ctx,#eyedrop,#fontMenu,#mask')) { if (e.button === 0) tbCommittedAt = performance.now(); commitTextEditor(); } }, true);
+document.addEventListener('pointerdown', e => { if (TBE && !TBE.el.contains(e.target) && !e.target.closest('#hint,#cpMenu,#ctx,#eyedrop,#fontMenu,#mask') && !(e.button === 2 && viewer.contains(e.target))) { if (e.button === 0) tbCommittedAt = performance.now(); commitTextEditor(); } }, true);
 async function textboxAt(i, e){
   const p = snapPoint(i, pagePoint(i, e), {mark:false});
   await tbSaving;
@@ -5869,7 +5874,7 @@ function cancelFillPoly(){ if (FPOLY) { FPOLY.g.remove(); FPOLY = null; } }
 function finishFillPoly(){
   if (!FPOLY) return;
   const {i, pts} = FPOLY; cancelFillPoly();
-  if (pts.length >= 3) createFillPoly(i, pts); else toast('至少需要 3 個節點才能填色', 'err');
+  if (pts.length >= 3) return createFillPoly(i, pts); else toast('至少需要 3 個節點才能填色', 'err');
 }
 function fillNodeDown(i, e){
   if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();   // so Enter / Backspace reach the node editor
