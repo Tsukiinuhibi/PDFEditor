@@ -402,6 +402,9 @@ svg.dsvg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;ov
 .aveil{position:absolute;background:rgba(255,255,255,.72);pointer-events:none;z-index:3;outline:1px dashed #adb5bd}
 .abar .hintk{color:#9aa2ab;font-size:11px}
 .abar button[data-x=del]{background:var(--seal)}
+.abar button.z{display:flex;align-items:center;padding:3px 4px}
+.abar button.z svg.i{width:16px;height:16px}
+.abar button.z:hover{background:rgba(255,255,255,.28)}
 .rb.split{flex-direction:row;align-items:stretch;padding:0;gap:0}
 .rb.split .sp-main{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:5px 2px 4px 6px;min-width:38px;border-radius:7px 0 0 7px}
 .rb.split .sp-arr{display:flex;align-items:center;padding:0 5px;font-size:10px;color:var(--ink3);border-left:1px solid transparent;border-radius:0 7px 7px 0}
@@ -1085,6 +1088,7 @@ const ICONS = {
   alL:'M4 3v18M8 6h11v4H8zM8 14h7v4H8z', alC:'M12 3v18M6 6h12v4H6zM8 14h8v4H8z', alR:'M20 3v18M5 6h11v4H5zM9 14h7v4H9z',
   alT:'M3 4h18M6 8h4v11H6zM14 8h4v7h-4z', alM:'M3 12h18M6 6h4v12H6zM14 8h4v8h-4z', alB:'M3 20h18M6 5h4v11H6zM14 9h4v7h-4z',
   distH:'M3 4v16M21 4v16M9 8h6v8H9z', distV:'M4 3h16M4 21h16M8 9h8v6H8z',
+  zTop:'M7 13l5-5 5 5M7 19l5-5 5 5M5 4h14', zUp:'M7 14.5l5-5 5 5', zDown:'M7 9.5l5 5 5-5', zBot:'M7 11l5 5 5-5M7 5l5 5 5-5M5 20h14',
   hand:'M18 11V6a2 2 0 0 0-4 0M14 10V4a2 2 0 0 0-4 0v2M10 10.5V6a2 2 0 0 0-4 0v8M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15',
   image:'M3 3h4M3 3v4M21 3h-4M21 3v4M3 21h4M3 21v-4M21 21h-4M21 21v-4M7 16l3.5-4 2.5 3 2-2 2 3zM15 8.5h.01',
   gear:'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z',
@@ -1977,6 +1981,9 @@ window.addEventListener('keydown', e => {
   if (MS && e.key === 'Escape') { e.preventDefault(); clearMulti(); return; }
   if (AS && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); deleteSelected(); return; }
   if (AS && e.key === 'Escape') { e.preventDefault(); deselectAnnot(); return; }
+  if (AS && mod && !e.altKey && (e.code === 'BracketRight' || e.code === 'BracketLeft')) {   // 上下層級, as in Office: Ctrl+] up, Ctrl+Shift+] to the top
+    e.preventDefault(); stackObj(AS.i, AS.a.id, e.code === 'BracketRight' ? (e.shiftKey ? 'front' : 'forward') : (e.shiftKey ? 'back' : 'backward')); return;
+  }
   if (AS && AS.movable && /^Arrow/.test(e.key) && !mod) {
     e.preventDefault(); const d = e.shiftKey ? 10 : 1;
     nudgeSelected(e.key === 'ArrowLeft' ? -d : e.key === 'ArrowRight' ? d : 0, e.key === 'ArrowUp' ? -d : e.key === 'ArrowDown' ? d : 0); return;
@@ -6208,11 +6215,15 @@ async function fillAt(i, p){
   const png = new Uint8Array(await (await blobOf(out, 'image/png')).arrayBuffer());
   const b = {x:fm.minX / src.k, y:fm.minY / src.k, w:w / src.k, h:h / src.k};
   await mutate('已填色', async doc => {
-    if (old) { const ref = findAnnotRef(doc, i, old.id); if (ref) removeAnnotRefs(doc, i, ref); }
-    const g = visToPdf(i, b), ap = await imageAP(doc, png, b.w, b.h, g.rot);
-    addAnnot(doc, i, {Type:'Annot', Subtype:'Stamp', Name:'Fill', Rect:g.rect, Contents:PDFHexString.fromText(FILL_MARK), C:hexColor(color),
-      T:PDFHexString.fromText(AUTHOR), M:nowStr(), CreationDate:nowStr(), Subj:PDFHexString.fromText('填色'), F:4, PDFE:true, AP:{N:ap},
-      ...((st.opacity ?? 1) < 1 ? {CA:st.opacity} : {})});   // the opacity is in the picture; CA lets the bar show it
+    const add = async () => {
+      const g = visToPdf(i, b), ap = await imageAP(doc, png, b.w, b.h, g.rot);
+      addAnnot(doc, i, {Type:'Annot', Subtype:'Stamp', Name:'Fill', Rect:g.rect, Contents:PDFHexString.fromText(FILL_MARK), C:hexColor(color),
+        T:PDFHexString.fromText(AUTHOR), M:nowStr(), CreationDate:nowStr(), Subj:PDFHexString.fromText('填色'), F:4, PDFE:true, AP:{N:ap},
+        ...((st.opacity ?? 1) < 1 ? {CA:st.opacity} : {})});   // the opacity is in the picture; CA lets the bar show it
+    };
+    const ref = old && findAnnotRef(doc, i, old.id);
+    if (ref) await keepPlace(doc, i, ref, async () => { removeAnnotRefs(doc, i, ref); await add(); });   // done again: where the old one lay
+    else await add();
   });
 }
 async function recolorShape(i, a, color){
@@ -6624,11 +6635,13 @@ async function eraseInk(i, path, radius){
     if (changed) plan.push({a, keep});
   }
   if (!plan.length) return;
-  await mutate('已擦除筆跡', doc => {
+  await mutate('已擦除筆跡', async doc => {
     for (const {a, keep} of plan) {
       const ref = findAnnotRef(doc, i, a.id); if (!ref) continue;
-      removeAnnotRefs(doc, i, ref);
-      if (keep.length) inkAnnotParts(doc, i, keep, {color:a.inkColor || '#000000', width:a.inkWidth || 1, opacity:a.inkOpacity ?? 1}, '畫筆');
+      await keepPlace(doc, i, ref, () => {   // what is left of the stroke stays where it was
+        removeAnnotRefs(doc, i, ref);
+        if (keep.length) inkAnnotParts(doc, i, keep, {color:a.inkColor || '#000000', width:a.inkWidth || 1, opacity:a.inkOpacity ?? 1}, '畫筆');
+      });
     }
   }, {fromPen:true});
 }
@@ -7109,7 +7122,7 @@ function selectAnnot(i, a){
   if (resizable) el.innerHTML = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].map(d => `<div class="h" data-d="${d}"></div>`).join('');
   const bar = document.createElement('div'); bar.className = 'xbar abar';
   const snip = a.contents && a.subtype !== 'Stamp' ? `：${esc(a.contents.slice(0, 24))}${a.contents.length > 24 ? '…' : ''}` : '';
-  bar.innerHTML = `<span class="dim">${esc(a.label)}${snip}</span>${movable ? `<span class="dim hintk">拖曳移動${resizable ? '・把手調整大小' : ''}</span>` : ''}${a.subtype === 'FreeText' ? '<button data-x="edit">✎ 編輯文字</button>' : ''}<button data-x="del">🗑 刪除 (Del)</button>`;
+  bar.innerHTML = `<span class="dim">${esc(a.label)}${snip}</span>${movable ? `<span class="dim hintk">拖曳移動${resizable ? '・把手調整大小' : ''}</span>` : ''}${a.subtype === 'FreeText' ? '<button data-x="edit">✎ 編輯文字</button>' : ''}${a.sig ? '' : zButtons()}<button data-x="del">🗑 刪除 (Del)</button>`;
   if (a.subtype === 'FreeText') el.addEventListener('dblclick', e => { e.stopPropagation(); const k = AS.i; deselectAnnot(); editTextBox(k, a); });
   ovl.appendChild(el); ovl.appendChild(bar); S.els[i].style.zIndex = 4;
   AS = {i, a, box:{x:a.x, y:a.y, w:a.w, h:a.h}, el, bar, movable, resizable, keep:a.subtype === 'Stamp'};
@@ -7122,7 +7135,11 @@ function selectAnnot(i, a){
     if (e.target.closest('.eh')) return geomDrag(e, 'end', +e.target.closest('.eh').dataset.e);
     dragAnnot(e, e.target.dataset.d || 'move'); });
   bar.addEventListener('pointerdown', e => e.stopPropagation());
-  bar.addEventListener('click', e => { if (e.target.closest('[data-x="del"]')) deleteSelected(); if (e.target.closest('[data-x="edit"]')) { deselectAnnot(); editTextBox(i, a); } });
+  bar.addEventListener('click', e => {
+    if (e.target.closest('[data-x="del"]')) deleteSelected();
+    if (e.target.closest('[data-x="edit"]')) { deselectAnnot(); editTextBox(i, a); }
+    const z = e.target.closest('[data-x^="z-"]'); if (z) stackObj(i, a.id, Z_HOW[z.dataset.x]);
+  });
   drawASel();
   addLayerPicker(i, a);
   addGeomHandles(i, a);
@@ -8900,6 +8917,88 @@ function restack(doc){
     page.node.set(N_('Annots'), doc.context.obj(sorted.map(it => it.r)));
   });
 }
+/* 上下層級: each page draws its objects in the order of its /Annots, the later on top. An object moves among the objects
+   of its own layer on its page (the layers' order comes first and restack keeps it); a sticky note's window goes with it;
+   links, form fields and the like keep their places among the rest.
+   how: 'front' | 'forward' | 'backward' | 'back', or {rel:id, above} (right above or under the object rel, in rel's layer).
+   Returns 'moved', 'same', 'top', 'bottom', or null (no such object on page i) */
+function stackPlace(doc, i, id, how){
+  const page = doc.getPage(i), annots = page.node.lookupMaybe(N_('Annots'), PDFArray); if (!annots) return null;
+  const ctx = doc.context, ids = new Set(readLayers(doc).map(l => l.id)), list = annots.asArray();
+  const dictOf = r => r instanceof PDFRef ? ctx.lookupMaybe(r, PDFDict) : null;
+  const unitOf = r => {   // whose entry this is: an object's own, or (a note window) the object it belongs to
+    const d = dictOf(r); if (!d) return null;
+    const par = subOf(d) === 'Popup' ? d.get(N_('Parent')) : null;
+    return par instanceof PDFRef ? refId(par) : refId(r);
+  };
+  const find = x => list.find(r => r instanceof PDFRef && refId(r) === x);
+  const me = find(id), md = dictOf(me); if (!md || !layerable(md)) return null;
+  let rel = null, moved = false;
+  if (how && typeof how === 'object') {
+    rel = find(how.rel); const rd = dictOf(rel); if (!rd || !layerable(rd)) return null;
+    if (rel === me) return 'same';
+    const oc = rd.get(N_('OC')), was = md.get(N_('OC'));
+    if (String(oc || '') !== String(was || '')) { if (oc) md.set(N_('OC'), oc); else md.delete(N_('OC')); moved = true; }   // into rel's layer
+  }
+  const layerOf = d => ocOfDict(doc, d, ids) || '', mine = layerOf(md);
+  const moving = [me, ...list.filter(r => r !== me && unitOf(r) === id)], rest = list.filter(r => !moving.includes(r));
+  const peers = rest.filter(r => { const d = dictOf(r); return d && unitOf(r) === refId(r) && layerable(d) && layerOf(d) === mine; });
+  const k0 = list.indexOf(me), below = peers.filter(r => list.indexOf(r) < k0), above = peers.filter(r => list.indexOf(r) > k0);
+  // where an object's entries start, or end, among the rest
+  const span = (r, end) => { const ks = rest.map((x, k) => unitOf(x) === refId(r) ? k : -1).filter(k => k >= 0); return end ? Math.max(...ks) + 1 : Math.min(...ks); };
+  let at;
+  if (rel) at = span(rel, how.above);
+  else if (how === 'front' || how === 'forward') { if (!above.length) return 'top'; at = span(how === 'front' ? above[above.length - 1] : above[0], true); }
+  else if (how === 'back' || how === 'backward') { if (!below.length) return 'bottom'; at = span(how === 'back' ? below[0] : below[below.length - 1], false); }
+  else return null;
+  const next = [...rest.slice(0, at), ...moving, ...rest.slice(at)];
+  if (next.some((r, k) => r !== list[k])) { page.node.set(N_('Annots'), ctx.obj(next)); moved = true; }
+  if (!moved) return 'same';
+  restack(doc);
+  return 'moved';
+}
+const STACK_LABEL = {front:'已移到最上層', forward:'已上移一層', backward:'已下移一層', back:'已移到最下層'};
+const Z_HOW = {'z-front':'front', 'z-up':'forward', 'z-down':'backward', 'z-back':'back'};
+const Z_BTNS = [['z-front', '移到最上層', 'zTop', 'Ctrl+Shift+]'], ['z-up', '上移一層', 'zUp', 'Ctrl+]'], ['z-down', '下移一層', 'zDown', 'Ctrl+['], ['z-back', '移到最下層', 'zBot', 'Ctrl+Shift+[']];
+const zButtons = () => Z_BTNS.map(([k, t, ic, kb]) => `<button class="z" data-x="${k}" title="${t}（${kb}）">${icon(ic)}</button>`).join('');
+// one change (one undo step); at the top or the bottom already: a message and no change. A selected object stays selected.
+async function stackObj(i, id, how, label){
+  const lm = await layerModel(), o = lm.byId.get(id); if (!o || o.i !== i) return false;
+  const lyr = x => x && x.layer ? lm.layers.find(l => l.id === x.layer) : null, l = lyr(o);
+  const t = how && typeof how === 'object' ? lm.byId.get(how.rel) : null;
+  if (how && typeof how === 'object' && (!t || t.i !== i)) return false;
+  if ((l && l.locked) || (t && lyr(t) && lyr(t).locked)) { toast('這個圖層已鎖定，解鎖後才能調整', 'err'); return false; }
+  let res = null;
+  if (!t) {
+    const up = how === 'front' || how === 'forward';
+    if (!lm.objs.some(x => x.i === i && x.id !== id && (x.layer || '') === (o.layer || '') && (up ? x.k > o.k : x.k < o.k))) res = up ? 'top' : 'bottom';
+  }
+  const keep = AS && AS.i === i && AS.a.id === id;
+  const ok = !res && await mutate(label || STACK_LABEL[how] || '已調整前後順序', doc => { res = stackPlace(doc, i, id, how); if (res !== 'moved') return false; });
+  if (res === 'top' || res === 'bottom') {
+    const w = res === 'top' ? '上' : '下';
+    toast(l && lm.layers.length > 1 ? `已經是「${l.name}」最${w}面的物件` : `已經在最${w}層`);
+  }
+  if (!ok) return false;
+  if (keep && S.els[i]) { const a = (await getAnns(i)).find(x => x.id === id); if (a) selectAnnot(i, a); }
+  buildLayersPanel();
+  return true;
+}
+// a change that takes an object out and puts new ones in (a fill done again, a stroke partly erased): the new ones take its
+// place in the stack and its layer, as if it had been changed where it lies
+async function keepPlace(doc, i, oldRef, fn){
+  const annots = () => doc.getPage(i).node.lookupMaybe(N_('Annots'), PDFArray), key = r => r instanceof PDFRef ? refId(r) : null;
+  const before = annots() ? annots().asArray() : [], k = before.findIndex(r => key(r) === refId(oldRef));
+  const od = doc.context.lookupMaybe(oldRef, PDFDict), oc = od && od.get(N_('OC')), had = new Set(before.map(key));
+  const out = await fn();
+  const now = annots(); if (k < 0 || !now) return out;
+  const list = now.asArray(), fresh = list.filter(r => key(r) && !had.has(key(r))); if (!fresh.length) return out;
+  fresh.forEach(r => { const d = doc.context.lookupMaybe(r, PDFDict); if (!d || subOf(d) === 'Popup') return; if (oc) d.set(N_('OC'), oc); else d.delete(N_('OC')); });
+  const rest = list.filter(r => !fresh.includes(r)), under = before.slice(0, k).reverse().find(r => rest.includes(r)), at = under ? rest.indexOf(under) + 1 : 0;
+  doc.getPage(i).node.set(N_('Annots'), doc.context.obj([...rest.slice(0, at), ...fresh, ...rest.slice(at)]));
+  restack(doc);
+  return out;
+}
 // a new layer goes right above layer `after` (in the same group), else on top (or at the bottom)
 function createLayer(doc, name, {top = true, after = null} = {}){
   const tree = readOrderTree(doc);
@@ -9417,7 +9516,8 @@ function keyFromEvent(e){
 const RESERVED = [K('KeyO', 'O', {ctrl:1}), K('KeyS', 'S', {ctrl:1}), K('KeyZ', 'Z', {ctrl:1}), K('KeyY', 'Y', {ctrl:1}), K('KeyZ', 'Z', {ctrl:1, shift:1}),
   K('KeyC', 'C', {ctrl:1}), K('KeyX', 'X', {ctrl:1}), K('KeyV', 'V', {ctrl:1}), K('KeyW', 'W', {ctrl:1}), K('KeyA', 'A', {ctrl:1}),
   K('Tab', 'Tab', {ctrl:1}), K('Tab', 'Tab', {ctrl:1, shift:1}), K('Digit0', '0', {ctrl:1}), K('Equal', '=', {ctrl:1}), K('Minus', '-', {ctrl:1}),
-  K('Space', '空白鍵'), K('Escape', 'Esc'), K('Delete', 'Delete'), K('KeyR', 'R', {ctrl:1}), K('Enter', 'Enter')];
+  K('Space', '空白鍵'), K('Escape', 'Esc'), K('Delete', 'Delete'), K('KeyR', 'R', {ctrl:1}), K('Enter', 'Enter'),
+  K('BracketRight', ']', {ctrl:1}), K('BracketRight', ']', {ctrl:1, shift:1}), K('BracketLeft', '[', {ctrl:1}), K('BracketLeft', '[', {ctrl:1, shift:1})];
 const isReserved = b => b.type === 'key' && RESERVED.some(r => sameBind(r, b));
 function findBinding(b){ for (const a of BIND_ACTIONS) if ((BINDS[a.id] || []).some(x => sameBind(x, b))) return a; return null; }
 const mouseBound = button => !!findBinding(MB(button));
@@ -9851,6 +9951,12 @@ window.__pdfapp = {
   },
   imageBoxes:i => detectImages(i),
   multi:() => MS ? {i:MS.i, ids:MS.items.map(a => a.id)} : null,
+  annotsOrder:async i => {   // (tests) page i's /Annots as it stands: each entry's id, subtype, the object a note window belongs to, its layer
+    const doc = await geoDoc(), arr = doc.getPage(i).node.lookupMaybe(N_('Annots'), PDFArray), ids = new Set(readLayers(doc).map(l => l.id));
+    return arr ? arr.asArray().filter(r => r instanceof PDFRef).map(r => { const d = doc.context.lookupMaybe(r, PDFDict), par = d && d.get(N_('Parent'));
+      return {id:refId(r), sub:d ? subOf(d) : '', parent:par instanceof PDFRef ? refId(par) : null, oc:d ? ocOfDict(doc, d, ids) : null}; }) : [];
+  },
+  stackObj,
   pruneUnused:b => pruneUnused(b),
   imageObjects:async () => { const doc = await geoDoc(), out = []; doc.context.enumerateIndirectObjects().forEach(([, o]) => { if (o && o.dict && String(o.dict.get(N_('Subtype'))) === '/Image') { const n = k => { const v = o.dict.get(N_(k)); return v && v.asNumber ? v.asNumber() : 0; }; out.push({w:n('Width'), h:n('Height')}); } }); return out; },
   pageKeys:async i => (await geoDoc()).getPage(i).node.keys().map(k => String(k).slice(1)),
