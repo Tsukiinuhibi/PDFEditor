@@ -34,8 +34,17 @@ check('匯出: the file name offered, then the message', !!sv && sv.length === 1
 const mtime = fs.existsSync(FILE) ? fs.statSync(FILE).mtimeMs : 0;
 await A(() => document.querySelectorAll('#toasts .toast').forEach(t => t.remove()));
 await answerSave(null);
-if (await A(() => !!document.querySelector('#modal [data-sf="export"]'))) { await win.click('#modal [data-sf="export"]'); await win.waitForTimeout(800); }
-check('匯出 cancelled: no message, the file not written again', !!j && !(await toasts()).some(t => t.includes('已匯出設定')) && fs.statSync(FILE).mtimeMs === mtime, await toasts());
+if (!(await A(() => !!document.querySelector('#modal [data-sf="export"]')))) await openFileTab();
+await win.click('#modal [data-sf="export"]'); await win.waitForTimeout(800);
+check('匯出 cancelled: the save dialog was shown; no message, the file not written again', !!j && ((await asked()) || []).length === 1 && !(await toasts()).some(t => t.includes('已匯出設定')) && fs.statSync(FILE).mtimeMs === mtime, {asked:await asked(), t:await toasts()});
+// the opened PDF picked in the save dialog: refused (never overwrite the user's file), asked again
+const PDF = path.join(TMP, 'sf1.pdf'), pdf0 = fs.readFileSync(PDF);
+const FILE2 = path.join(TMP, 'settings2.json');
+await app.evaluate(({dialog}, [pdf, f2]) => { global.__saved = []; global.__boxes = 0; let n = 0;
+  dialog.showSaveDialog = async (w, o) => { global.__saved.push(o.defaultPath); n++; return {canceled:false, filePath:n === 1 ? pdf : f2}; };
+  dialog.showMessageBox = async () => { global.__boxes++; return {response:0}; }; }, [PDF, FILE2]);
+await win.click('#modal [data-sf="export"]'); await win.waitForTimeout(1200);
+check('匯出 to the opened PDF: refused, the PDF untouched, asked again', fs.readFileSync(PDF).equals(pdf0) && ((await asked()) || []).length === 2 && (await app.evaluate(() => global.__boxes)) === 1 && fs.existsSync(FILE2), {asked:await asked(), boxes:await app.evaluate(() => global.__boxes), pdfStart:fs.readFileSync(PDF).slice(0, 5).toString()});
 
 
 // ---- part 2: import ---------------------------------------------------------------------------------------------------
@@ -69,6 +78,18 @@ await win.click('#modal .mf button:has-text("匯入並重新載入")'); await wi
 const after = await A(() => ({marker:window.__marker ?? null, theme:localStorage.getItem('pdfeditor.theme'), shown:document.documentElement.dataset.theme, people:window.__pdfapp.people(), extra:localStorage.getItem('pdfeditor.extra.test'), seen:localStorage.getItem('pdfeditor.seenversion.v1')}));
 check('匯入並重新載入: reloaded, the settings back and in use (dark, 王小明 the default author)', after.marker === null && after.theme === 'dark' && after.shown === 'dark' && after.people.def === '王小明' && after.people.author === '王小明' && after.people.names.includes('王小明'), after);
 check('匯入: a setting not in the file is kept; the version record untouched', after.extra === 'keep' && after.seen === seen0, after);
+
+// a document with unsaved changes: the import is refused before anything is written (save it first)
+await A(() => window.__pdfapp.makeSample()); await win.waitForTimeout(2500);
+await A(() => window.__pdfapp.setTool('rect'));
+const r0 = await A(() => { const r = window.__pdfapp.S.els[0].getBoundingClientRect(), s = window.__pdfapp.S.scale; return [r.left + 120 * s, r.top + 160 * s, r.left + 200 * s, r.top + 220 * s]; });
+await win.mouse.move(r0[0], r0[1]); await win.mouse.down(); await win.mouse.move(r0[2], r0[3], {steps:5}); await win.mouse.up(); await win.waitForTimeout(1200);
+await A(() => { window.__pdfapp.setTool('select'); localStorage.setItem('pdfeditor.theme', 'light'); window.__marker2 = 1; document.querySelectorAll('#toasts .toast').forEach(t => t.remove()); });
+const dirty0 = await A(() => window.__pdfapp.S.dirty);
+await pick(FILE);
+const dz = {dirty0, title:await title(), toast:(await toasts()).some(t => t.includes('另存')), theme:await LS('pdfeditor.theme'), marker:await A(() => window.__marker2 ?? null)};
+if (dz.title === '匯入設定') { await win.click('#modal .mf button:has-text("取消")'); await win.waitForTimeout(400); }
+check('a document with unsaved changes: refused first (save it), nothing written, no reload', dz.dirty0 === true && dz.title !== '匯入設定' && dz.toast && dz.theme === 'light' && dz.marker === 1, dz);
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

@@ -8761,7 +8761,8 @@ async function exportSettings(){
   const bytes = new TextEncoder().encode(JSON.stringify(settingsSnapshot(), null, 2));
   if (DESK) {
     let where = null;
-    try { where = await DESK.saveAs(name, bytes); } catch (err) { toast('匯出失敗：' + (err.message || err), 'err'); return null; }
+    const avoid = [S.handle, ...docs.filter((d, k) => k !== active).map(d => d.handle)].filter(Boolean).flatMap(h => [h.path, h.orig]).filter(Boolean);   // never over an opened PDF
+    try { where = await DESK.saveAs(name, bytes, {avoid}); } catch (err) { toast('匯出失敗：' + (err.message || err), 'err'); return null; }
     if (!where) return null;   // cancelled
     toast('已匯出設定：' + String(where).split(/[\\/]/).pop()); return where;
   }
@@ -8788,10 +8789,11 @@ async function importSettings(file){
   let text = ''; try { text = await file.text(); } catch (_) {}
   const r = parseSettingsFile(text);
   if (!r.ok) { toast('這不是 PDF 工作台的設定檔', 'err'); return false; }
+  if (anyDirty()) { toast('有還沒另存的修改：請先另存新檔，再匯入設定（匯入後程式會重新載入）', 'err'); return false; }
   if ($('#mask').classList.contains('show')) closeModal(true);   // the settings window: one window at a time, and the program reloads anyway
   const when = r.exported && !isNaN(Date.parse(r.exported)) ? zhDateTime(new Date(r.exported)) : '';
   const body = `<div style="max-width:440px;line-height:1.7">要匯入「${esc(file.name)}」的設定嗎？<br>這個檔案${r.version ? `由 v${esc(r.version)} ` : ''}${when ? `在 ${esc(when)} ` : ''}匯出，會取代目前的 ${r.entries.length} 項設定。
-    <div class="note" style="margin-top:10px">匯入後程式會重新載入；有還沒另存的修改會先提醒你。</div></div>`;
+    <div class="note" style="margin-top:10px">匯入後程式會重新載入，開著的文件會關閉。</div></div>`;
   const ok = await openModal({title:'匯入設定', body, buttons:[{label:'取消', value:false}, {spacer:true}, {label:'匯入並重新載入', value:true, primary:true}]});
   if (!ok) return false;
   try { r.entries.forEach(([k, v]) => localStorage.setItem(k, v)); } catch (err) { toast('匯入失敗：' + (err.message || err), 'err'); return false; }
