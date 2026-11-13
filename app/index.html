@@ -1175,7 +1175,10 @@ function getDownloads(){
 }
 setTimeout(getDownloads, 0);
 // every save goes to a new file; the file that was opened is never overwritten
-async function saveAsNew(bytes, suffix){
+// clean: drop what the document no longer uses first (deleted notes, replaced pictures, leftovers in the original file);
+// a digitally signed document is saved exactly as it is (its signature covers every byte)
+async function saveAsNew(bytes, suffix, {clean = true} = {}){
+  if (clean && !S.signed) { busy(true, '正在整理檔案…'); try { bytes = await pruneUnused(bytes); } finally { busy(false); } }
   const base = S.name.replace(/\.pdf$/i, '').replace(/_已編輯(\(\d+\))?$/, '');
   const fn = base + suffix + '.pdf';
   const orig = S.handle && (S.handle.orig || S.handle.path);
@@ -4829,6 +4832,16 @@ function purgeImages(doc, refs){
     ctx.delete(r);
   });
 }
+// 另存時清掉用不到的資料: only the objects the document still reaches from its root are written (bytes come back unchanged
+// when there is nothing to drop, or when the file cannot be read)
+async function pruneUnused(bytes){
+  try {
+    const doc = await PDFDocument.load(bytes, {ignoreEncryption:true, updateMetadata:false}), ctx = doc.context, live = reachableRefs(doc);
+    let n = 0;
+    ctx.enumerateIndirectObjects().forEach(([ref]) => { if (!live.has(ref.toString())) { ctx.delete(ref); n++; } });
+    return n ? await doc.save() : bytes;
+  } catch (e) { console.warn(e); return bytes; }
+}
 // 刪除圖片: the clicked picture (this place, or every place it is drawn); asked first when it is drawn in more places or
 // covers almost the whole page
 async function deletePageImage(i, full){
@@ -7958,14 +7971,14 @@ async function openDigiSign(i, box){
     const d = new Date(), pad = n => String(n).padStart(2, '0');
     const date = `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     const apPng = await sigAppearancePng(box, {...res, date});
-    const out = await signPdf(S.bytes, {pageIndex:i, box, apPng, ...res});
+    const out = await signPdf(await pruneUnused(S.bytes), {pageIndex:i, box, apPng, ...res});   // cleaned before it is signed, never after
     S.undo.push({bytes:S.bytes, signed:S.signed, cur:S.current}); S.redo = [];
     S.signed = true; S.dirty = true;
     await loadDoc(out, {keepView:true});
     setTool('select');
     busy(false);
     toast('數位簽章完成');
-    await saveAsNew(out, '_已簽署');
+    await saveAsNew(out, '_已簽署', {clean:false});
   } catch (e) { console.error(e); toast('簽署失敗：' + (e.message || e), 'err'); }
   finally { busy(false); }
 }
