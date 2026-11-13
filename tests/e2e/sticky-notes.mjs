@@ -210,11 +210,29 @@ const p1 = await P(0, ...at(a1));
 await win.mouse.move(...p1); await win.mouse.down(); await win.mouse.move(p1[0] + 12, p1[1] + 8, {steps:4}); await win.mouse.up(); await win.waitForTimeout(1500);
 await win.keyboard.press('Control+c'); await win.waitForTimeout(400);
 check('Ctrl+C on a selected note copies that note', ((await A(() => window.__pdfapp.clip())).note || {}).contents === a1.contents, await A(() => window.__pdfapp.clip()));
+// Ctrl+X on a selected note cuts the note, not the page
+const clipNow = () => A(() => window.__pdfapp.clip()), selNow = () => A(() => window.__pdfapp.sel()), pagesNow = () => A(() => window.__pdfapp.S.pages.length);
+const pc0 = await pagesNow(), sx = await selNow();
+await win.keyboard.press('Control+x'); await win.waitForTimeout(1500);
+check('Ctrl+X on a selected note cuts the note (the pages stay)', sx?.sub === 'Text' && sx.id === a1.id && (await pagesNow()) === pc0 && !(await anns(0, 'Text')).some(x => x.id === a1.id) && (await clipNow()).last === 'note' && (await clipNow()).note?.contents === a1.contents, {sx, pages:await pagesNow(), pc0, clip:await clipNow()});
+await win.keyboard.press('Control+z'); await win.waitForTimeout(1200);
+check('… and back with one undo', (await anns(0, 'Text')).some(x => x.id === a1.id), await anns(0, 'Text'));
+// a note still selected while pages are chosen in the thumbnails: Ctrl+C copies the pages
+a1 = (await anns(0, 'Text')).find(x => x.id === a1.id);
+const p2 = await see(0, ...at(a1));
+await tool('select'); await win.mouse.move(...p2); await win.mouse.down(); await win.mouse.move(p2[0] + 10, p2[1] + 6, {steps:4}); await win.mouse.up(); await win.waitForTimeout(1500);
+const sx2 = await selNow();
+await win.click('.thumb[data-i="0"]'); await win.waitForTimeout(300);
+await win.keyboard.press('Control+c'); await win.waitForTimeout(1500);
+check('a note selected, then pages chosen in the thumbnails: Ctrl+C copies the pages', sx2?.sub === 'Text' && (await clipNow()).last === 'pages', {sx2, clip:await clipNow()});
+aF = (await anns(0, 'Text')).find(x => x.id === aF.id);   // a note with nothing else on top of it
+await rclick(0, aF); await win.click('#ctx [data-c="copy"]'); await win.waitForTimeout(300);
+const copied = ((await clipNow()).note || {}).contents;
 // paste into another open document
 await A(() => window.__pdfapp.makeSample()); await win.waitForTimeout(2500);
 await win.mouse.move(...(await see(0, 200, 200))); await win.waitForTimeout(200);
 await win.keyboard.press('Control+v'); await win.waitForTimeout(1500);
-check('Ctrl+V in another open document', (await anns(0, 'Text')).some(x => x.contents === a1.contents), await anns(0, 'Text'));
+check('Ctrl+V in another open document', copied === aF.contents && (await anns(0, 'Text')).some(x => x.contents === copied), {copied, anns:await anns(0, 'Text')});
 // the last thing copied is what Ctrl+V pastes; 〔貼上頁〕 always pastes pages
 const nPages = () => A(() => window.__pdfapp.S.pages.length);
 let np0 = await nPages();

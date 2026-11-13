@@ -1917,8 +1917,10 @@ window.addEventListener('keydown', e => {
   }
   if (mod && e.key.toLowerCase() === 'w') { e.preventDefault(); if (active >= 0) closeTab(active); return; }
   if (mod && e.key === 'Tab' && docs.length > 1) { e.preventDefault(); switchTab((active + (e.shiftKey ? -1 : 1) + docs.length) % docs.length); return; }
-  if (mod && !e.shiftKey && e.key.toLowerCase() === 'c' && !String(window.getSelection())) { e.preventDefault(); if (AS && AS.a.subtype === 'Text') copyNote(AS.i, AS.a); else copySelected(false); return; }
-  if (mod && !e.shiftKey && e.key.toLowerCase() === 'x') { e.preventDefault(); copySelected(true); return; }
+  // a selected sticky note is copied / cut by Ctrl+C / Ctrl+X, unless the pages are being worked on in the thumbnails
+  const noteSel = AS && AS.a.subtype === 'Text' && !(document.activeElement && document.activeElement.closest && document.activeElement.closest('#side'));
+  if (mod && !e.shiftKey && e.key.toLowerCase() === 'c' && !String(window.getSelection())) { e.preventDefault(); if (noteSel) copyNote(AS.i, AS.a); else copySelected(false); return; }
+  if (mod && !e.shiftKey && e.key.toLowerCase() === 'x') { e.preventDefault(); if (noteSel) cutNote(AS.i, AS.a); else copySelected(true); return; }
   if (mod && !e.shiftKey && e.key.toLowerCase() === 'v') { e.preventDefault(); if (LAST_CLIP === 'note' && NOTE_CLIP) pasteNote(); else pasteClip(); return; }
   if (mod && e.key.toLowerCase() === 'a' && document.activeElement && document.activeElement.closest && document.activeElement.closest('#side')) { e.preventDefault(); S.thumbSel = new Set(S.pages.map((_, i) => i)); paintThumbSel(); return; }
   if (e.key === 'Delete' && document.activeElement && document.activeElement.closest && document.activeElement.closest('#side')) { e.preventDefault(); actions.delPage(); return; }
@@ -3457,6 +3459,7 @@ function paintThumbSel(){
 }
 function thumbClick(e, i){
   $('#side').focus && $('#side').setAttribute('tabindex', '-1');
+  if (AS) deselectAnnot();   // working on pages now: Ctrl+C / Ctrl+X / Delete are about the pages, not an object on one
   if (e.ctrlKey || e.metaKey) {
     if (S.thumbSel.has(i) && S.thumbSel.size > 1) S.thumbSel.delete(i); else S.thumbSel.add(i);
     S.thumbAnchor = i;
@@ -3483,13 +3486,17 @@ function updateClipUI(){
   } else el.innerHTML = PAGE_CLIP ? `<span title="可在任何分頁按 Ctrl+V 貼上">📋 剪貼簿：${PAGE_CLIP.count} 頁（${esc(PAGE_CLIP.from)} 第 ${esc(PAGE_CLIP.range)} 頁）</span>` : '';
   const b = $('#bPaste'); if (b) { b.disabled = !S.pdf || !PAGE_CLIP; b.title = '貼上頁面到目前頁之後' + (LAST_CLIP === 'note' ? '' : ' (Ctrl+V)'); }
 }
-function copyNote(i, a){
+function copyNote(i, a, msg = '已複製便利貼，按 Ctrl+V 貼到滑鼠所在的位置'){
   const pb = a.popupBox;
   NOTE_CLIP = {contents:a.contents || '', author:a.author || AUTHOR, i, x:a.x, y:a.y, pw:pb ? pb.w : 300 / PX, ph:pb ? pb.h : 170 / PX};
   LAST_CLIP = 'note';
   try { navigator.clipboard.writeText(NOTE_CLIP.contents).catch(() => {}); } catch (_) {}   // its text, for other programs
   updateClipUI();
-  toast('已複製便利貼，按 Ctrl+V 貼到滑鼠所在的位置');
+  if (msg) toast(msg);
+}
+async function cutNote(i, a){
+  copyNote(i, a, null); deselectAnnot();
+  await deleteAnnot(i, a.id, '已剪下便利貼，按 Ctrl+V 貼到滑鼠所在的位置');
 }
 // on the page under the mouse, the icon centred on it; with the mouse elsewhere, on the current page a little right of
 // and below where the copied note was. The author stays who wrote it; one undo step.
@@ -3733,8 +3740,8 @@ async function addHighlight(i, box){
       T:PDFHexString.fromText(AUTHOR), M:nowStr(), F:4, AP:{N:ap}});
   });
 }
-async function deleteAnnot(i, id){
-  return mutate('已刪除註解', doc => {
+async function deleteAnnot(i, id, label = '已刪除註解'){
+  return mutate(label, doc => {
     const ref = findAnnotRef(doc, i, id);
     if (!ref) { toast('找不到此註解', 'err'); return false; }
     removeAnnotRefs(doc, i, ref);
