@@ -1347,6 +1347,8 @@ async function closeTab(i){
   if (pdf) setTimeout(() => pdf.destroy(), 300);
 }
 function showWelcome(){
+  if (FIND.open) closeFind();
+  FIND.hits = []; FIND.cur = -1; FIND.done = ''; buildFindPanel();
   applyDoc(blankDoc());
   pagesEl.innerHTML = ''; S.els = []; S.st = []; S.pos = []; S.rows = [];
   $('#welcome').style.display = '';
@@ -1452,7 +1454,11 @@ function mountDoc({scroll = 'current', anchorOffset = 0, scrollTop = 0, scrollLe
   else scrollToPage(S.current);
   updateUI(); scheduleRender(0);
   buildThumbs(reuse ? reuse.map : null, reuse && reuse.pre); refreshPanels(); applyViewAids();
-  if (FIND.open) scheduleFind();
+  if (FIND.open) {   // the matches were for the document as it was: gone at once (the current one remembered), found again
+    const h = FIND.hits[FIND.cur]; if (h) FIND.keep = {i:h.i, li:h.li, s:h.s};
+    FIND.hits = []; FIND.cur = -1; FIND.done = ''; paintFind(); buildFindPanel(); if (FIND.q) setFindLabel('搜尋中…');
+    scheduleFind();
+  }
 }
 
 async function openFile(file, handle = null){
@@ -4742,18 +4748,19 @@ function pageContentBytes(doc, page){
   return concatBytes(parts);
 }
 function concatBytes(parts){ const n = parts.reduce((t, p) => t + p.length, 0), out = new Uint8Array(n); let k = 0; parts.forEach(p => { out.set(p, k); k += p.length; }); return out; }
+// a text run's box (PDF units): along its direction from start to end (at least .3 em), across from .2 em below to .8 em
+// above the baseline, or half an em each side of a vertical column
+function runBox(r){
+  const fs = r.fs || 1, len = Math.hypot(r.p1[0] - r.p0[0], r.p1[1] - r.p0[1]), e = len < fs * .3 ? [r.p0[0] + r.along[0] * fs * .3, r.p0[1] + r.along[1] * fs * .3] : r.p1;
+  const [lo, hi] = r.vert ? [-.5, .5] : [-.2, .8], pts = [r.p0, e].flatMap(q => [lo, hi].map(t => [q[0] + r.side[0] * fs * t, q[1] + r.side[1] * fs * t]));
+  return {x0:Math.min(...pts.map(q => q[0])), x1:Math.max(...pts.map(q => q[0])), y0:Math.min(...pts.map(q => q[1])), y1:Math.max(...pts.map(q => q[1]))};
+}
+// how much of box b lies inside box U (0–1)
+const boxShare = (b, U) => Math.max(0, Math.min(b.x1, U.x1) - Math.max(b.x0, U.x0)) * Math.max(0, Math.min(b.y1, U.y1) - Math.max(b.y0, U.y0)) / Math.max(1e-9, (b.x1 - b.x0) * (b.y1 - b.y0));
 // take the text inside box U (PDF units) out of page i; returns how many text operators were removed
 function removePageText(doc, i, U, {invisibleOnly = false} = {}){
   const page = doc.getPage(i), bytes = pageContentBytes(doc, page); if (!bytes) return 0;
-  const hits = locateTextOps(doc, page, bytes).filter(r => !invisibleOnly || r.tr === 3 || r.tr === 7).filter(r => {
-    // the run's box: along its direction from start to end (at least .3 em), across from .2 em below to .8 em above the
-    // baseline, or half an em each side of a vertical column
-    const fs = r.fs || 1, len = Math.hypot(r.p1[0] - r.p0[0], r.p1[1] - r.p0[1]), e = len < fs * .3 ? [r.p0[0] + r.along[0] * fs * .3, r.p0[1] + r.along[1] * fs * .3] : r.p1;
-    const [lo, hi] = r.vert ? [-.5, .5] : [-.2, .8], pts = [r.p0, e].flatMap(q => [lo, hi].map(t => [q[0] + r.side[0] * fs * t, q[1] + r.side[1] * fs * t]));
-    const x0 = Math.min(...pts.map(q => q[0])), x1 = Math.max(...pts.map(q => q[0])), y0 = Math.min(...pts.map(q => q[1])), y1 = Math.max(...pts.map(q => q[1]));
-    const ix = Math.max(0, Math.min(x1, U.x1) - Math.max(x0, U.x0)), iy = Math.max(0, Math.min(y1, U.y1) - Math.max(y0, U.y0));
-    return ix * iy >= .5 * (x1 - x0) * (y1 - y0);
-  }).sort((a, b) => a.o.s - b.o.s);
+  const hits = locateTextOps(doc, page, bytes).filter(r => !invisibleOnly || r.tr === 3 || r.tr === 7).filter(r => boxShare(runBox(r), U) >= .5).sort((a, b) => a.o.s - b.o.s);
   if (!hits.length) return 0;
   const parts = []; let pos = 0;
   hits.forEach(r => {
@@ -5538,9 +5545,9 @@ function showTextMarks(i, list, cls = 'txhov'){
 }
 function clearTextMarks(){ if (TXH) TXH.forEach(d => d.remove()); TXH = null; }
 // colours under the text: the most common colour round the edge is the background, the most different one is the ink
-function sampleTextColors(i, v){
-  const c = S.els[i] && S.els[i].querySelector('canvas.pc'); if (!c) return {fg:'#1f2328', bg:'#ffffff'};
-  const pg = S.pages[i], k = c.width / pg.w, x = Math.max(0, Math.floor((v.x - 1) * k)), y = Math.max(0, Math.floor((v.y - 1) * k));
+function sampleTextColors(i, v, src = null){
+  const c = src ? src.c : S.els[i] && S.els[i].querySelector('canvas.pc'); if (!c) return {fg:'#1f2328', bg:'#ffffff'};
+  const pg = S.pages[i], k = src ? src.k : c.width / pg.w, x = Math.max(0, Math.floor((v.x - 1) * k)), y = Math.max(0, Math.floor((v.y - 1) * k));
   const w = Math.max(1, Math.min(c.width - x, Math.ceil((v.w + 2) * k))), h = Math.max(1, Math.min(c.height - y, Math.ceil((v.h + 2) * k)));
   let d; try { d = c.getContext('2d').getImageData(x, y, w, h).data; } catch (_) { return {fg:'#1f2328', bg:'#ffffff'}; }
   const q = (o) => ((d[o] >> 4) << 8) | ((d[o + 1] >> 4) << 4) | (d[o + 2] >> 4), cnt = new Map();
@@ -5569,7 +5576,7 @@ async function editPageText(i, items, {selectAll = false, all = null, plain = fa
 }
 // what 修改原文 works out for some of the page's own text (also for 取代): its lines as runs, each piece in the font it was
 // written in; the box to take out (U, PDF space) and on screen (vU); its colours; the way it runs; where the editor sits
-async function pageTextEdit(i, items){
+async function pageTextEdit(i, items, src = null){
   await realFontsReady();
   const way = items.find(t => !t.stacked) || items[0];   // text running different ways: keep to one of them
   items = items.filter(t => sameWay(t, way));
@@ -5577,7 +5584,7 @@ async function pageTextEdit(i, items){
   const U = {x0:Math.min(...items.map(t => t.u.x0)) - .5, x1:Math.max(...items.map(t => t.u.x1)) + .5, y0:Math.min(...items.map(t => t.u.y0)) - .5, y1:Math.max(...items.map(t => t.u.y1)) + .5};
   const vx = Math.min(...items.map(t => t.v.x)), vy = Math.min(...items.map(t => t.v.y));
   const vU = {x:vx, y:vy, w:Math.max(...items.map(t => t.v.x + t.v.w)) - vx, h:Math.max(...items.map(t => t.v.y + t.v.h)) - vy};
-  const col = sampleTextColors(i, vU);
+  const col = sampleTextColors(i, vU, src);
   const sizes = items.map(t => t.fs).sort((a, b) => a - b), size = Math.round(sizes[sizes.length >> 1] * 10) / 10;
   // each piece in the font it was written in: bold / italic from that font's name, and the installed family it stands
   // for when that may be embedded and can be read (else 思源黑體)
@@ -9853,6 +9860,13 @@ function pieceBox(it, c0, c1){
   if (dir === 90) return {x:v.x, y:v.y + v.h * f0, w:v.w, h:v.h * (f1 - f0)};
   return {x:v.x, y:v.y + v.h * (1 - f1), w:v.w, h:v.h * (f1 - f0)};
 }
+// the search's own OCR worker (the 文字辨識 tool has another one, so neither stops the other); let go when the bar closes
+function findWorker(){
+  if (!FIND.worker) { const u = p => new URL(p, location.href).href;
+    FIND.worker = Tesseract.createWorker(['eng', 'chi_tra'], 1, {workerPath:u('../node_modules/tesseract.js/dist/worker.min.js'), corePath:u('../node_modules/tesseract.js-core'),
+      langPath:u('ocr/lang'), gzip:true, cacheMethod:'none', workerBlobURL:false}); }
+  return FIND.worker;
+}
 // a page without text read by OCR (only when 掃描頁 is on): lines like findLines, each character with its own box
 const FIND_OCR = new WeakMap();   // document → Map(page object → promise of lines)
 function ocrLines(i){
@@ -9861,7 +9875,7 @@ function ocrLines(i){
   const memo = FIND_OCR.get(d); if (memo.has(key)) return memo.get(key);
   const p = (async () => {
     const pg = S.pages[i], img = await ocrImage(i, {x:0, y:0, w:pg.w, h:pg.h}), k = (img.width - 48) / pg.w, m = 24;   // ocrImage: a 24 px white margin
-    const w = await ocrWorker('eng+chi_tra'); await w.setParameters({tessedit_pageseg_mode:'3', preserve_interword_spaces:'1'});
+    const w = await findWorker(); await w.setParameters({tessedit_pageseg_mode:'3', preserve_interword_spaces:'1'});
     const {data} = await w.recognize(img, {}, {text:true, blocks:true}), byLine = new Map();
     ocrSymbols(data, false).forEach(y => { if (!byLine.has(y.li)) byLine.set(y.li, []); byLine.get(y.li).push(y); });
     return [...byLine.values()].map(list => {
@@ -9877,12 +9891,26 @@ function ocrLines(i){
   })().catch(e => { console.warn(e); memo.delete(key); return []; });
   memo.set(key, p); return p;
 }
+// the page's text runs with their render mode, for telling a scan's invisible text layer (3 or 7) from text that shows
+const TEXT_RUNS = new Map();
+function textRunsOf(i){
+  const key = S.version + ':' + i; if (TEXT_RUNS.has(key)) return TEXT_RUNS.get(key);
+  if (TEXT_RUNS.size > 200) TEXT_RUNS.clear();
+  const p = geoDoc().then(doc => { const page = doc.getPage(i), bytes = pageContentBytes(doc, page); return bytes ? locateTextOps(doc, page, bytes).map(r => ({tr:r.tr, box:runBox(r)})) : []; }).catch(() => []);
+  TEXT_RUNS.set(key, p); return p;
+}
+async function lineHidden(i, ln){
+  if (ln.inv != null || !ln.items) return !!ln.inv;
+  const U = {x0:Math.min(...ln.items.map(t => t.u.x0)), x1:Math.max(...ln.items.map(t => t.u.x1)), y0:Math.min(...ln.items.map(t => t.u.y0)), y1:Math.max(...ln.items.map(t => t.u.y1))};
+  const mine = (await textRunsOf(i)).filter(r => boxShare(r.box, U) >= .5);
+  return (ln.inv = mine.length > 0 && mine.every(r => r.tr === 3 || r.tr === 7));
+}
 function hitBoxes(ln, s, e){
   if (ln.boxes) return ln.boxes.slice(s, e).filter(Boolean);   // a line read by OCR: a box for each character
   return ln.at.filter(a => a.to > s && a.from < e).map(a => pieceBox(a.item, Math.max(s, a.from) - a.from, Math.min(e, a.to) - a.from));
 }
 async function searchDoc(){
-  const seq = ++FIND.seq, o = {...FIND.opts}, q = FIND.q, before = FIND.hits[FIND.cur];
+  const seq = ++FIND.seq, o = {...FIND.opts}, q = FIND.q, before = FIND.hits[FIND.cur] || FIND.keep; FIND.keep = null;
   if (!S.pdf || !q) { FIND.hits = []; FIND.cur = -1; FIND.done = ''; paintFind(); buildFindPanel(); return; }
   setFindLabel('搜尋中…');
   const nq = normFind(q, o), hits = [], scans = [];
@@ -9895,14 +9923,18 @@ async function searchDoc(){
   });
   for (let i = 0; i < S.pages.length; i++) {
     const lines = await findLines(i); if (seq !== FIND.seq) return;
-    if (lines.length) look(i, lines); else scans.push(i);   // a page without text: a scan, read only when 掃描頁 is on
+    if (!lines.length) { scans.push(i); continue; }   // a page without text: a scan, read only when 掃描頁 is on
+    const n0 = hits.length; look(i, lines);
+    for (let k = n0; k < hits.length; k++) if (await lineHidden(i, hits[k].line)) hits[k].ocr = true;   // a searchable scan's hidden text: find only
+    if (seq !== FIND.seq) return;
   }
   const publish = () => { hits.sort((a, b) => a.i - b.i || a.li - b.li || a.s - b.s); FIND.hits = hits.slice(); FIND.done = q + '|' + JSON.stringify(o) + '|' + S.version; };
   publish();
   // the same match as before when it is still there, else the first one from the current page on
   const same = before && !FIND.after ? FIND.hits.findIndex(h => h.i === before.i && h.li === before.li && h.s === before.s) : -1;
   const a = FIND.after; FIND.after = null;   // a match was just replaced: the next one after its place
-  const next = a ? FIND.hits.findIndex(h => h.i > a.i || (h.i === a.i && (h.line.top > a.top + 1 || (Math.abs(h.line.top - a.top) <= 1 && h.s >= a.s)))) : -1;
+  const onLine = h => { const t = h.line.items && h.line.items[0]; return !!t && a.base != null && t.rot === a.rot && Math.abs(t.base - a.base) <= 1; };
+  const next = a ? FIND.hits.findIndex(h => h.i > a.i || (h.i === a.i && (onLine(h) ? h.s >= a.s : h.li > a.li))) : -1;
   FIND.cur = !FIND.hits.length ? -1 : same >= 0 ? same : next >= 0 ? next : Math.max(0, FIND.hits.findIndex(h => h.i >= S.current));
   paintFind(); buildFindPanel();
   if (FIND.cur >= 0 && same < 0) showHit(FIND.cur);
@@ -9954,8 +9986,21 @@ function placesIn(t, ln, hits, o, q){
   const all = matchStarts(ln, o, q), there = matchStarts(t, o, q);
   return hits.map(h => all.indexOf(h.s)).filter(k => k >= 0 && k < there.length).map(k => [there[k], there[k] + q.length]);
 }
-async function lineJob(i, hits, repl, o, q){
-  const ln = hits[0].line, t = await pageTextEdit(i, ln.items); if (t.lines.length !== 1) return null;
+// the page's picture to read colours from, with its fonts loaded (pdf.js loads them by drawing): the one on screen, or
+// drawn now for a page far from the screen
+async function pageSample(i, memo){
+  if (memo.has(i)) return memo.get(i);
+  const p = (async () => {
+    const c = S.els[i] && S.els[i].querySelector('canvas.pc'), pg = S.pages[i];
+    if (c && S.st[i] && S.st[i].rendered) return {c, k:c.width / pg.w};
+    const vp = pg.page.getViewport({scale:1.5}), cv = document.createElement('canvas'); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
+    await pg.page.render({canvasContext:cv.getContext('2d'), viewport:vp, annotationMode:pdfjsLib.AnnotationMode.ENABLE}).promise;
+    return {c:cv, k:cv.width / pg.w};
+  })();
+  memo.set(i, p); return p;
+}
+async function lineJob(i, hits, repl, o, q, memo){
+  const ln = hits[0].line, t = await pageTextEdit(i, ln.items, await pageSample(i, memo)); if (t.lines.length !== 1) return null;
   const ranges = placesIn(t.lines[0].map(x => x.text).join(''), ln.text, hits, o, q); if (!ranges.length) return null;
   const runs = replaceInLine(t.lines[0], ranges, repl), lines = [runs], empty = !runs.some(x => x.text.trim());
   const edit = {U:t.U, bg:t.col.bg, orig:'', blocks:[], rot:t.rot, vert:t.vert}, box = {boxBg:'', border:false}, strut = realStrut(lines);
@@ -9963,23 +10008,33 @@ async function lineJob(i, hits, repl, o, q){
   return {i, x:t.at.x, y:t.at.y, prep, box, edit, empty, strut, n:ranges.length};
 }
 // our own block k: its lines (with their formatting) changed where the hits are, the block written again as a whole
-async function blockJob(i, k, hits, repl, o, q){
+async function blockJob(i, k, hits, repl, o, q, memo){
   const b = await readPageBlock(i, k); if (!b || !b.rt) return null;
   const mine = (await findLines(i)).filter(l => l.items.every(t => t.blk === k)), texts = b.rt.lines.map(l => l.map(x => x.text).join(''));
   let lines = b.rt.lines, n = 0;
+  const filled = texts.map((t, m) => t.trim() ? m : -1).filter(m => m >= 0), used = new Set();   // empty lines draw nothing on the page
   for (const ln of new Set(hits.map(h => h.line))) {
-    let r = texts.indexOf(ln.text); if (r < 0) r = mine.indexOf(ln);   // which of the block's lines (its text, else its place)
-    if (r < 0 || r >= texts.length) continue;
+    let r = filled[mine.indexOf(ln)];   // its place among the block's lines with text…
+    if (r == null || texts[r] !== ln.text || used.has(r)) r = texts.findIndex((t, m) => t === ln.text && !used.has(m));   // …else the first unused line with its text
+    if (r < 0) continue;
+    used.add(r);
     const ranges = placesIn(texts[r], ln.text, hits.filter(h => h.line === ln), o, q); if (!ranges.length) continue;
     lines = lines.map((l, m) => m === r ? replaceInLine(l, ranges, repl) : l); n += ranges.length;
   }
   if (!n) return null;
   const empty = !lines.some(l => l.some(x => x.text.trim())), box = b.rt.box || {boxBg:'', border:false}, strut = realStrut(lines);
-  const edit = {block:b.name, bg:sampleTextColors(i, b.vbox).bg, orig:'', origBox:'', rot:b.rot, vert:b.vert};
+  const edit = {block:b.name, bg:sampleTextColors(i, b.vbox, await pageSample(i, memo)).bg, orig:'', origBox:'', rot:b.rot, vert:b.vert};
   const prep = await preparePageText(lines, box, edit, empty, strut); if (!prep) return null;
   return {i, x:b.at.x, y:b.at.y, prep, box, edit, empty, strut, n};
 }
+let REPLACING = false;
 async function replaceHits(list, repl){
+  if (REPLACING) return false;   // a second click or Enter while one is on its way
+  if (FIND.done !== findKey()) { toast('還在搜尋，請稍候再取代', 'err'); return false; }
+  REPLACING = true;
+  try { return await replaceNow(list, repl); } finally { REPLACING = false; }
+}
+async function replaceNow(list, repl){
   const o = {...FIND.opts}, q = FIND.q, scans = list.filter(h => h.ocr).length, todo = list.filter(h => !h.ocr);
   if (!todo.length) { toast(scans ? '掃描頁的文字不能取代' : '沒有可以取代的文字', 'err'); return false; }
   if (!(await settleEdits())) return false;
@@ -9989,9 +10044,9 @@ async function replaceHits(list, repl){
     if (!groups.has(key)) groups.set(key, {own, k, i:h.i, hits:[]});
     groups.get(key).hits.push(h);
   }
-  const jobs = [];
+  const jobs = [], memo = new Map();
   busy(true, '準備取代…');
-  try { for (const g of groups.values()) { const j = g.own ? await blockJob(g.i, g.k, g.hits, repl, o, q) : await lineJob(g.i, g.hits, repl, o, q); if (j) jobs.push(j); } }
+  try { for (const g of groups.values()) { const j = g.own ? await blockJob(g.i, g.k, g.hits, repl, o, q, memo) : await lineJob(g.i, g.hits, repl, o, q, memo); if (j) jobs.push(j); } }
   catch (e) { console.error(e); }
   finally { busy(false); }
   const n = jobs.reduce((a, j) => a + j.n, 0);
@@ -10004,8 +10059,9 @@ async function replaceHits(list, repl){
 async function replaceCurrent(){
   const h = FIND.hits[FIND.cur]; if (!h) return;
   if (h.ocr) { toast('掃描頁的文字不能取代', 'err'); stepFind(1); return; }
-  FIND.after = {i:h.i, top:h.line.top, s:h.s};
-  if (!(await replaceHits([h], $('#findR').value))) FIND.after = null;
+  const repl = $('#findR').value, it = h.line.items && h.line.items[0];
+  FIND.after = {i:h.i, li:h.li, s:h.s + repl.length, base:it ? it.base : null, rot:it ? it.rot : 0};
+  if (!(await replaceHits([h], repl))) FIND.after = null;
 }
 function scheduleFind(ms = 150){ clearTimeout(FIND.timer); FIND.timer = setTimeout(searchDoc, ms); }
 function setFindLabel(t){ const n = $('#findN'); if (n) n.textContent = t; }
@@ -10049,6 +10105,7 @@ function openFind(){
 }
 function closeFind(){
   FIND.open = false; FIND.seq++; clearTimeout(FIND.timer); $('#findBar').hidden = true; $$('.fhit').forEach(d => d.remove());
+  if (FIND.worker) { const w = FIND.worker; FIND.worker = null; w.then(x => x.terminate()).catch(() => {}); }
   viewer.focus({preventScroll:true});
 }
 (() => {
@@ -10661,6 +10718,10 @@ window.__pdfapp = {
   multi:() => MS ? {i:MS.i, ids:MS.items.map(a => a.id)} : null,
   switchTab,
   lineTexts:async i => (await findLines(i)).map(l => l.text),
+  blockRTs:async i => {   // (tests) our own text blocks on page i: their editing data (lines and runs), in page order
+    const doc = await geoDoc(), bytes = pageContentBytes(doc, doc.getPage(i));
+    return bytes ? pdfeBlocksIn(bytes).map(b => { const p = blockProps(doc, i, b.name), rt = p && p.lookupMaybe(N_('PDFE_RT'), PDFHexString, PDFString); try { return rt ? JSON.parse(rt.decodeText()) : null; } catch (_) { return null; } }) : [];
+  },
   find:() => ({open:FIND.open, q:FIND.q, n:FIND.hits.length, cur:FIND.cur, hits:FIND.hits.map(h => ({i:h.i, ocr:!!h.ocr, text:h.ctx}))}),
   parseRange, printPlan, printPlanNow:() => PR && PR.plan,
   printState:() => PR && PR.plan ? {open:true, sides:PR.plan.sides.length, sheets:PR.plan.sheets, pos:PR.cur, paper:PR.plan.paper, duplex:PR.plan.duplex, error:PR.err,

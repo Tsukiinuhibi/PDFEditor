@@ -6,7 +6,7 @@ import { createRequire } from 'module';
 import path from 'path';
 import fs from 'fs';
 const require = createRequire(import.meta.url);
-const { PDFDocument } = require('pdf-lib');
+const { PDFDocument, PDFName, PDFHexString } = require('pdf-lib');
 const fontkit = require('@pdf-lib/fontkit');
 
 let failed = 0;
@@ -31,6 +31,16 @@ const page = lines => { const p = doc.addPage([595, 842]); lines.forEach(([t, y]
 page([['Hello World 你好世界', 780], ['hello world worldwide', 740], ['ＨＥＬＬＯ 全形字', 700], ['合約金額：100 元', 660]]);
 page([['another Hello here', 780], ['World peace', 740], ['a-b a-b end', 700]]);
 const p3 = doc.addPage([595, 842]); p3.drawImage(await doc.embedPng(Buffer.from(scan, 'base64')), {x:0, y:0, width:595, height:842});
+// page 4 (final review): a blue bold line; one of our own text blocks (bold, red) with two identical lines; an invisible
+// text layer (Tr 3) like the one OCR programs put over scans
+const bold = await doc.embedFont(fs.readFileSync(path.join(ROOT, 'app', 'fonts', 'NotoSansTC-Bold.ttf')), {subset:true}), Hb = t => bold.encodeText(t).toString();
+const p4 = doc.addPage([595, 842]), ctx = doc.context, RUN = {text:'cat sat', size:18, color:'#c92a2a', bg:'', bold:true, italic:false, underline:false};
+const ops4 = ['BT 0 0 0.8 rg /F1 18 Tf 60 780 Td', Hb('blue cat'), 'Tj ET',
+  '/PDFE_Text /B0 BDC BT 0.788 0.165 0.165 rg /F1 18 Tf 60 700 Td', Hb('cat sat'), 'Tj 0 -26 Td', Hb('cat sat'), 'Tj ET EMC',
+  'BT 3 Tr /F1 18 Tf 60 500 Td', Hb('zebra stripes'), 'Tj ET'];
+await bold.embed();
+p4.node.set(PDFName.of('Resources'), ctx.obj({Font:{F1:bold.ref}, Properties:{B0:{PDFE_RT:PDFHexString.fromText(JSON.stringify({lines:[[RUN], [RUN]], box:{boxBg:'', border:false}})), PDFE_M:[1, 0, 0, 1, 60, 718], PDFE_Size:[120, 52]}}}));
+p4.node.set(PDFName.of('Contents'), ctx.register(ctx.flateStream(ops4.join(' '))));
 const PDF = path.join(TMP, 'find.pdf'); fs.writeFileSync(PDF, await doc.save());
 
 ({ app } = await launchPath(PDF));
@@ -44,6 +54,21 @@ const marks = () => Ev(() => ({all:document.querySelectorAll('.fhit').length, cu
 const type = async t => { await Ev(() => { const q = document.querySelector('#findQ'); q.select(); }); await win.keyboard.type(t); await win.waitForTimeout(900); };
 const opt = async k => { await win.click(`#findBar [data-fo="${k}"]`); await win.waitForTimeout(700); };
 const key = async k => { await win.keyboard.press(k); await win.waitForTimeout(500); };
+
+// ---- part 0 (final review): a line on a page not drawn yet keeps its colour and bold when replaced ----------------------
+const blocks = i => Ev(i => window.__pdfapp.blockRTs(i), i);
+const far = await Ev(() => !window.__pdfapp.S.els[3].querySelector('canvas.pc'));
+await win.keyboard.press('Control+f'); await win.waitForTimeout(400);
+await Ev(() => { const q = document.querySelector('#findQ'); q.value = 'blue'; q.dispatchEvent(new Event('input', {bubbles:true})); }); await win.waitForTimeout(900);
+await win.click('#findBar [data-fa="rep"]'); await Ev(() => { document.querySelector('#findR').value = 'navy'; });
+// the search scrolled to page 4 and drew it: take its picture away again, as for a page far from the screen
+await Ev(() => { const S = window.__pdfapp.S, c = S.els[3].querySelector('canvas.pc'); if (c) c.remove(); S.st[3].rendered = 0; });
+await win.click('#findBar [data-fa="all"]'); await win.waitForTimeout(4500);
+const navy = (await blocks(3)).find(b => b && b.lines.some(l => l.map(r => r.text).join('').includes('navy')));
+const run0 = navy && navy.lines[0][0], rgb = run0 ? [1, 3, 5].map(k => parseInt(run0.color.slice(k, k + 2), 16)) : [];
+check('(final review) page 4, not drawn yet: blue bold 「blue cat」 → 「navy cat」 stays blue and bold', far && !!run0 && rgb[2] > 140 && rgb[0] < 90 && rgb[1] < 90 && run0.bold === true, {far, run0});
+await win.click('#findBar [data-fa="rep"]'); await win.waitForTimeout(200);
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
 
 // ---- part 1: the find bar, the options, the marks ----------------------------------------------------------------------
 await key('Control+f');
@@ -150,6 +175,41 @@ const [saidNo] = await pressSee('#findBar [data-fa="one"]', ['掃描頁的文字
 check('〔取代〕 on the scan\'s match: 「掃描頁的文字不能取代」', saidNo);
 await opt('scans');
 await key('Escape');
+
+// ---- part 4 (final review) --------------------------------------------------------------------------------------------
+await key('Control+f');
+await Ev(() => { const r = document.querySelector('#findRepRow'); if (r.hidden) document.querySelector('#findBar [data-fa="rep"]').click(); });
+await type('cat'); await setRepl('tiger');
+await press('#findBar [data-fa="all"]');
+const p4t = await lines(3), b4 = (await blocks(3)).filter(Boolean), twin = b4.find(b => b.lines.length === 2);
+check('our own block with two lines alike: both 「tiger sat」 (not 「tigerer」), still bold red', p4t.filter(t => t === 'tiger sat').length === 2 && !p4t.some(t => t.includes('tigerer')) && !!twin && twin.lines.every(l => l[0].text === 'tiger sat' && l[0].bold && l[0].color === '#c92a2a'), {p4t, twin});
+await type('tiger'); await setRepl('tigers'); await toFirst();
+const n4 = (await st()).n;
+await press('#findBar [data-fa="one"]');
+const c1 = await st();
+await press('#findBar [data-fa="one"]');
+const p4b = await lines(3);
+check('〔取代〕 when the replacement holds the query (tiger → tigers): it moves on to the next one each time', n4 === 3 && c1.cur === 1 && p4b.filter(t => t.includes('tigers')).length === 2 && !p4b.some(t => t.includes('tigerss')), {n4, cur:c1.cur, p4b});
+await type('zebra');
+const z = await st();
+await setRepl('horse');
+const [saidZ] = await pressSee('#findBar [data-fa="all"]', ['掃描頁的文字不能取代'], 6000);   // every match is a scan's
+check('an invisible text layer (a searchable scan): found, marked 辨識, not replaced', z.n === 1 && z.hits[0].ocr && saidZ && (await lines(3)).includes('zebra stripes'), {z, saidZ, p4:await lines(3)});
+await type('sat');
+const had = (await st()).n;
+// the first frame after the new document is up, before its own search could run
+const right = await Ev(() => new Promise(res => { const t0 = performance.now(), A = window.__pdfapp;
+  const tick = () => { if (A.S.name === '範例文件.pdf' && A.S.pages.length && A.S.els.length === A.S.pages.length) res({n:A.find().n, marks:document.querySelectorAll('.fhit').length}); else if (performance.now() - t0 > 20000) res({timeout:true}); else requestAnimationFrame(tick); };
+  A.actions.sample(); tick(); }));
+check('another document opened: the old matches are gone at once (none to replace, no marks)', had >= 2 && right.n === 0 && right.marks === 0, {had, right});
+await win.waitForTimeout(3000);
+await key('Escape');
+await Ev(() => window.__pdfapp.setTool('textbox')); await win.waitForTimeout(300);
+const bx = await Ev(() => { const r = window.__pdfapp.S.els[window.__pdfapp.S.current].getBoundingClientRect(); return [r.left + 200, r.top + 300]; });
+await win.mouse.click(...bx); await win.waitForTimeout(600); await win.keyboard.type('typing');
+await win.keyboard.press('Control+f'); await win.waitForTimeout(500);
+check('Ctrl+F while typing in a text box: left to the text box', !(await st()).open && !!(await Ev(() => window.__pdfapp.TBE())), await st());
+await win.keyboard.press('Escape'); await win.waitForTimeout(500);
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
