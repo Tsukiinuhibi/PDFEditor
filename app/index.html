@@ -311,11 +311,19 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .npop{position:absolute;z-index:7;background:#ffef3a;border:1px solid #8a7f00;border-radius:3px;box-shadow:2px 3px 10px rgba(0,0,0,.28);display:flex;flex-direction:column;resize:both;overflow:hidden;min-width:200px;min-height:110px;font-size:13px}
 .nhd{display:flex;align-items:center;gap:7px;padding:4px 5px 4px 6px;cursor:move;user-select:none;color:#2b2a00}
 .nhd .nic{width:20px;height:20px;flex:none}
-.nhd .nau{font-weight:600;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nhd .ndt{flex:1;text-align:right;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nhd button{border:0;background:transparent;cursor:pointer;width:22px;height:22px;border-radius:50%;flex:none;font-size:13px;line-height:1;color:#4a4500}
 .nhd .nx{background:#fff7a8;border:1px solid #8a7f00;font-size:15px;font-weight:700}
 .nhd button:hover{background:#fff;color:#c8371d}
+.nhd .nau{width:auto;height:24px;max-width:150px;border-radius:5px;padding:0 4px 0 6px;display:flex;align-items:center;gap:3px;font-weight:600;font-size:13px;color:#2b2a00;border:1px solid transparent}
+.nhd .nau:hover{background:#fff7a8;color:#2b2a00;border-color:#b8ac00}
+.nhd .nau-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nhd .nau-a{font-size:10px;color:#6b5e0d;flex:none}
+.nhd .ndel{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;color:#5c5200}
+.nhd .ndel svg.i{width:18px;height:18px;stroke-width:1.8}
+.nhd .ndel:hover{background:#ffe3e3;color:#c92a2a}
+.ctx .ck{width:14px;flex:none;color:var(--seal-ink);font-weight:700}
+.ctx .nau-other{padding:4px 6px 2px}
 .nbd{flex:1;margin:0 5px 5px;background:#fff;border:1px dashed #8a7f00;display:flex}
 .nbd textarea{flex:1;border:0;resize:none;outline:none;padding:6px 8px;font:inherit;font-size:13.5px;line-height:1.55;background:transparent;color:#1f2328}
 .ncall{position:absolute;left:0;top:0;pointer-events:none;overflow:visible;z-index:6}
@@ -5297,8 +5305,8 @@ function openNotePopup(i, note){
   call.innerHTML = '<polygon/>';
   const pop = document.createElement('div'); pop.className = 'npop';
   const d = note.date || new Date();
-  pop.innerHTML = `<div class="nhd"><span class="nic">${NOTE_SVG}</span><b class="nau">${esc(note.author || AUTHOR)}</b><span class="ndt">${esc(zhDateTime(d))}</span>
-      ${note.id ? '<button class="ndel" title="刪除這則註解">🗑</button>' : ''}<button class="nx" title="關閉 (Esc)">×</button></div>
+  pop.innerHTML = `<div class="nhd"><span class="nic">${NOTE_SVG}</span><button class="nau" title="換作者"></button><span class="ndt">${esc(zhDateTime(d))}</span>
+      <button class="ndel" title="刪除這張便利貼">${icon('trash')}</button><button class="nx" title="關閉 (Esc)">×</button></div>
     <div class="nbd"><textarea placeholder="輸入註解…" spellcheck="false"></textarea></div>`;
   pop.style.width = Math.round(clamp(box.w * PX, 200, 640)) + 'px';
   pop.style.height = Math.round(clamp(box.h * PX, 110, 520)) + 'px';
@@ -5310,13 +5318,20 @@ function openNotePopup(i, note){
     el.appendChild(pend);
   }
   const ta = pop.querySelector('textarea'); ta.value = note.contents || '';
-  NP = {i, note, box, pop, call, pend, ta, orig:note.contents || '', moved:false};
+  const who = note.author || AUTHOR;
+  NP = {i, note, box, pop, call, pend, ta, orig:note.contents || '', moved:false, author:who, origAuthor:who};
+  paintNoteAuthor();
   positionNote();
   const ro = new ResizeObserver(() => { if (NP && NP.pop === pop) { NP.moved = NP.moved || NP.resizedOnce; NP.resizedOnce = true; positionNote(); } });
   ro.observe(pop); NP.ro = ro;
   pop.querySelector('.nx').onclick = () => closeNote(true);
-  const del = pop.querySelector('.ndel');
-  if (del) del.onclick = async () => { const {i, note} = NP; closeNoteDom(); await deleteAnnot(i, note.id); };
+  pop.querySelector('.nau').onclick = () => showNoteAuthorMenu();
+  pop.querySelector('.ndel').onclick = async () => {   // a new note is dropped, a saved one deleted
+    if (!NP) return;
+    const {i, note} = NP;
+    if (!note.id) { closeNote(false); return; }
+    closeNoteDom(); await deleteAnnot(i, note.id);
+  };
   ta.addEventListener('keydown', e => {
     if (e.key === 'Escape' || (e.key === 'Enter' && (e.ctrlKey || e.metaKey))) { e.preventDefault(); e.stopPropagation(); closeNote(true); }
   });
@@ -5332,6 +5347,32 @@ function openNotePopup(i, note){
   pop.addEventListener('pointerdown', e => e.stopPropagation());
   setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 30);
 }
+function paintNoteAuthor(){
+  const b = NP && NP.pop.querySelector('.nau'); if (!b) return;
+  b.innerHTML = `<span class="nau-n">${esc(NP.author)}</span><span class="nau-a">▾</span>`;
+}
+// the note's author: the people list (its author first, ticked, even when not on the list), or another name typed in
+// (which joins the list); the choice is written when the note closes
+function showNoteAuthorMenu(){
+  if (!NP) return;
+  const cur = NP.author, names = [cur, ...(PEOPLE ? PEOPLE.names : []).filter(n => n !== cur)];
+  ctx.innerHTML = `<div class="hd">作者</div>
+    ${names.map(n => `<button data-au="${esc(n)}"${n === cur ? ' class="on"' : ''}><span class="ck">${n === cur ? '✓' : ''}</span>${esc(n)}</button>`).join('')}
+    <hr><div class="nau-other"><input id="nauOther" class="ex-in" placeholder="其他名字…" maxlength="40" spellcheck="false"></div>`;
+  ctx.style.display = 'block'; ctxShownAt = performance.now();
+  const r = NP.pop.querySelector('.nau').getBoundingClientRect(), w = ctx.offsetWidth, h = ctx.offsetHeight;
+  ctx.style.left = clamp(r.left, 8, innerWidth - w - 8) + 'px';
+  ctx.style.top = (r.bottom + 4 + h > innerHeight - 8 ? Math.max(8, r.top - 4 - h) : r.bottom + 4) + 'px';
+  const pick = name => { hideCtx(); if (!NP) return; NP.author = name; paintNoteAuthor(); NP.ta.focus(); };
+  ctx.onclick = ev => { const b = ev.target.closest('[data-au]'); if (b) pick(b.dataset.au); };
+  const inp = ctx.querySelector('#nauOther');
+  inp.addEventListener('keydown', ev => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') { ev.preventDefault(); const n = inp.value.trim(); if (!n) return; addPerson(n); pick(n); }
+    if (ev.key === 'Escape') { ev.preventDefault(); hideCtx(); if (NP) NP.ta.focus(); }
+  });
+  inp.focus();
+}
 function positionNote(){
   if (!NP) return;
   const {i, box, pop, call, note} = NP, pg = S.pages[i], sc = S.scale;
@@ -5346,22 +5387,23 @@ function positionNote(){
 function closeNoteDom(){
   if (!NP) return;
   NP.ro && NP.ro.disconnect();
+  if (ctx.querySelector('#nauOther')) hideCtx();   // its author list goes with it
   NP.pop.remove(); NP.call.remove(); NP.pend && NP.pend.remove();
   if (S.els[NP.i]) S.els[NP.i].style.zIndex = '';
   NP = null;
 }
 function closeNote(save = true){
   if (!NP) return noteSaving;
-  const {i, note, ta, orig, moved, pop} = NP;
+  const {i, note, ta, orig, moved, pop, author, origAuthor} = NP;
   const text = ta.value, box = {...NP.box, w:pop.offsetWidth / PX, h:pop.offsetHeight / PX};
   closeNoteDom();
   if (!save) return noteSaving;
-  if (!note.id) { if (text.trim()) noteSaving = createNote(i, note.icon, text, box); }
-  else if (text !== orig || moved) noteSaving = updateNote(i, note.id, text, box);
+  if (!note.id) { if (text.trim()) noteSaving = createNote(i, note.icon, text, box, {author}); }
+  else if (text !== orig || moved || author !== origAuthor) noteSaving = updateNote(i, note.id, text, box, author !== origAuthor ? author : undefined);
   return noteSaving;
 }
 document.addEventListener('pointerdown', e => {
-  if (!NP || NP.pop.contains(e.target) || (e.target.closest && e.target.closest('.annhit.txt'))) return;
+  if (!NP || NP.pop.contains(e.target) || (e.target.closest && e.target.closest('.annhit.txt, #ctx'))) return;
   closeNote(true);
 }, true);
 function addPopupAnnot(doc, i, parentRef, box){
@@ -5370,11 +5412,11 @@ function addPopupAnnot(doc, i, parentRef, box){
   doc.context.lookup(parentRef, PDFDict).set(PDFName.of('Popup'), pref);
   return pref;
 }
-async function createNote(i, icon, text, box){
-  await mutate('已新增註解', doc => {
+async function createNote(i, icon, text, box, {author = AUTHOR, label = '已新增註解'} = {}){
+  await mutate(label, doc => {
     const g = visToPdf(i, icon), now = nowStr();
     const ap = formAP(doc, NOTE_ICON_OPS, 20, 20, g.rot);
-    const ref = addAnnot(doc, i, {Type:'Annot', Subtype:'Text', Rect:g.rect, Contents:PDFHexString.fromText(text), T:PDFHexString.fromText(AUTHOR),
+    const ref = addAnnot(doc, i, {Type:'Annot', Subtype:'Text', Rect:g.rect, Contents:PDFHexString.fromText(text), T:PDFHexString.fromText(author),
       M:now, CreationDate:now, Name:'Comment', Subj:PDFHexString.fromText('便利貼'), C:[1, 0.92, 0.23], F:4, Open:false, AP:{N:ap}});
     addPopupAnnot(doc, i, ref, box);
   });
@@ -5385,11 +5427,12 @@ function findAnnotRef(doc, i, id){
   for (let k = 0; k < annots.size(); k++) { const r = annots.get(k); if (r instanceof PDFRef && r.objectNumber === num) return r; }
   return null;
 }
-async function updateNote(i, id, text, box){
+async function updateNote(i, id, text, box, author){   // author: only when it changed
   await mutate('已更新註解', doc => {
     const ref = findAnnotRef(doc, i, id); if (!ref) { toast('找不到此註解', 'err'); return false; }
     const dict = doc.context.lookup(ref, PDFDict);
     dict.set(PDFName.of('Contents'), PDFHexString.fromText(text)); dict.set(PDFName.of('M'), nowStr());
+    if (author != null) dict.set(PDFName.of('T'), PDFHexString.fromText(author));
     const pref = dict.get(PDFName.of('Popup'));
     if (pref instanceof PDFRef) doc.context.lookup(pref, PDFDict).set(PDFName.of('Rect'), doc.context.obj(visToPdf(i, box).rect));
     else addPopupAnnot(doc, i, ref, box);
