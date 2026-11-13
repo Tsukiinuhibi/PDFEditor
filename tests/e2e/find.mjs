@@ -98,5 +98,58 @@ check('off: 4; on again: the page read before is used (at once)', off === 4 && (
 await opt('scans');
 await key('Escape');
 
+// ---- part 3: replace, replace all ---------------------------------------------------------------------------------------
+const lines = i => Ev(i => window.__pdfapp.lineTexts(i), i);
+const undos = () => Ev(() => window.__pdfapp.S.undo.length);
+const toasts = () => Ev(() => [...document.querySelectorAll('.toast')].map(t => t.textContent).join('|'));
+const setRepl = t => Ev(t => { document.querySelector('#findR').value = t; }, t);
+const press = async (sel, ms = 4500) => { await win.click(sel); await win.waitForTimeout(ms); };
+// a message that says text (it shows for 2.4 s): seen within ms of the click
+const pressSee = async (sel, texts, ms = 9000) => { await win.click(sel); const seen = await Promise.all(texts.map(t => win.waitForFunction(t => [...document.querySelectorAll('.toast')].some(x => x.textContent.includes(t)), t, {timeout:ms}).then(() => true, () => false))); await win.waitForTimeout(1500); return seen; };
+const toFirst = async () => { for (let n = 0; n < 6 && (await st()).cur !== 0; n++) await key('Enter'); };   // the search starts from the current page
+await key('Control+f');
+await win.click('#findBar [data-fa="rep"]'); await win.waitForTimeout(300);
+check('取代 ▸ opens the replace row', await Ev(() => !document.querySelector('#findRepRow').hidden));
+await Ev(() => { const b = document.querySelector('#findBar [data-fo="word"]'); if (!b.classList.contains('on')) b.click(); }); await win.waitForTimeout(300);
+await type('world'); await setRepl('earth'); await toFirst();
+let u0 = await undos();
+await press('#findBar [data-fa="one"]');
+let p1 = await lines(0);
+check('〔取代〕: the first World on page 1 is earth; the other lines as they were; one undo step; the next match is current',
+  p1.includes('Hello earth 你好世界') && p1.includes('hello world worldwide') && (await undos()) === u0 + 1 && (await label()).includes('第 1／2 筆'), {p1, label:await label()});
+await win.keyboard.press('Control+z'); await win.waitForTimeout(2500);
+check('復原 once: back as it was', (await lines(0)).includes('Hello World 你好世界'), await lines(0));
+await type('world');
+u0 = await undos();
+const [said3] = await pressSee('#findBar [data-fa="all"]', ['已取代 3 處']);
+p1 = await lines(0); let p2 = await lines(1);
+check('〔全部取代〕 world → earth (whole words): 3 places, 「已取代 3 處」, one undo step; worldwide untouched',
+  p1.includes('Hello earth 你好世界') && p1.includes('hello earth worldwide') && p2.includes('earth peace') && said3 && (await undos()) === u0 + 1, {p1, p2, said3, undos:(await undos()) - u0});
+await type('earth'); await setRepl('planet');
+await press('#findBar [data-fa="all"]');
+p1 = await lines(0);
+check('again on lines written by the program (now its own text blocks): planet, and each line still once', p1.includes('Hello planet 你好世界') && p1.includes('hello planet worldwide') && p1.length === 4, p1);
+await type('a-b'); await setRepl('x');
+await press('#findBar [data-fa="all"]');
+p2 = await lines(1);
+check('two matches on one line: both replaced (a-b a-b end → x x end)', p2.includes('x x end'), p2);
+await type('end'); await setRepl('');
+await press('#findBar [data-fa="all"]');
+p2 = await lines(1);
+check('replaced with nothing: the words go', p2.some(t => t.trim() === 'x x') && !p2.some(t => t.includes('end')), p2);
+await Ev(() => { const b = document.querySelector('#findBar [data-fo="word"]'); if (b.classList.contains('on')) b.click(); }); await win.waitForTimeout(300);
+await opt('scans'); await type('hello');
+await win.waitForFunction(() => window.__pdfapp.find().n >= 5, null, {timeout:60000}).catch(() => {});
+const before = await st();
+await setRepl('Hi');
+const [said4, saidScan] = await pressSee('#findBar [data-fa="all"]', ['已取代 4 處', '掃描頁的 1 處沒有取代']);
+await win.waitForTimeout(1500);
+const after = await st();
+check('全部取代 with 掃描頁 on: the 4 in text replaced, 「掃描頁的 1 處沒有取代」; the scan\'s Hello still found', before.n === 5 && said4 && saidScan && after.n === 1 && after.hits[0].ocr, {before:before.n, said4, saidScan, after});
+const [saidNo] = await pressSee('#findBar [data-fa="one"]', ['掃描頁的文字不能取代'], 3000);
+check('〔取代〕 on the scan\'s match: 「掃描頁的文字不能取代」', saidNo);
+await opt('scans');
+await key('Escape');
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

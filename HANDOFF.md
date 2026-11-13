@@ -219,6 +219,13 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - **還沒在真的印表機上試過**（開發環境沒有印表機，測試用 `printToPDF` 代替）：要在 Windows 上用 Microsoft Print to PDF 和一台實體印表機各印一次 A4 直式、手冊、每面 2 頁、雙面，看張數、方向、縮放對不對。
 - 測試接口：主程式的 `global.__pdfePrinters`（印表機清單）、`global.__pdfePrintHook(wc, opts, cb)`（送印）；`print.mjs` 用 `printToPDF({preferCSSPageSize:true})` 檢查印出的張數與紙張大小。`__pdfapp.printState()`、`printPlanNow()`、`printPlan(st)`、`parseRange`。
 
+### 3.9.12 尋找與取代（v1.0.39）
+- 入口：Ctrl+F（打字中不搶；已加進 `RESERVED`，連同 F3、Shift+F3）。尋找列 `#findBar` 浮在 `#vwrap` 右上角；Enter／Shift+Enter、F3、〔▲〕〔▼〕上下筆，Esc 關閉（輸入框裡的按鍵不會觸發程式的快速鍵）。選項 `FIND.opts`（`case`、`word`、`width`、`scans`）存在 `pdfeditor.find.v1`。
+- **一頁的行** `findLines(i)`：`pageTextItems` → `lineOf` → `joinRowPieces`，和「修改原文」編輯的行一樣；每段（`at`）記得它的字在行文字裡的位置。不跨行比對。比對用 `normFind`（全形英數→半形、小寫；長度不變，所以位置對得上），全字相符用 `wordCh`（中文字不算字元邊界）。標示框 `pieceBox`：依字在 sans-serif 裡的寬度比例（`textFrac`）放在那段文字的框裡，依閱讀方向（直書、轉向）。
+- `searchDoc()`：先找有文字的頁，再（勾「掃描頁」時）逐頁辨識沒有文字的頁（`ocrLines`：整頁 `ocrImage`＋`ocrWorker('eng+chi_tra')`＋`ocrSymbols`，每個字有自己的框；依文件與頁面物件記住，修改別處不用重讀）。每次修改、換分頁（`mountDoc`）後重找；目前那筆盡量維持，否則從目前頁往後第一筆。標示畫在每頁的 `.ovl`（`paintFindPage`，`ensureOverlay` 也會畫）。
+- 「搜尋」分頁（`#p-find`，`buildFindPanel`）：依頁列出每一筆與它的那一行，點一下就是目前那筆。
+- **取代**（`replaceHits(list, repl)`）：依行分組（本程式的文字區塊以整塊分組），原本的文字整行照修改原文重寫（`pageTextEdit` 是從 `editPageText` 抽出的「行→runs、U、錨點、顏色」，`commitPageTextEdit` 拆成 `preparePageText`（字型、檢查，在 `mutate` 外）與 `applyPageText`（拿掉、寫回，在 `mutate` 裡）），本程式的區塊改 `rt.lines` 後整塊重寫（格式保留）；符合處用 `placesIn` 對到 runs 的位置（文字不同時依第幾個符合處對），`replaceInLine` 從後面往前換，新字用符合處開頭那段的樣式。全部在一次 `mutate` 裡，一個復原步驟；掃描頁的跳過並提示。〔取代〕後到原位置之後的下一筆（`FIND.after`）；Enter 取代時焦點留在取代框，按按鈕時焦點在按鈕上（Ctrl+Z 復原的是文件；在輸入框裡 Ctrl+Z 是輸入框自己的復原）。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。
@@ -233,7 +240,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
   - 重新打開舊的文字方塊時，預設的字型、粗體、斜體、底線不會套到方塊本身（只給新方塊），否則按 Esc 就會把舊方塊整個改掉。
   - 目錄 v2（`pdfeditor.fontcat.v2`）多記 `embed`（OS/2 fsType：`ok`／`full`／`no`）、`vert`（`vhea`＋`vmtx`＋GSUB `vert`）、`bytes`，以及每個家族的所有字面 `faces`（`FONT_FACES` 存 `queryLocalFonts` 的原物件）。測試用 `registerTestFont` 把字型位元組當成已安裝字型（`TEST_FONTS`）。
   - 格式列與 `currentTBStyle` 讀游標旁邊那段文字的樣式（`caretStyleNode`）：游標在元素之間時（例如剛打開編輯器、游標在最後）取前一段文字。
-- localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, fontcat.v2, fontid.v1, fonts.recent.v1, lastact.v1, seenversion.v1, lasttool.v1, pagecolor, people.v1, print.v1, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
+- localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, find.v1, fontcat.v2, fontid.v1, fonts.recent.v1, lastact.v1, seenversion.v1, lasttool.v1, pagecolor, people.v1, print.v1, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
 - 測試用的鉤子：`window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars, getAnns, TBE, sel, …}`，端對端測試會用到，不要刪。
 
 ---
@@ -297,6 +304,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | align | 多選與對齊：拖曳選取框（隱藏的物件不選）、Shift＋點加入移出、Esc、拖其中一個全部移動、復原、Delete 全部刪除、換工具清除、Shift 按在旋轉把手上仍轉 15°；靠左（最左不動）、水平置中、靠下、對齊到頁面、水平平均分配、旋轉過的戳記以外框對齊且角度不變、線條＋文字方塊＋矩形靠上 |
 | stacking | 上下層級：彈出視窗放在別處（全放在最後或最前）的便利貼旁邊上下移一層只移一格、同時按兩次只算一次；選取列的四個鈕（重疊處的顏色跟著變、連結位置不動、選取保留、一次復原）、Ctrl+] ／ Ctrl+[ ／加 Shift、到頂只提示不產生復原步驟、打字時不作用、便利貼的彈出視窗跟著走、橡皮擦後留在原位；圖層面板依頁列出（最上面的先）、選到的反白、右鍵移到最下層、拖曳到最上面、拖到別頁不動、收合後保持收合、有圖層時只在自己的圖層裡移動與拖到別的圖層、鎖定圖層不能拖、換色重填留在原位與原圖層 |
 | print | 列印：Ctrl+P、印表機清單（系統預設在最前）、5 頁各一色的文件（第 5 頁是 /Rotate 90）；範圍「1 - 3」「8 -」「-」；印表機失敗、沒有印表機、讀不到清單、超過 100 張先確認、沒用過的印表機保留畫面設定；共用的範圍讀法（全形、倒過來、字母）、自訂範圍與錯誤、奇數頁、反向、橫向頁轉 90°、不列印的註解與隱藏圖層不印、只有文件、黑白；送出的選項與印出的 PDF（張數、A4）、關閉與提示、依印表機記住設定、準備時取消、〔印表機內容…〕；多頁合一 4／2（順序、橫向紙）與框線；手冊（補空白頁、左翻右翻、只印正面背面、短邊雙面、842×595）；海報（2×2、自動方向 8 張、重疊、標籤、裁切記號、100%） |
+| find | 尋找與取代：Ctrl+F、hello 4 筆（大小寫、全形）與標示、Enter／Shift+Enter 換筆並捲動、區分大小寫／全形＝半形／全字相符的筆數、換分頁重找、Esc；「搜尋」分頁依頁列出並點選；掃描頁用文字辨識（標「辨識」、關掉再開用記住的）；取代一筆（只改那一行、一個復原步驟、到下一筆）、全部取代（3 處、提示、一個復原步驟、worldwide 不動）、本程式的文字區塊再取代（不重複）、同一行兩處、取代成空白、掃描頁的不取代並提示 |
 | ocr | 文字辨識：PDF 文字一字不差、剪貼簿內容、乾淨掃描（橫書、直書）與低品質掃描的辨識率、強制影像辨識、Esc 關閉 |
 | font-identify-engine | 字型辨識引擎（不連網）：空白字型與缺字判斷（含 Type 1 字型）、取字（信心度、標點、`ilI1|`、只留一次、偏好字母、太小、白紙、鄰字筆畫、鬆的字框、直書粗略字框）、比對排名（DejaVu Serif、Liberation Sans 粗體、文泉驛正黑與等寬版合併、內建思源黑體、超大字、沒有字型有這些字、stop）、本機與 Google 同字形合併、750 個候選的時間與畫面不卡、Google 載入（分批、`text=`、粗體字重、快取、錯名逐一重試、沒網路、逾時）、Google 清單 |
 | font-identify | 「字型」頁（假的 Google 來源）：各種掃描（英文、粗體、中文、內建思源黑體、中英混排分組、直書、不是字）、Google 字型排第一與〔下載〕、關掉 Google、連不上 Google、比對中換框、長名稱不擋來源標籤；PDF 記錄的字型（已內嵌 DejaVu Serif、Big5 名稱、Helvetica 用同款代替、Google 名稱、沒有名稱、隱形文字層）、〔用字形比對找相似字型〕；〔套用〕、〔下載〕開的網址、字型選單「字型辨識結果」 |

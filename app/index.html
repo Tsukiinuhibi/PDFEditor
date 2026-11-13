@@ -274,6 +274,8 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .findbar button{border:0;background:none;border-radius:5px;padding:4px 7px;cursor:pointer;color:var(--ink2);font:inherit;font-size:12px;white-space:nowrap}
 .findbar button:hover{background:#fff3bf;color:#1f2328}
 .findbar .fb-o.on{background:rgba(28,100,217,.14);color:#1c64d9}
+.findbar .fb-row[hidden]{display:none}
+.findbar [data-fa="one"],.findbar [data-fa="all"]{border:1px solid var(--line2);background:var(--surface)}
 .fhit{position:absolute;background:rgba(255,212,59,.45);mix-blend-mode:multiply;pointer-events:none;border-radius:1px;z-index:2}
 .fhit.cur{background:rgba(255,140,0,.55);outline:2px solid #f08c00}
 .fd-sum{font-size:12px;color:var(--ink2);margin:2px 0 6px}
@@ -1006,7 +1008,9 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
     <div class="fb-row"><input type="text" id="findQ" placeholder="尋找" spellcheck="false" autocomplete="off"><span class="fb-n" id="findN"></span>
       <button data-fa="prev" title="上一筆（Shift+Enter）">▲</button><button data-fa="next" title="下一筆（Enter）">▼</button>
       <button class="fb-o" data-fo="case" title="區分大小寫">Aa</button><button class="fb-o" data-fo="word" title="全字相符（英文、數字）">全字</button><button class="fb-o" data-fo="width" title="全形、半形視為相同">全＝半</button><button class="fb-o" data-fo="scans" title="也搜尋掃描頁：沒有文字的頁用文字辨識讀（只能找，不能取代）">掃描頁</button>
-      <button data-fa="close" title="關閉（Esc）">✕</button></div>
+      <button data-fa="rep" title="取代">取代 ▸</button><button data-fa="close" title="關閉（Esc）">✕</button></div>
+    <div class="fb-row" id="findRepRow" hidden><input type="text" id="findR" placeholder="取代為（空白＝刪除）" spellcheck="false" autocomplete="off">
+      <button data-fa="one" title="取代目前這一筆，再到下一筆（Enter）">取代</button><button data-fa="all" title="全部取代（一個復原步驟）">全部取代</button></div>
   </div>
   <div class="viewer" id="viewer" tabindex="0">
     <div class="pages" id="pages"></div>
@@ -4473,13 +4477,23 @@ function commitTextEditor(){
 async function commitPageTextEdit(i, x, y, lines, box, edit, empty, strut){
   if (JSON.stringify(lines) === edit.orig && (edit.block ? JSON.stringify(box) === edit.origBox : !box.boxBg && !box.border)) return false;   // nothing changed
   // written as real page text when the bundled font has every character; otherwise as before, a picture in a text box
+  const prep = await preparePageText(lines, box, edit, empty, strut); if (!prep) return false;
+  return mutate(empty ? '已刪除文字' : '已修改文字', doc => applyPageText(doc, i, x, y, prep, box, edit, empty, strut));
+}
+// the lines ready to be written: fonts that can be embedded (思源黑體 instead, with a message), every character in its
+// font; real page text when it can be, else a picture (rendering r). null: it cannot be done (a message said why)
+async function preparePageText(lines, box, edit, empty, strut){
   if (!empty) lines = await trialEmbedFonts(await resolveRealFonts(lines), !!edit.vert);   // a font that cannot be read or embedded: 思源黑體, with a message
   let chk = empty ? {image:false, missing:[]} : await realTextCheck(lines);
   if (chk.missing.length) { lines = mergeRuns(await missingToDefault(lines)); chk = await realTextCheck(lines); }
   const real = !empty && !chk.image;
-  if (!empty && !real && (edit.rot || edit.vert)) { toast('有字型裡沒有的字（例如表情符號），轉向或直書的文字無法這樣修改', 'err'); return false; }
-  let r = empty || real ? null : await renderTextBox(lines, box, strut), removed = 0;
-  return mutate(empty ? '已刪除文字' : '已修改文字', async doc => {
+  if (!empty && !real && (edit.rot || edit.vert)) { toast('有字型裡沒有的字（例如表情符號），轉向或直書的文字無法這樣修改', 'err'); return null; }
+  return {lines, real, r:empty || real ? null : await renderTextBox(lines, box, strut)};
+}
+// inside a change: the old text out (our block, or what lies in edit.U), the prepared lines in at (x, y)
+async function applyPageText(doc, i, x, y, prep, box, edit, empty, strut){
+  let {lines, real, r} = prep, removed = 0;
+  {
     if (edit.block) removed = cutPageBlock(doc, i, edit.block) ? 1 : 0;
     else {
       if (edit.blocks && edit.blocks.length) {   // our own blocks inside the selection go as a whole
@@ -4497,7 +4511,7 @@ async function commitPageTextEdit(i, x, y, lines, box, edit, empty, strut){
     if (real) { await writePageText(doc, i, x, y, lines, box, {rot:edit.rot || 0, vert:!!edit.vert, strut:strut && !edit.vert ? strut : realStrut(lines)}); return; }
     addAnnot(doc, i, {Type:'Annot', Subtype:'FreeText', T:PDFHexString.fromText(AUTHOR), CreationDate:nowStr(), Subj:PDFHexString.fromText('修改的文字'), F:4,
       ...(await textBoxFields(doc, i, lines, box, r, {x, y, w:r.w, h:r.h}))});
-  });
+  }
 }
 // a text box's fields for its runs (lines), box style and rendering r (renderTextBox) placed at b (page view points)
 async function textBoxFields(doc, i, lines, box, r, b){
@@ -5548,6 +5562,14 @@ async function editPageText(i, items, {selectAll = false, all = null, plain = fa
     if (ks.length === 1 && items.every(t => t.blk === ks[0])) return editOwnText(i, ks[0], all, {selectAll});
     if (ks.length) { items = [...new Set([...items, ...all.filter(t => ks.includes(t.blk))])]; blocks = ks; }
   }
+  const t = await pageTextEdit(i, items);
+  openTextEditor(i, t.at.x, t.at.y, {lines:t.lines, box:{boxBg:'', border:false}, veilBox:{x:t.vU.x - 1, y:t.vU.y - 1, w:t.vU.w + 2, h:t.vU.h + 2}, veilColor:t.col.bg,
+    edit:{U:t.U, bg:t.col.bg, orig:JSON.stringify(t.lines), blocks, rot:t.rot, vert:t.vert}, selectAll, real:true, rot:t.rot, vert:t.vert});
+  clearTextMarks();
+}
+// what 修改原文 works out for some of the page's own text (also for 取代): its lines as runs, each piece in the font it was
+// written in; the box to take out (U, PDF space) and on screen (vU); its colours; the way it runs; where the editor sits
+async function pageTextEdit(i, items){
   await realFontsReady();
   const way = items.find(t => !t.stacked) || items[0];   // text running different ways: keep to one of them
   items = items.filter(t => sameWay(t, way));
@@ -5585,9 +5607,7 @@ async function editPageText(i, items, {selectAll = false, all = null, plain = fa
   const firstBase = vert ? 0 : (await layoutReal(lines, realStrut(lines))).rows[0].base;
   const anchor = vert ? {x:rows[0].base + fsz * REAL_LH / 2 + TB_PAD, y:a0 - TB_PAD} : {x:a0 - TB_PAD, y:Math.min(...rows[0].items.map(t => t.base)) - firstBase};
   const at = returnTurn(anchor, rot);
-  openTextEditor(i, at.x, at.y, {lines, box:{boxBg:'', border:false}, veilBox:{x:vU.x - 1, y:vU.y - 1, w:vU.w + 2, h:vU.h + 2}, veilColor:col.bg,
-    edit:{U, bg:col.bg, orig:JSON.stringify(lines), blocks, rot, vert}, selectAll, real:true, rot, vert});
-  clearTextMarks();
+  return {items, lines, U, vU, col, rot, vert, at};
 }
 // the installed family a PDF font name stands for ('ABCDEF+DejaVuSerif-Bold', 'DejaVuSerif-2000' → 'DejaVu Serif'): the face with that
 // PostScript name, else the family whose name without spaces is the name without its style; only an unambiguous match
@@ -9880,8 +9900,10 @@ async function searchDoc(){
   const publish = () => { hits.sort((a, b) => a.i - b.i || a.li - b.li || a.s - b.s); FIND.hits = hits.slice(); FIND.done = q + '|' + JSON.stringify(o) + '|' + S.version; };
   publish();
   // the same match as before when it is still there, else the first one from the current page on
-  const same = before ? FIND.hits.findIndex(h => h.i === before.i && h.li === before.li && h.s === before.s) : -1;
-  FIND.cur = !FIND.hits.length ? -1 : same >= 0 ? same : Math.max(0, FIND.hits.findIndex(h => h.i >= S.current));
+  const same = before && !FIND.after ? FIND.hits.findIndex(h => h.i === before.i && h.li === before.li && h.s === before.s) : -1;
+  const a = FIND.after; FIND.after = null;   // a match was just replaced: the next one after its place
+  const next = a ? FIND.hits.findIndex(h => h.i > a.i || (h.i === a.i && (h.line.top > a.top + 1 || (Math.abs(h.line.top - a.top) <= 1 && h.s >= a.s)))) : -1;
+  FIND.cur = !FIND.hits.length ? -1 : same >= 0 ? same : next >= 0 ? next : Math.max(0, FIND.hits.findIndex(h => h.i >= S.current));
   paintFind(); buildFindPanel();
   if (FIND.cur >= 0 && same < 0) showHit(FIND.cur);
   if (!o.scans || !scans.length) return;
@@ -9905,6 +9927,86 @@ function buildFindPanel(){
   }).join('');
 }
 $('#p-find').addEventListener('click', e => { const r = e.target.closest('.fd-hit'); if (!r) return; FIND.cur = +r.dataset.k; paintFind(); showHit(FIND.cur); });
+/* 取代: the lines with matches are rewritten as 修改原文 would after the change was typed in: the page's own text a line
+   at a time (its pieces keep their fonts), our own text blocks as a whole with their formatting; matches on scanned
+   pages are left. Everything in one change. */
+// where the query matches in t by the search's rules
+function matchStarts(t, o, q){
+  const nq = normFind(q, o), nt = normFind(t, o), out = [];
+  for (let k = nt.indexOf(nq); k >= 0; k = nt.indexOf(nq, k + Math.max(1, nq.length))) { if (o.word && (wordCh(t[k - 1]) || wordCh(t[k + nq.length]))) continue; out.push(k); }
+  return out;
+}
+// a line of runs with characters [s, e) of its text replaced by repl, in the style of the run where each match starts
+function replaceInLine(runs, ranges, repl){
+  const chars = []; runs.forEach((r, k) => { for (let n = 0; n < r.text.length; n++) chars.push({c:r.text[n], k}); });
+  for (const [s, e] of [...ranges].sort((x, y) => y[0] - x[0])) {   // from the end: the earlier places stay where they were
+    const k = chars[s] ? chars[s].k : chars.length ? chars[chars.length - 1].k : 0;
+    chars.splice(s, e - s, ...Array.from({length:repl.length}, (_, n) => ({c:repl[n], k})));
+  }
+  const out = [];
+  chars.forEach(({c, k}) => { const last = out[out.length - 1]; if (last && last.k === k) last.text += c; else out.push({k, text:c}); });
+  return out.map(({k, text}) => ({...runs[k], text}));
+}
+// the places (in t) of the hits found in the line text ln: the same places when the texts agree, else the same matches
+// counted in order
+function placesIn(t, ln, hits, o, q){
+  if (t === ln) return hits.map(h => [h.s, h.e]);
+  const all = matchStarts(ln, o, q), there = matchStarts(t, o, q);
+  return hits.map(h => all.indexOf(h.s)).filter(k => k >= 0 && k < there.length).map(k => [there[k], there[k] + q.length]);
+}
+async function lineJob(i, hits, repl, o, q){
+  const ln = hits[0].line, t = await pageTextEdit(i, ln.items); if (t.lines.length !== 1) return null;
+  const ranges = placesIn(t.lines[0].map(x => x.text).join(''), ln.text, hits, o, q); if (!ranges.length) return null;
+  const runs = replaceInLine(t.lines[0], ranges, repl), lines = [runs], empty = !runs.some(x => x.text.trim());
+  const edit = {U:t.U, bg:t.col.bg, orig:'', blocks:[], rot:t.rot, vert:t.vert}, box = {boxBg:'', border:false}, strut = realStrut(lines);
+  const prep = await preparePageText(lines, box, edit, empty, strut); if (!prep) return null;
+  return {i, x:t.at.x, y:t.at.y, prep, box, edit, empty, strut, n:ranges.length};
+}
+// our own block k: its lines (with their formatting) changed where the hits are, the block written again as a whole
+async function blockJob(i, k, hits, repl, o, q){
+  const b = await readPageBlock(i, k); if (!b || !b.rt) return null;
+  const mine = (await findLines(i)).filter(l => l.items.every(t => t.blk === k)), texts = b.rt.lines.map(l => l.map(x => x.text).join(''));
+  let lines = b.rt.lines, n = 0;
+  for (const ln of new Set(hits.map(h => h.line))) {
+    let r = texts.indexOf(ln.text); if (r < 0) r = mine.indexOf(ln);   // which of the block's lines (its text, else its place)
+    if (r < 0 || r >= texts.length) continue;
+    const ranges = placesIn(texts[r], ln.text, hits.filter(h => h.line === ln), o, q); if (!ranges.length) continue;
+    lines = lines.map((l, m) => m === r ? replaceInLine(l, ranges, repl) : l); n += ranges.length;
+  }
+  if (!n) return null;
+  const empty = !lines.some(l => l.some(x => x.text.trim())), box = b.rt.box || {boxBg:'', border:false}, strut = realStrut(lines);
+  const edit = {block:b.name, bg:sampleTextColors(i, b.vbox).bg, orig:'', origBox:'', rot:b.rot, vert:b.vert};
+  const prep = await preparePageText(lines, box, edit, empty, strut); if (!prep) return null;
+  return {i, x:b.at.x, y:b.at.y, prep, box, edit, empty, strut, n};
+}
+async function replaceHits(list, repl){
+  const o = {...FIND.opts}, q = FIND.q, scans = list.filter(h => h.ocr).length, todo = list.filter(h => !h.ocr);
+  if (!todo.length) { toast(scans ? '掃描頁的文字不能取代' : '沒有可以取代的文字', 'err'); return false; }
+  if (!(await settleEdits())) return false;
+  const groups = new Map();   // our own blocks as a whole, the page's own text a line at a time
+  for (const h of todo) {
+    const k = h.line.items[0].blk, own = k != null && h.line.items.every(t => t.blk === k), key = own ? `b${h.i}:${k}` : `l${h.i}:${h.li}`;
+    if (!groups.has(key)) groups.set(key, {own, k, i:h.i, hits:[]});
+    groups.get(key).hits.push(h);
+  }
+  const jobs = [];
+  busy(true, '準備取代…');
+  try { for (const g of groups.values()) { const j = g.own ? await blockJob(g.i, g.k, g.hits, repl, o, q) : await lineJob(g.i, g.hits, repl, o, q); if (j) jobs.push(j); } }
+  catch (e) { console.error(e); }
+  finally { busy(false); }
+  const n = jobs.reduce((a, j) => a + j.n, 0);
+  if (!n) { toast('這些文字無法取代', 'err'); return false; }
+  const ok = await mutate(`已取代 ${n} 處`, async doc => { for (const j of jobs) await applyPageText(doc, j.i, j.x, j.y, j.prep, j.box, j.edit, j.empty, j.strut); });
+  if (ok && scans) toast(`掃描頁的 ${scans} 處沒有取代`);
+  return ok;
+}
+// 取代: the current match, then the next one
+async function replaceCurrent(){
+  const h = FIND.hits[FIND.cur]; if (!h) return;
+  if (h.ocr) { toast('掃描頁的文字不能取代', 'err'); stepFind(1); return; }
+  FIND.after = {i:h.i, top:h.line.top, s:h.s};
+  if (!(await replaceHits([h], $('#findR').value))) FIND.after = null;
+}
 function scheduleFind(ms = 150){ clearTimeout(FIND.timer); FIND.timer = setTimeout(searchDoc, ms); }
 function setFindLabel(t){ const n = $('#findN'); if (n) n.textContent = t; }
 function paintFind(){
@@ -9958,11 +10060,16 @@ function closeFind(){
     if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
     if (e.key === 'F3') { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1); }
   });
+  // Enter replaces and keeps the box for the next one; after 〔取代〕 the focus stays on the button, so Ctrl+Z undoes the change
+  $('#findR').addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); replaceCurrent().then(() => $('#findR').focus()); } if (e.key === 'Escape') { e.preventDefault(); closeFind(); } });
   bar.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
     if (b.dataset.fa === 'next') stepFind(1);
     if (b.dataset.fa === 'prev') stepFind(-1);
     if (b.dataset.fa === 'close') closeFind();
+    if (b.dataset.fa === 'rep') { const r = $('#findRepRow'); r.hidden = !r.hidden; b.textContent = r.hidden ? '取代 ▸' : '取代 ▾'; if (!r.hidden) $('#findR').focus(); }
+    if (b.dataset.fa === 'one') replaceCurrent();
+    if (b.dataset.fa === 'all') replaceHits(FIND.hits.slice(), $('#findR').value);
     if (b.dataset.fo) { const k = b.dataset.fo; FIND.opts[k] = !FIND.opts[k]; b.classList.toggle('on', FIND.opts[k]); saveFindOpts(); searchDoc(); }
   });
 })();
@@ -10553,6 +10660,7 @@ window.__pdfapp = {
   imageBoxes:i => detectImages(i),
   multi:() => MS ? {i:MS.i, ids:MS.items.map(a => a.id)} : null,
   switchTab,
+  lineTexts:async i => (await findLines(i)).map(l => l.text),
   find:() => ({open:FIND.open, q:FIND.q, n:FIND.hits.length, cur:FIND.cur, hits:FIND.hits.map(h => ({i:h.i, ocr:!!h.ocr, text:h.ctx}))}),
   parseRange, printPlan, printPlanNow:() => PR && PR.plan,
   printState:() => PR && PR.plan ? {open:true, sides:PR.plan.sides.length, sheets:PR.plan.sheets, pos:PR.cur, paper:PR.plan.paper, duplex:PR.plan.duplex, error:PR.err,
