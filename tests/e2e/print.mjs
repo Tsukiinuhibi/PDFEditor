@@ -2,20 +2,22 @@
 // paper; the main process's printer list and printing are replaced (global.__pdfePrinters / __pdfePrintHook): a print job
 // is printed to PDF with the same page setup, so its pages and paper size can be checked.
 import { launchPath, TMP } from './_env.mjs';
-import { PDFDocument, PDFName, PDFString } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFString, degrees } from 'pdf-lib';
 import fs from 'fs';
 import path from 'path';
 
 let failed = 0;
 const check = (name, ok, detail = '') => { console.log(`${ok ? '✔' : '✘'} ${name}${detail !== '' ? '  ' + (typeof detail === 'string' ? detail : JSON.stringify(detail)) : ''}`); if (!ok) { failed++; process.exitCode = 1; } };
 
-// five pages, each one colour (red, green, blue, yellow, magenta); page 5 lies landscape. Page 2 holds two black squares:
+// five pages, each one colour (red, green, blue, yellow, magenta); page 5 is an upright page turned by /Rotate 90 (so it
+// lies), with a black square in the corner that then shows at the top left. Page 2 holds two black squares:
 // one that may be printed (F 4) and one that may not (F 0); page 3 holds one on a hidden layer
 const COLORS = [[1, 0, 0], [0, .6, 0], [0, 0, 1], [1, .85, 0], [.85, 0, .85]];
 const doc = await PDFDocument.create(), ctx = doc.context, N = n => PDFName.of(n);
 COLORS.forEach((c, k) => {
-  const [w, h] = k === 4 ? [842, 595] : [595, 842], p = doc.addPage([w, h]);
-  p.node.set(N('Contents'), ctx.register(ctx.stream(`${c.join(' ')} rg 0 0 ${w} ${h} re f\n`)));
+  const p = doc.addPage([595, 842]);
+  p.node.set(N('Contents'), ctx.register(ctx.stream(`${c.join(' ')} rg 0 0 595 842 re f\n${k === 4 ? '0 0 0 rg 0 0 100 100 re f\n' : ''}`)));
+  if (k === 4) p.setRotation(degrees(90));
 });
 const ap = () => ctx.register(ctx.stream('0 0 0 rg 0 0 100 100 re f', {Type:'XObject', Subtype:'Form', BBox:[0, 0, 100, 100]}));
 doc.getPage(1).node.set(N('Annots'), ctx.obj([
@@ -65,6 +67,10 @@ let s = await pst();
 const printers = await Ev(() => [...document.querySelectorAll('#prDlg [data-p="printer"] option')].map(o => o.textContent));
 check('Ctrl+P opens 列印: the system default printer first, then the printers', !!s && s.open && JSON.stringify(printers) === JSON.stringify(['系統預設印表機', '辦公室事務機', 'Microsoft Print to PDF']), {s, printers});
 check('5 pages: 5 sides, 「第 1／5 面」, the first one red', s.sides === 5 && (await Ev(() => document.querySelector('#prPos').textContent)).includes('第 1／5 面') && near(await prevAt(.5, .5), RGB[0]), {s, px:await prevAt(.5, .5)});
+const pr10 = t => Ev(t => { const r = window.__pdfapp.parseRange(t, 10); return r ? [...r] : null; }, t);
+check('(final review) ranges with spaces round the dash; 8-, -3, 1、3; a dash alone is wrong',
+  JSON.stringify(await pr10('1 - 3')) === '[0,1,2]' && JSON.stringify(await pr10('5 -7')) === '[4,5,6]' && JSON.stringify(await pr10('8 -')) === '[7,8,9]' && JSON.stringify(await pr10('- 3')) === '[0,1,2]' && JSON.stringify(await pr10('1、3')) === '[0,2]' && (await pr10('-')) === null && (await pr10(' - ')) === null,
+  {a:await pr10('1 - 3'), b:await pr10('5 -7'), c:await pr10('-')});
 check('the shared range reader takes full-width digits and commas; a reversed range; letters are wrong',
   JSON.stringify(await Ev(() => [...window.__pdfapp.parseRange('２－３，５', 5)])) === '[1,2,4]' && JSON.stringify(await Ev(() => [...window.__pdfapp.parseRange('5-3', 5)])) === '[2,3,4]' && (await Ev(() => window.__pdfapp.parseRange('a', 5))) === null);
 await set('range', 'custom'); await set('custom', '2-3');
@@ -78,6 +84,8 @@ await set('subset', 'all'); await set('reverse', true);
 const sRev = await pst(), pxRev = await prevAt(.5, .5);
 check('只印奇數頁: 3 sides; 反向列印: the last page first (page 5, magenta)', sOdd.sides === 3 && sRev.sides === 5 && near(pxRev, RGB[4]), {sOdd:sOdd.sides, pxRev});
 check('page 5 (landscape) on upright paper: turned a quarter, the paper stays upright', sRev.paper.w < sRev.paper.h && sRev.items[0].rot % 180 === 90, sRev);
+const rc1 = await prevAt(50 / 842, 50 / 595), rc2 = await prevAt(1 - 50 / 842, 1 - 50 / 595);
+check('(final review) a page turned by /Rotate: its top-left corner (black) where it belongs, the far corner magenta', near(rc1, [0, 0, 0]) && near(rc2, RGB[4]), {rc1, rc2});
 await set('reverse', false);
 await Ev(() => document.querySelector('#prFwd').click()); await win.waitForTimeout(800);
 const okPx = await prevAt(350 / 595, 92 / 842), noPx = await prevAt(150 / 595, 92 / 842);
@@ -103,11 +111,13 @@ check('what was printed: 5 sheets of A4', !!pdfPages && pdfPages.length === 5 &&
 check('after printing: the window closed, a message, nothing left to print', !(await pst()).open && (await Ev(() => document.querySelector('#printRoot').children.length)) === 0 && toasts.includes('已送到「辦公室事務機」'), toasts);
 await open();
 check('opened again: 辦公室事務機 and both sides come back; the pages and copies do not', (await val('printer')) === 'OfficeMFP' && (await val('duplex')) === 'longEdge' && (await val('range')) === 'all' && (await val('copies')) === '1', {printer:await val('printer'), duplex:await val('duplex'), range:await val('range'), copies:await val('copies')});
-await set('printer', '');
-check('another printer: its own settings (none yet: one side)', (await val('duplex')) === 'simplex', await val('duplex'));
+await set('layout', 'nup'); await set('printer', '');
+const keep = await val('layout');
+await set('printer', 'OfficeMFP');
+check('(final review) a printer never used keeps what is on screen; one used before brings back its own settings', keep === 'nup' && (await val('layout')) === 'normal' && (await val('duplex')) === 'longEdge', {keep, back:[await val('layout'), await val('duplex')]});
 await set('printer', 'OfficeMFP'); await set('quality', '300');
 const n0 = (await printed()).length;
-await win.click('#prGo'); await win.waitForTimeout(120); await close(); await win.waitForTimeout(3000);
+await Ev(() => { document.querySelector('#prGo').click(); document.querySelector('#prCancel').click(); }); await win.waitForTimeout(3000);
 check('〔取消〕 while the job is being prepared: nothing printed, nothing left behind, the window still open', (await printed()).length === n0 && (await Ev(() => document.querySelector('#printRoot').children.length)) === 0 && (await pst()).open);
 await send('#prSys');
 const sys = (await printed()).at(-1);
@@ -185,6 +195,34 @@ const mark = await Ev(() => { const s = window.__pdfapp.printState(), c = docume
 check('裁切記號: a dark mark in the margin at each corner of the printed part', mark.every(v => v < 130), mark);
 await set('ppct', '100'); await set('margin', '0');
 check('100%: one side', (await pst()).sides === 1);
+await close();
+
+// ---- part 5 (final review): a printer that fails, no printers, a very large job ------------------------------------------
+await app.evaluate(() => { global.__pdfePrintSave = global.__pdfePrintHook; global.__pdfePrintHook = (wc, opts, cb) => cb(false, 'paper jam'); });
+await open();
+await set('layout', 'normal'); await set('range', 'custom'); await set('custom', '1');
+await win.click('#prGo'); await win.waitForTimeout(4000);
+const failMsg = await Ev(() => [...document.querySelectorAll('.toast')].map(t => t.textContent).join('|'));
+check('a printer that fails: 「列印失敗：…」, the window stays open, nothing left in the print view', failMsg.includes('列印失敗：paper jam') && (await pst()).open && (await Ev(() => document.querySelector('#printRoot').children.length)) === 0, failMsg);
+await close();
+await app.evaluate(() => { global.__pdfePrintHook = global.__pdfePrintSave; global.__pdfePrintersSave = global.__pdfePrinters; global.__pdfePrinters = async () => []; });
+await open();
+const none = await Ev(() => ({note:(document.querySelector('#prDlg .pr-warn') || {}).textContent || '', go:document.querySelector('#prGo').disabled, sys:document.querySelector('#prSys').disabled}));
+await close();
+await app.evaluate(() => { global.__pdfePrinters = async () => { throw new Error('spooler down'); }; });
+await open();
+const thrown = await Ev(() => ({note:(document.querySelector('#prDlg .pr-warn') || {}).textContent || '', go:document.querySelector('#prGo').disabled}));
+await close();
+check('no printers (or the list cannot be read): a note, 〔列印〕 off, 〔印表機內容…〕 still there', none.note.includes('找不到印表機') && none.go && !none.sys && thrown.note.includes('找不到印表機') && thrown.go, {none, thrown});
+await app.evaluate(() => { global.__pdfePrinters = global.__pdfePrintersSave; });
+await open();
+await set('range', 'custom'); await set('custom', '1'); await set('layout', 'poster'); await set('ppct', '1000'); await set('margin', '5'); await set('overlap', '10'); await set('duplex', 'simplex');
+const big = await pst(), n1 = (await printed()).length;
+await win.click('#prGo'); await win.waitForTimeout(800);
+const ask = await Ev(() => ({go:document.querySelector('#prGo').textContent, sum:document.querySelector('#prSum').textContent, root:document.querySelector('#printRoot').children.length}));
+check('more than 100 sheets: the first 〔列印〕 only asks again (「確定印 N 張」), nothing prepared', big.sheets > 100 && (await printed()).length === n1 && ask.go.includes(`確定印 ${big.sheets} 張`) && ask.root === 0, {sheets:big.sheets, ask});
+await set('ppct', '999');
+check('a change after that: the button is 〔列印〕 again', (await Ev(() => document.querySelector('#prGo').textContent)) === '列印');
 await close();
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
