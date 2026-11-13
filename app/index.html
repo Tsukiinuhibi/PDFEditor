@@ -8575,7 +8575,8 @@ async function openSettings(tab = 'look'){
       return `<div class="set-h">軟體更新</div>
         <div style="margin-bottom:8px;color:var(--ink2)">目前版本：v${esc(UPD.info ? UPD.info.version : '')}</div>
         <div id="updMsg">${updateMessage() || '程式開啟後和每 4 小時會自動檢查一次新版本，有新版會在背景下載好再通知你。'}</div>
-        <div class="set-btns"><button class="btn" data-u2="check"${working || ready ? ' disabled' : ''}>立即檢查</button>${ready ? '<button class="btn pri" data-u2="install">立即重新啟動並更新</button>' : ''}<span class="sp"></span><button class="btn" data-u2="page">版本記錄</button></div>`;
+        <div class="set-btns"><button class="btn" data-u2="check"${working || ready ? ' disabled' : ''}>立即檢查</button>${ready ? '<button class="btn pri" data-u2="install">立即重新啟動並更新</button>' : ''}<span class="sp"></span><button class="btn" data-u2="notes">更新內容</button><button class="btn" data-u2="page">版本記錄</button></div>
+        <div id="updNotes" class="wn note" style="margin-top:10px" hidden></div>`;
     },
   };
   const show = k => {
@@ -8593,6 +8594,11 @@ async function openSettings(tab = 'look'){
     if (u.dataset.u2 === 'check') { UPD.state = {state:'checking'}; renderUpdate(); DESK.update.check().then(st => { if (st) { UPD.state = st; renderUpdate(); } }); }
     if (u.dataset.u2 === 'install') { closeModal(true); installUpdate(); }
     if (u.dataset.u2 === 'page') DESK.openExternal(RELEASES_URL);
+    if (u.dataset.u2 === 'notes') {   // every version's notes, here in the settings window (it is the one window open)
+      const el = pane.querySelector('#updNotes'); if (!el) return;
+      if (!el.hidden) { el.hidden = true; return; }
+      loadChangelog().then(all => { el.innerHTML = all.length ? notesHTML(all) : '<p>讀不到版本記錄</p>'; el.hidden = false; el.scrollTop = 0; });
+    }
   });
   body.addEventListener('change', e => {
     const el = e.target;
@@ -8712,7 +8718,8 @@ function updateMessage(){
     case 'latest': return `目前已是最新版本 <b>v${esc(v)}</b>。`;
     case 'available': return `發現新版本 <b>v${esc(s.version)}</b>，正在背景下載…`;
     case 'downloading': return `正在下載新版本 <b>v${esc(s.version || '')}</b>… ${s.percent || 0}%<div class="updbar show" style="background:transparent;padding:8px 0 0"><span class="bar" style="background:#e6e2d9;width:100%"><i style="width:${s.percent || 0}%;background:#2f9e62"></i></span></div>`;
-    case 'ready': return `新版本 <b>v${esc(s.version)}</b> 已下載完成。${s.notes ? `<div class="note" style="margin-top:10px;white-space:pre-wrap;max-height:220px;overflow:auto">${esc(s.notes)}</div>` : ''}`;
+    case 'ready': { const secs = s.notes ? parseChangelog(s.notes) : [];
+      return `新版本 <b>v${esc(s.version)}</b> 已下載完成。${s.notes ? `<div class="wn note" style="margin-top:10px;max-height:220px">${notesHTML(secs.length ? secs : [{version:s.version, md:s.notes}])}</div>` : ''}`; }
     case 'error': return `檢查更新時發生問題：${esc(s.message || '')}<div class="note" style="margin-top:10px">請確認網路連線後再試一次，也可以按「版本記錄」手動下載最新安裝檔。</div>`;
     case 'dev': return '目前是開發模式，不會自動更新。';
     case 'unsupported': return '這個安裝方式不支援自動更新，請按「版本記錄」下載最新安裝檔。';

@@ -61,6 +61,18 @@ await win.click('#modal .mf button:has-text("關閉")'); await win.waitForTimeou
 check('then the notes', (await shown() || {}).title === `已更新到 v${PKG.version}`, await shown());
 await app.close();
 
+// ---- part 3: the history in 設定 → 軟體更新 ------------------------------------------------------------------------
+({ app, win, A } = await open('wn4.pdf'));
+check('same version again: no window', (await shown()) === null);
+await win.click('#bSettings'); await win.waitForTimeout(400);
+await win.click('#modal [data-st="update"]'); await win.waitForTimeout(300);
+await win.click('#modal [data-u2="notes"]'); await win.waitForTimeout(500);
+let nt = await A(() => { const el = document.querySelector('#updNotes'); return el && !el.hidden ? [...el.querySelectorAll('.wn-v')].map(e => e.textContent) : null; });
+check('設定: 更新內容 lists every version, this one first', !!nt && nt.length === VERS.length && nt[0] === 'v' + PKG.version, nt && nt.slice(0, 3));
+await win.click('#modal [data-u2="notes"]'); await win.waitForTimeout(300);
+check('設定: pressed again, folded away', await A(() => { const el = document.querySelector('#updNotes'); return !el || el.hidden; }));
+await app.close();
+
 // the release check: the top of app/CHANGELOG.md must be this version and the same as RELEASE_NOTES.md
 const tmp = fs.mkdtempSync(path.join(TMP, 'chk-'));
 for (const f of ['main.js', 'preload.js', 'package.json', 'RELEASE_NOTES.md', 'scripts/check.mjs', 'app/index.html', 'app/fontid.js', 'app/CHANGELOG.md']) {

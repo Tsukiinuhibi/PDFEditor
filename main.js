@@ -228,7 +228,13 @@ ipcMain.handle('app:open-external', (_e, url) => { if (/^https:\/\//i.test(url))
 /* ---------------- auto update ---------------- */
 let updater = null;
 let updateState = { state: 'idle' };
-function setUpdate(s) { updateState = s; send('update', s); }
+// electron-updater finds no notes in these releases' latest.yml: the release page's text (the same version) instead
+let latestRelease = null;
+function setUpdate(s) {
+  if ((s.state === 'available' || s.state === 'ready') && !s.notes && latestRelease && String(latestRelease.tag_name || '').replace(/^v/, '') === s.version)
+    s = { ...s, notes: notesText(latestRelease.body) };
+  updateState = s; send('update', s);
+}
 
 // updates come from the Forgejo server named in package.json (updateServer); without it the
 // built-in app-update.yml is used. The newest release is looked up through the Forgejo API and
@@ -240,6 +246,7 @@ async function pointFeed() {
   if (r.status === 404) throw new Error('更新伺服器上還沒有任何版本');
   if (!r.ok) throw new Error(`無法連線到更新伺服器（${r.status}）`);
   const j = await r.json();
+  latestRelease = j;
   updater.setFeedURL({ provider: 'generic', url: `${UPD.host}/${UPD.repo}/releases/download/${encodeURIComponent(j.tag_name)}` });
 }
 async function checkNow() { await pointFeed(); return updater.checkForUpdates(); }

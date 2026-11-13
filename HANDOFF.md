@@ -147,6 +147,12 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - **結果**：每組（中文、英數字各一組，兩種都夠字才分組）最多 8 列：樣字、名稱、來源（本機／內建／Google Fonts、粗體）、相似度、〔套用〕或〔下載〕。〔套用〕＝文字方塊預設字型（`applyIdentifiedFont`）；字型選單在「預設」之後多一區「字型辨識結果」（`FONTID.recent`，最近一次找到的本機字型，PDF 本身的字型排前面、100%），編輯時反白文字就能一下套用。〔下載〕開 Google Fonts 的字型頁（`openFontPage`），並提示裝好後要重開程式（Chromium 的字型清單在程式啟動時建立）。
 - 每次比對有自己的編號（`FONTID.run`）：〔重新比對〕、新框選會讓舊的那次安靜停下，不會兩次結果混在一起。
 
+### 3.9.2 更新後顯示更新內容（v1.0.29）
+- 版本記錄 `app/CHANGELOG.md`：每版一段（`## PDF 工作台 vX.Y.Z`，最新在最上面），從 git 歷史補回了 v1.0.10 起的內容。`loadChangelog`（`fetch('CHANGELOG.md')`，讀不到回空陣列）、`parseChangelog`、`notesHTML`（只轉 `###`、`- ` 清單、段落、`**粗體**`、`` `code` ``，其他都先跳脫）。
+- 啟動時 `checkWhatsNew(version, usedBefore)`：比對 localStorage `pdfeditor.seenversion.v1`（每次啟動都記下目前版本）。比記錄新 → 視窗「已更新到 vX.Y.Z」列出之後的每一版，〔全部版本記錄〕改列全部；沒有記錄但用過（`PROFILE_USED`：模組一開始 localStorage 就有 `pdfeditor.` 的鍵；或主程序說 Chromium 的 `Preferences` 檔在啟動前就存在）→ 這版和前一版；新安裝、裝回舊版、同一版 → 不跳。別的對話框開著（`#mask.show`）時每 0.5 秒再試。
+- 設定 → 軟體更新：〔更新內容〕在設定視窗裡展開全部版本（程式一次只開一個對話框）。
+- 下載好、還沒重新啟動時：主程序 `pointFeed` 記下 Forgejo 最新發佈（`latestRelease`），electron-updater 沒給更新內容（`latest.yml` 沒有）時用它的 `body`，提示列〔查看更新內容〕和設定頁才有內容。開發模式沒有自動更新，這段沒有自動測試。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。
@@ -161,14 +167,14 @@ npm start          # 開啟程式（開發模式不會檢查更新）
   - 重新打開舊的文字方塊時，預設的字型、粗體、斜體、底線不會套到方塊本身（只給新方塊），否則按 Esc 就會把舊方塊整個改掉。
   - 目錄 v2（`pdfeditor.fontcat.v2`）多記 `embed`（OS/2 fsType：`ok`／`full`／`no`）、`vert`（`vhea`＋`vmtx`＋GSUB `vert`）、`bytes`，以及每個家族的所有字面 `faces`（`FONT_FACES` 存 `queryLocalFonts` 的原物件）。測試用 `registerTestFont` 把字型位元組當成已安裝字型（`TEST_FONTS`）。
   - 格式列與 `currentTBStyle` 讀游標旁邊那段文字的樣式（`caretStyleNode`）：游標在元素之間時（例如剛打開編輯器、游標在最後）取前一段文字。
-- localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, fontcat.v2, fontid.v1, fonts.recent.v1, lastact.v1, lasttool.v1, pagecolor, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
+- localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, fontcat.v2, fontid.v1, fonts.recent.v1, lastact.v1, seenversion.v1, lasttool.v1, pagecolor, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
 - 測試用的鉤子：`window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars, getAnns, TBE, sel, …}`，端對端測試會用到，不要刪。
 
 ---
 
 ## 4. 發布流程
 
-1. 改 `package.json` 的 `version`，然後**改寫** `RELEASE_NOTES.md`。每版都整份覆蓋，用繁體中文寫給使用者看。
+1. 改 `package.json` 的 `version`（`npm version X.Y.Z --no-git-tag-version` 會一起改 `package-lock.json`），然後把這版的更新內容（繁體中文，寫給使用者看，標題 `## PDF 工作台 vX.Y.Z`）**加在 `app/CHANGELOG.md` 最上面**，`RELEASE_NOTES.md` 整份換成同一段。程式更新後會顯示 `app/CHANGELOG.md` 的內容；`npm run check` 會檢查最上面一段是不是這個版本、和 `RELEASE_NOTES.md` 是不是一樣，不一致就失敗。
 2. 提交並推送到 **Forgejo** 的 `main`。Forgejo 的推送鏡像會同步到 GitHub，GitHub Actions 就會開始打包。只有 `package.json` 或 workflow 檔有變動時，才會觸發打包。
 3. `release.yml` 的流程：
    1. 讀出版本號，查 Forgejo 上這個版本有沒有 `latest.yml`。有的話就跳過。
@@ -194,7 +200,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 ## 5. 測試
 
 ```bash
-npm run check                         # 語法檢查：main.js、preload.js、app/fontid.js、index.html 的 module script
+npm run check                         # 語法檢查（main.js、preload.js、app/fontid.js、index.html 的 module script）＋版本記錄與 RELEASE_NOTES.md 一致
 npm run test:e2e                      # 執行 tests/e2e/ 下全部腳本
 node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 ```
@@ -213,6 +219,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | textbox-basic / textbox-image-drop | 文字方塊、格式化、右鍵選單、拖入圖片 |
 | textbox-font | 字型目錄（.ttc 的繁中名稱、中文／其他分組、快取）、只改反白的字、外觀用該字型、再次編輯保留、怪字型名稱、游標處換字型、預設字型、修改原文不記字型、字型選單（分組、搜尋、最近用過只列已安裝、Esc、缺字型提示、右鍵「字型…」）、600 個字型的開啟與搜尋速度、讀不到系統字型 |
 | edit-page-text | 修改與刪除 PDF 原文、再次編輯 |
+| whats-new | 版本記錄（讀取、排序、轉 HTML、跳脫、讀不到）；同一個使用者資料夾重開：新安裝不跳、從 1.0.26 更新列出之後每一版、知道了後不再跳、沒記錄但用過列兩版、全部版本記錄、裝回舊版不跳、別的視窗開著時等它關掉；設定的〔更新內容〕；`npm run check` 對版本記錄的檢查 |
 | ocr | 文字辨識：PDF 文字一字不差、剪貼簿內容、乾淨掃描（橫書、直書）與低品質掃描的辨識率、強制影像辨識、Esc 關閉 |
 | font-identify-engine | 字型辨識引擎（不連網）：空白字型與缺字判斷（含 Type 1 字型）、取字（信心度、標點、`ilI1|`、只留一次、偏好字母、太小、白紙、鄰字筆畫、鬆的字框、直書粗略字框）、比對排名（DejaVu Serif、Liberation Sans 粗體、文泉驛正黑與等寬版合併、內建思源黑體、超大字、沒有字型有這些字、stop）、本機與 Google 同字形合併、750 個候選的時間與畫面不卡、Google 載入（分批、`text=`、粗體字重、快取、錯名逐一重試、沒網路、逾時）、Google 清單 |
 | font-identify | 「字型」頁（假的 Google 來源）：各種掃描（英文、粗體、中文、內建思源黑體、中英混排分組、直書、不是字）、Google 字型排第一與〔下載〕、關掉 Google、連不上 Google、比對中換框、長名稱不擋來源標籤；PDF 記錄的字型（已內嵌 DejaVu Serif、Big5 名稱、Helvetica 用同款代替、Google 名稱、沒有名稱、隱形文字層）、〔用字形比對找相似字型〕；〔套用〕、〔下載〕開的網址、字型選單「字型辨識結果」 |
