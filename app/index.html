@@ -5869,7 +5869,8 @@ async function fillAt(i, p){
     if (old) { const ref = findAnnotRef(doc, i, old.id); if (ref) removeAnnotRefs(doc, i, ref); }
     const g = visToPdf(i, b), ap = await imageAP(doc, png, b.w, b.h, g.rot);
     addAnnot(doc, i, {Type:'Annot', Subtype:'Stamp', Name:'Fill', Rect:g.rect, Contents:PDFHexString.fromText(FILL_MARK), C:hexColor(color),
-      T:PDFHexString.fromText(AUTHOR), M:nowStr(), CreationDate:nowStr(), Subj:PDFHexString.fromText('填色'), F:4, PDFE:true, AP:{N:ap}});
+      T:PDFHexString.fromText(AUTHOR), M:nowStr(), CreationDate:nowStr(), Subj:PDFHexString.fromText('填色'), F:4, PDFE:true, AP:{N:ap},
+      ...((st.opacity ?? 1) < 1 ? {CA:st.opacity} : {})});   // the opacity is in the picture; CA lets the bar show it
   });
 }
 async function recolorShape(i, a, color){
@@ -6705,7 +6706,7 @@ function objKind(dict){
   if (subOf(dict) === 'Stamp' && subjOf(dict) === '戳記') return 'stamp';   // ours, also from before stamps carried PDFE
   if (!dict.get(N_('PDFE'))) return null;   // another program's object: move and delete only
   const sub = subOf(dict), subj = subjOf(dict);
-  if (sub === 'Stamp') return subj === '圖片' ? 'image' : null;
+  if (sub === 'Stamp') return subj === '圖片' ? 'image' : subj === '填色' ? 'fill' : null;   // 填色: an area fill (點選區塊)
   const cloud = !!dict.lookupMaybe(N_('BE'), PDFDict);
   if (sub === 'FreeText') return readRT(dict) ? 'textbox' : null;
   if (sub === 'Square' && subj === '填色') return 'fill';
@@ -6888,6 +6889,7 @@ async function restyleAnnot(i, id, patch){
     const ctx = doc.context, dict = ctx.lookup(ref, PDFDict), kind = objKind(dict); if (!kind) return false;
     if (kind === 'textbox') return restyleTextBox(doc, i, dict, patch);
     if (kind === 'stamp' || kind === 'image') return restyleStamp(doc, i, dict, kind, patch);
+    if (kind === 'fill' && subOf(dict) === 'Stamp') return refillStamp(doc, i, dict, patch);
     const prev = readObjStyle(dict), st = {...prev, ...patch};
     if (kind === 'fill' && 'color' in patch) st.fill = st.color;   // a fill outline is one colour
     dict.set(N_('C'), ctx.obj(hexColor(st.color)));
@@ -6936,6 +6938,26 @@ async function restyleStamp(doc, i, dict, kind, patch){
   }
   if (op < 1) dict.set(N_('CA'), ctx.obj(op)); else dict.delete(N_('CA'));
   setUpright(doc, dict, fadeAP(doc, ap, op));
+  dict.set(N_('M'), nowStr());
+}
+// an area fill (a picture of the area in one colour) in a new colour / opacity: the area is the picture's alpha mask, so
+// it is not detected again; without a new opacity each pixel keeps its own alpha
+async function refillStamp(doc, i, dict, patch){
+  const ctx = doc.context, st = readAnnStyle(dict), color = patch.color || st.color, ap = innerAP(doc, uprightAP(dict));
+  const form = ap && ctx.lookup(ap), res = form && form.dict && form.dict.lookupMaybe(N_('Resources'), PDFDict), xo = res && res.lookupMaybe(N_('XObject'), PDFDict);
+  const im = xo && xo.get(N_('Im0')), img = im && ctx.lookup(im);
+  if (!img || !img.dict) { toast('無法變更這個填色', 'err'); return false; }
+  const sm = img.dict.get(N_('SMask')), mask = sm && ctx.lookup(sm);   // no mask: every pixel opaque (pdf-lib leaves it out)
+  const W = img.dict.get(N_('Width')).asNumber(), H = img.dict.get(N_('Height')).asNumber(), alpha = mask ? PDFLib.decodePDFRawStream(mask).decode() : null;
+  const op = 'opacity' in patch ? +patch.opacity : null, A = op == null ? null : Math.round(255 * op), n = parseInt(color.slice(1), 16);
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d'), d = g.createImageData(W, H);
+  for (let k = 0; k < W * H; k++) { const a = alpha ? alpha[k] : 255; if (!a) continue; const o = k * 4; d.data[o] = n >> 16 & 255; d.data[o + 1] = n >> 8 & 255; d.data[o + 2] = n & 255; d.data[o + 3] = A == null ? a : A; }
+  g.putImageData(d, 0, 0);
+  const png = new Uint8Array(await (await blobOf(c, 'image/png')).arrayBuffer()), b = uprightBox(i, dict), o2 = op == null ? st.opacity : op;
+  dict.set(N_('C'), ctx.obj(hexColor(color)));
+  if (o2 < 1) dict.set(N_('CA'), ctx.obj(o2)); else dict.delete(N_('CA'));
+  setUpright(doc, dict, await imageAP(doc, png, b.w, b.h, visToPdf(i, b).rot));
   dict.set(N_('M'), nowStr());
 }
 // changes are applied one after another, to the object that was selected when the change was made; it stays selected
