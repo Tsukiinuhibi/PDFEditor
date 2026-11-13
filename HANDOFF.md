@@ -203,8 +203,21 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 圖層面板：物件清單預設展開（`LY_FOLD` 記住收合的），依頁分段（`.ly-pgh`「第 N 頁」），同一頁最上面的排第一；選到的物件反白（`markLayerSel`，由 `paintObjBar` 呼叫，多選時每個都反白）。物件換圖層（拖到圖層列、右鍵「移到圖層」、選取列的圖層選單）會放在那個圖層該頁的最上面；「把未分層的物件放進目前圖層」維持原本的相對位置（`moveObjToLayer(..., {front:false})`）。
 - 把物件拿掉再加回去的修改用 `keepPlace(doc, i, oldRef, fn)`：換色重填（填色工具點在原本的填色上）、橡皮擦擦掉筆跡的一部分，新物件放回舊物件的位置與圖層，不會跑到最上面或目前圖層。之後新增這類修改也要用它。
 
+### 3.9.11 列印（v1.0.38）
+- 入口：Ctrl+P（已加進 `RESERVED`）、工具列「檔案」的分段按鈕「輸出」（`ACTION_MENUS.output`：列印、轉存圖片；原本的〔轉存圖片〕按鈕併進來）。
+- **排版是純計算** `printPlan(st)` → `{paper:{w, h}, sides:[{items:[{i（null＝空白頁）, x, y, w, h, rot, clip?, border?}], label, poster?}], duplex, sheets}`（點為單位，紙的左上角為原點）：
+  - 一般：每面一頁，方向和紙不同時轉 90°（`fitIn`），縮放 `fit`／`shrink`／`actual`／`custom`，置中；邊界 0／5／10 mm。
+  - 多頁合一：`NUP_GRID`（2、4、6、9、16），順序 `h`／`hr`／`v`／`vr`，框線；方向「自動」＝第一頁放得比較大的那個（格子裡的頁不轉向）。
+  - 手冊：補成 4 的倍數，第 t 張正面＝[N−1−2t, 2t]、背面＝[2t+1, N−2−2t]（右翻左右對調），紙橫放；雙面時固定短邊翻頁（`duplex` 選單停用），也可以只印正面或只印背面。
+  - 海報：放大 %、重疊 mm、方向自動＝第一頁需要的張數少的那個，海報置中在所有紙上；每張的 `clip` 是紙上能印的範圍；超出不到 1 mm 不多用一排紙（595 × 842 的「A4」頁）；裁切記號與標籤畫在邊界裡。
+  - 反向列印把面倒過來（手冊雙面時以整張為單位）。
+- `drawSide(plan, side, k, st)`：白底，每個項目只畫紙上（`clip` 裡）看得到的那一塊（`printPiece`：pdf.js `render`，`intent:'print'`、列印用的選擇性內容設定，所以隱藏的圖層與標成不列印的註解不會印；「只有文件」不畫註解與表單）；黑白時轉灰階。預覽（`previewPrint`，快取 `PR_CACHE`）和列印用同一套。
+- **送印** `runPrint({dialog})`：每一面畫成 品質/72 倍的 JPEG，放進 `#printRoot`（body 最後一個子元素；`@media print` 時只顯示它，`@page` 設成紙張大小、邊界 0），主程式 `print:run` 用 `webContents.print`（`silent:true`；〔印表機內容…〕是 `silent:false` 的系統列印對話框，給紙匣、裝訂等驅動程式設定），帶 `deviceName`、`copies`、`collate`、`duplexMode`、`color`、`landscape`、`pageSize`（微米）。準備中可以按〔取消〕；Esc 和點遮罩在準備時無效（`S.exporting`）。印完 `#printRoot` 清空。
+- 印表機清單（`print:printers`）第一項是「系統預設印表機」（不帶 `deviceName`；Electron 的 PrinterInfo 沒有「預設」欄位）。設定依印表機存在 `pdfeditor.print.v1`（`{last, by:{印表機: PRINT_DEF 的項目}}`；範圍、份數、奇偶、反向每次重來）。
+- 測試接口：主程式的 `global.__pdfePrinters`（印表機清單）、`global.__pdfePrintHook(wc, opts, cb)`（送印）；`print.mjs` 用 `printToPDF({preferCSSPageSize:true})` 檢查印出的張數與紙張大小。`__pdfapp.printState()`、`printPlanNow()`、`printPlan(st)`、`parseRange`。
+
 ### 3.10 其他
-- 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
+- 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。
 - 排列頁面（v1.0.25）：縮圖右鍵「展開所有頁面（拖曳排序）…」→ `openArrange()`。格狀顯示全部頁面，拖曳換位置（`ord[p]` = 新位置 p 上是原本第幾頁），標示「第 N 頁（原 M）」。套用時在 `mutate` 裡把所有頁從頁面樹移除再依新順序 `addPage` 回去，頁面物件編號不變，所以註解跟著走、畫面不閃，復原也正常。
 - 工具：`setTool(t)`，搭配 `HINTS[t]`（上方提示列）。繪圖工具的設定在 `DRAW_TOOLS`、`STYLES`（存 localStorage）、`PRESETS`。新增工具時，這些都要補上，ribbon 也要加按鈕。
@@ -217,7 +230,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
   - 重新打開舊的文字方塊時，預設的字型、粗體、斜體、底線不會套到方塊本身（只給新方塊），否則按 Esc 就會把舊方塊整個改掉。
   - 目錄 v2（`pdfeditor.fontcat.v2`）多記 `embed`（OS/2 fsType：`ok`／`full`／`no`）、`vert`（`vhea`＋`vmtx`＋GSUB `vert`）、`bytes`，以及每個家族的所有字面 `faces`（`FONT_FACES` 存 `queryLocalFonts` 的原物件）。測試用 `registerTestFont` 把字型位元組當成已安裝字型（`TEST_FONTS`）。
   - 格式列與 `currentTBStyle` 讀游標旁邊那段文字的樣式（`caretStyleNode`）：游標在元素之間時（例如剛打開編輯器、游標在最後）取前一段文字。
-- localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, fontcat.v2, fontid.v1, fonts.recent.v1, lastact.v1, seenversion.v1, lasttool.v1, pagecolor, people.v1, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
+- localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, fontcat.v2, fontid.v1, fonts.recent.v1, lastact.v1, seenversion.v1, lasttool.v1, pagecolor, people.v1, print.v1, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
 - 測試用的鉤子：`window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars, getAnns, TBE, sel, …}`，端對端測試會用到，不要刪。
 
 ---
@@ -280,6 +293,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | save-clean | 另存時清掉用不到的資料：沒修改也完整（頁數、書籤、表單欄位、圖層、便利貼、圖片）、原檔裡沒用到的資料不見、刪掉的便利貼文字不在檔案裡、刪掉的圖片不在檔案裡、已數位簽署的文件原封不動 |
 | align | 多選與對齊：拖曳選取框（隱藏的物件不選）、Shift＋點加入移出、Esc、拖其中一個全部移動、復原、Delete 全部刪除、換工具清除、Shift 按在旋轉把手上仍轉 15°；靠左（最左不動）、水平置中、靠下、對齊到頁面、水平平均分配、旋轉過的戳記以外框對齊且角度不變、線條＋文字方塊＋矩形靠上 |
 | stacking | 上下層級：彈出視窗放在別處（全放在最後或最前）的便利貼旁邊上下移一層只移一格、同時按兩次只算一次；選取列的四個鈕（重疊處的顏色跟著變、連結位置不動、選取保留、一次復原）、Ctrl+] ／ Ctrl+[ ／加 Shift、到頂只提示不產生復原步驟、打字時不作用、便利貼的彈出視窗跟著走、橡皮擦後留在原位；圖層面板依頁列出（最上面的先）、選到的反白、右鍵移到最下層、拖曳到最上面、拖到別頁不動、收合後保持收合、有圖層時只在自己的圖層裡移動與拖到別的圖層、鎖定圖層不能拖、換色重填留在原位與原圖層 |
+| print | 列印：Ctrl+P、印表機清單（系統預設在最前）、5 頁各一色的文件；共用的範圍讀法（全形、倒過來、字母）、自訂範圍與錯誤、奇數頁、反向、橫向頁轉 90°、不列印的註解與隱藏圖層不印、只有文件、黑白；送出的選項與印出的 PDF（張數、A4）、關閉與提示、依印表機記住設定、準備時取消、〔印表機內容…〕；多頁合一 4／2（順序、橫向紙）與框線；手冊（補空白頁、左翻右翻、只印正面背面、短邊雙面、842×595）；海報（2×2、自動方向 8 張、重疊、標籤、裁切記號、100%） |
 | ocr | 文字辨識：PDF 文字一字不差、剪貼簿內容、乾淨掃描（橫書、直書）與低品質掃描的辨識率、強制影像辨識、Esc 關閉 |
 | font-identify-engine | 字型辨識引擎（不連網）：空白字型與缺字判斷（含 Type 1 字型）、取字（信心度、標點、`ilI1|`、只留一次、偏好字母、太小、白紙、鄰字筆畫、鬆的字框、直書粗略字框）、比對排名（DejaVu Serif、Liberation Sans 粗體、文泉驛正黑與等寬版合併、內建思源黑體、超大字、沒有字型有這些字、stop）、本機與 Google 同字形合併、750 個候選的時間與畫面不卡、Google 載入（分批、`text=`、粗體字重、快取、錯名逐一重試、沒網路、逾時）、Google 清單 |
 | font-identify | 「字型」頁（假的 Google 來源）：各種掃描（英文、粗體、中文、內建思源黑體、中英混排分組、直書、不是字）、Google 字型排第一與〔下載〕、關掉 Google、連不上 Google、比對中換框、長名稱不擋來源標籤；PDF 記錄的字型（已內嵌 DejaVu Serif、Big5 名稱、Helvetica 用同款代替、Google 名稱、沒有名稱、隱形文字層）、〔用字形比對找相似字型〕；〔套用〕、〔下載〕開的網址、字型選單「字型辨識結果」 |

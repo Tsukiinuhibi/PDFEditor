@@ -145,6 +145,7 @@ const WHITE = [255, 255, 255];
 const b1 = await halves();
 check('手冊, 5 pages: made 8, 4 sides on 2 sheets, both sides (short edge); side 1: blank left (page 8), red right (page 1)',
   s.sides === 4 && s.sheets === 2 && s.duplex === 'shortEdge' && s.paper.w > s.paper.h && near(b1.l, WHITE, 8) && near(b1.r, RGB[0]), {s, b1});
+check('the 雙面 list shows what a booklet does (雙面（短邊翻頁）), greyed out', (await val('duplex')) === 'shortEdge' && await Ev(() => document.querySelector('#prDlg [data-p="duplex"]').disabled), await val('duplex'));
 await Ev(() => document.querySelector('#prFwd').click()); await win.waitForTimeout(800);
 const b2 = await halves();
 check('side 2 (its back): green left (page 2), blank right (page 7)', near(b2.l, RGB[1]) && near(b2.r, WHITE, 8), b2);
@@ -163,6 +164,28 @@ const bj = (await printed()).at(-1);
 let bp = null;
 if (bj && bj.pdf) { const d = await PDFDocument.load(Buffer.from(bj.pdf, 'base64')); bp = d.getPages().map(p => p.getSize()).map(z => [Math.round(z.width), Math.round(z.height)]); }
 check('printed: both sides flipping on the short edge, lying paper; 4 pages of 842×595', !!bj && bj.opts.duplexMode === 'shortEdge' && bj.opts.landscape === true && !!bp && bp.length === 4 && bp.every(([w, h]) => Math.abs(w - 842) <= 1 && Math.abs(h - 595) <= 1), {opts:bj && bj.opts, bp});
+
+// ---- part 4: posters (海報) --------------------------------------------------------------------------------------------
+await open();
+await set('range', 'custom'); await set('custom', '1'); await set('layout', 'poster'); await set('orient', 'auto');
+await set('ppct', '200'); await set('overlap', '0'); await set('margin', '0');
+s = await pst();
+check('海報 200%, no margin, no overlap: 4 sides (2×2) on upright A4, red all over', s.sides === 4 && s.paper.w < s.paper.h && near(await prevAt(.5, .5, 99), RGB[0]) && near(await prevAt(.05, .05, 99), RGB[0]), s);
+await set('margin', '5'); await set('overlap', '10');
+s = await pst();
+const plan = await Ev(() => window.__pdfapp.printPlanNow());
+const [t0, t1] = plan.sides.map(x => x.items[0]), OV = 10 * 72 / 25.4;
+const seamA = t0.clip.x + t0.clip.w - t0.x, seamB = t1.clip.x + OV - t1.x;
+check('5 mm margins and 10 mm overlap: upright needs 3×3, lying 2×4, so the paper lies; 8 sides', s.sides === 8 && s.paper.w > s.paper.h, {sides:s.sides, paper:s.paper});
+check('the next tile starts 10 mm before this one ends (the same part of the page on both)', Math.abs(seamA - seamB) < .01 && t1.clip.w === t0.clip.w, {seamA, seamB});
+check('a label for each tile: 第 1 頁 · 第 1 列第 1 欄（共 4 列 2 欄）', plan.sides[0].label === '第 1 頁 · 第 1 列第 1 欄（共 4 列 2 欄）', plan.sides[0].label);
+const mark = await Ev(() => { const s = window.__pdfapp.printState(), c = document.querySelector('#prPrev canvas'), r = c.width / s.paper.w, it = s.items[0], g = c.getContext('2d');
+  const x = Math.round((it.clip.x - 2.5 * 72 / 25.4) * r), y = Math.round(it.clip.y * r);
+  return [-1, 0, 1].map(d => [...g.getImageData(x, y + d, 1, 1).data].slice(0, 3)).sort((a, b) => a[0] + a[1] + a[2] - b[0] - b[1] - b[2])[0]; });
+check('裁切記號: a dark mark in the margin at each corner of the printed part', mark.every(v => v < 130), mark);
+await set('ppct', '100'); await set('margin', '0');
+check('100%: one side', (await pst()).sides === 1);
+await close();
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

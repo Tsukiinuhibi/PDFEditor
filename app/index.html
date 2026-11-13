@@ -9483,7 +9483,24 @@ function printPlan(st){
   const pages = printPages(st), m = (+st.margin || 0) * MM_PT, first = pages.length ? pageWH(pages[0]) : [1, 1.4];
   let paper, sides = [];
   if (!pages.length) return {paper:paperOf(st, st.orient === 'landscape'), sides:[], duplex:'simplex', sheets:0};
-  if (st.layout === 'booklet') {   // 手冊: each sheet lies and holds two pages a side; folded in the middle, the sheets make the booklet
+  if (st.layout === 'poster') {   // 海報: each page enlarged over several sheets that overlap, to be trimmed and pasted together
+    const z = clamp(+st.ppct || 200, 10, 1000) / 100, ov = clamp(+st.overlap || 0, 0, 50) * MM_PT;
+    const grid = (p, i) => {
+      const [w, h] = pageWH(i), tw = Math.max(1, p.w - 2 * m), th = Math.max(1, p.h - 2 * m), o = Math.min(ov, tw / 2, th / 2);
+      const tol = MM_PT;   // a page less than 1 mm larger than the sheets (595 × 842 against A4's 595.28 × 841.89) takes no extra row
+      return {tw, th, o, W:w * z, H:h * z, cols:Math.max(1, Math.ceil((w * z - o - tol) / (tw - o))), rows:Math.max(1, Math.ceil((h * z - o - tol) / (th - o)))};
+    };
+    // the paper the first page needs the fewest sheets on
+    paper = [false, true].filter(l => st.orient === 'auto' || (st.orient === 'landscape') === l).map(l => ({p:paperOf(st, l), g:grid(paperOf(st, l), pages[0])}))
+      .sort((a, b) => a.g.cols * a.g.rows - b.g.cols * b.g.rows)[0].p;
+    for (const i of pages) {
+      const g = grid(paper, i), ox = (g.cols * (g.tw - g.o) + g.o - g.W) / 2, oy = (g.rows * (g.th - g.o) + g.o - g.H) / 2;   // the poster in the middle of the sheets
+      for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) {
+        sides.push({items:[{i, x:m - c * (g.tw - g.o) + ox, y:m - r * (g.th - g.o) + oy, w:g.W, h:g.H, rot:0, clip:{x:m, y:m, w:g.tw, h:g.th}}],
+          label:`第 ${i + 1} 頁 · 第 ${r + 1} 列第 ${c + 1} 欄（共 ${g.rows} 列 ${g.cols} 欄）`, poster:{marks:!!st.marks, tag:!!st.labels}});
+      }
+    }
+  } else if (st.layout === 'booklet') {   // 手冊: each sheet lies and holds two pages a side; folded in the middle, the sheets make the booklet
     paper = paperOf(st, true);
     const N = Math.ceil(pages.length / 4) * 4, list = [...pages, ...Array(N - pages.length).fill(null)];   // filled up with blank pages
     const hw = Math.max(1, paper.w - 2 * m) / 2, hh = Math.max(1, paper.h - 2 * m), gap = 4;
@@ -9569,6 +9586,18 @@ async function drawSide(plan, side, k, st, {cache = false} = {}){
     g.drawImage(pc, it.x * k + r.x, it.y * k + r.y);
     if (it.border) { g.strokeStyle = '#000'; g.lineWidth = Math.max(1, .6 * k); g.strokeRect(it.x * k, it.y * k, it.w * k, it.h * k); }
   }
+  if (side.poster && side.items[0]) {   // marks at the corners of the printed part, and which tile this is, in the margin
+    const cl = side.items[0].clip, mg = Math.min(cl.x, cl.y, plan.paper.w - cl.x - cl.w, plan.paper.h - cl.y - cl.h);
+    if (side.poster.marks && mg >= 2) {
+      g.strokeStyle = '#000'; g.lineWidth = Math.max(1, .5 * k); g.beginPath();
+      for (const [x, y, sx, sy] of [[cl.x, cl.y, -1, -1], [cl.x + cl.w, cl.y, 1, -1], [cl.x, cl.y + cl.h, -1, 1], [cl.x + cl.w, cl.y + cl.h, 1, 1]]) {
+        g.moveTo((x + sx) * k, y * k); g.lineTo((x + sx * (mg - 1)) * k, y * k);
+        g.moveTo(x * k, (y + sy) * k); g.lineTo(x * k, (y + sy * (mg - 1)) * k);
+      }
+      g.stroke();
+    }
+    if (side.poster.tag && mg >= 6) { g.fillStyle = '#555'; g.font = `${Math.max(5, 7 * k)}px sans-serif`; g.textBaseline = 'middle'; g.fillText(side.label, (cl.x + mg) * k, (cl.y + cl.h + mg / 2) * k); }
+  }
   if (st.color === 'gray') toGray(c);
   return c;
 }
@@ -9592,7 +9621,7 @@ function printFormHTML(st, printers){
         <label class="chk"><input type="checkbox" data-p="reverse"> 反向列印</label></div>
       <div class="pr-row"><div class="field"><label>紙張</label><select data-p="paper">${Object.entries(PAPERS).map(([k, v]) => opt(k, v[2] || k, st.paper)).join('')}</select></div>
         <div class="field"><label>方向</label><select data-p="orient">${opt('auto', '自動', st.orient)}${opt('portrait', '直向', st.orient)}${opt('landscape', '橫向', st.orient)}</select></div></div>
-      <div class="pr-row"><div class="field"><label>版面</label><select data-p="layout">${opt('normal', '一般（每面一頁）', st.layout)}${opt('nup', '多頁合一', st.layout)}${opt('booklet', '手冊（對折裝訂）', st.layout)}</select></div>
+      <div class="pr-row"><div class="field"><label>版面</label><select data-p="layout">${opt('normal', '一般（每面一頁）', st.layout)}${opt('nup', '多頁合一', st.layout)}${opt('booklet', '手冊（對折裝訂）', st.layout)}${opt('poster', '海報（放大分割列印）', st.layout)}</select></div>
         <div class="field" data-lay="normal"><label>縮放</label><select data-p="scale">${opt('fit', '符合紙張', st.scale)}${opt('shrink', '只縮小過大的頁面', st.scale)}${opt('actual', '實際大小', st.scale)}${opt('custom', '自訂比例', st.scale)}</select></div>
         <div class="field pr-copies" data-lay="normal" data-show="pct"><label>比例（%）</label><input type="number" data-p="pct" min="1" max="1000" value="${st.pct}"></div></div>
       <div class="pr-row" data-lay="nup"><div class="field pr-copies"><label>每面頁數</label><select data-p="nup">${[2, 4, 6, 9, 16].map(v => opt(v, `${v} 頁`, st.nup)).join('')}</select></div>
@@ -9600,6 +9629,9 @@ function printFormHTML(st, printers){
         <label class="chk"><input type="checkbox" data-p="borders"${st.borders ? ' checked' : ''}> 頁面框線</label></div>
       <div class="pr-row" data-lay="booklet"><div class="field"><label>裝訂</label><select data-p="bind">${opt('left', '左翻（橫式文件）', st.bind)}${opt('right', '右翻（直式中文）', st.bind)}</select></div>
         <div class="field"><label>印出的面</label><select data-p="bsides">${opt('both', '雙面', st.bsides)}${opt('front', '只印正面', st.bsides)}${opt('back', '只印背面', st.bsides)}</select></div></div>
+      <div class="pr-row" data-lay="poster"><div class="field pr-copies"><label>放大（%）</label><input type="number" data-p="ppct" min="10" max="1000" value="${st.ppct}"></div>
+        <div class="field pr-copies"><label>重疊（mm）</label><input type="number" data-p="overlap" min="0" max="50" value="${st.overlap}"></div>
+        <label class="chk"><input type="checkbox" data-p="marks"${st.marks ? ' checked' : ''}> 裁切記號</label><label class="chk"><input type="checkbox" data-p="labels"${st.labels ? ' checked' : ''}> 標籤</label></div>
       <div class="pr-row"><div class="field"><label>邊界</label><select data-p="margin">${opt(0, '無', st.margin)}${opt(5, '窄（5 mm）', st.margin)}${opt(10, '一般（10 mm）', st.margin)}</select></div>
         <div class="field"><label>雙面</label><select data-p="duplex">${opt('simplex', '單面', st.duplex)}${opt('longEdge', '雙面（長邊翻頁）', st.duplex)}${opt('shortEdge', '雙面（短邊翻頁）', st.duplex)}</select></div></div>
       <div class="pr-row"><div class="field"><label>色彩</label><select data-p="color">${opt('color', '彩色', st.color)}${opt('gray', '黑白（灰階）', st.color)}</select></div>
@@ -9638,7 +9670,8 @@ function refreshPrint(){
   const shown = {custom:st.range === 'custom', pct:st.scale === 'custom', copies:+st.copies > 1};
   shown.extra = shown.custom || shown.copies;
   body.querySelectorAll('[data-show],[data-lay]').forEach(el => { el.style.display = (!el.dataset.lay || el.dataset.lay === st.layout) && (!el.dataset.show || shown[el.dataset.show]) ? '' : 'none'; });
-  const dx = body.querySelector('[data-p="duplex"]'); dx.disabled = st.layout === 'booklet'; dx.title = dx.disabled ? '手冊雙面時固定用短邊翻頁' : '';
+  const dx = body.querySelector('[data-p="duplex"]'); dx.disabled = st.layout === 'booklet';   // a booklet shows what it does (st.duplex is kept)
+  dx.value = dx.disabled ? PR.plan.duplex : st.duplex; dx.title = dx.disabled ? '手冊雙面時固定用短邊翻頁' : '';
   const side = PR.plan.sides[PR.cur];
   body.querySelector('#prPos').textContent = n ? `第 ${PR.cur + 1}／${n} 面${side && side.label ? '　' + side.label : ''}` : '沒有要列印的頁面';
   body.querySelector('#prBack').disabled = PR.cur <= 0; body.querySelector('#prFwd').disabled = PR.cur >= n - 1;
@@ -10293,7 +10326,7 @@ window.__pdfapp = {
   },
   imageBoxes:i => detectImages(i),
   multi:() => MS ? {i:MS.i, ids:MS.items.map(a => a.id)} : null,
-  parseRange, printPlan,
+  parseRange, printPlan, printPlanNow:() => PR && PR.plan,
   printState:() => PR && PR.plan ? {open:true, sides:PR.plan.sides.length, sheets:PR.plan.sheets, pos:PR.cur, paper:PR.plan.paper, duplex:PR.plan.duplex, error:PR.err,
     items:(PR.plan.sides[PR.cur] || {items:[]}).items, label:(PR.plan.sides[PR.cur] || {}).label || ''} : {open:false},
   annotsOrder:async i => {   // (tests) page i's /Annots as it stands: each entry's id, subtype, the object a note window belongs to, its layer
