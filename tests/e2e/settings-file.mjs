@@ -37,5 +37,38 @@ await answerSave(null);
 if (await A(() => !!document.querySelector('#modal [data-sf="export"]'))) { await win.click('#modal [data-sf="export"]'); await win.waitForTimeout(800); }
 check('匯出 cancelled: no message, the file not written again', !!j && !(await toasts()).some(t => t.includes('已匯出設定')) && fs.statSync(FILE).mtimeMs === mtime, await toasts());
 
+
+// ---- part 2: import ---------------------------------------------------------------------------------------------------
+const title = () => A(() => document.querySelector('#mask').classList.contains('show') ? document.querySelector('#modal .mh').textContent : null);
+const bodyText = () => A(() => (document.querySelector('#modal .mb') || {}).textContent || '');
+const pick = async f => {
+  if ((await title()) !== '設定') await openFileTab(); else { await win.click('#modal [data-st="file"]'); await win.waitForTimeout(200); }
+  const [fc] = await Promise.all([win.waitForEvent('filechooser', {timeout:5000}), win.click('#modal [data-sf="import"]')]);
+  await fc.setFiles(f); await win.waitForTimeout(900);
+};
+const seen0 = await LS('pdfeditor.seenversion.v1');
+await A(() => { localStorage.setItem('pdfeditor.theme', 'light'); localStorage.setItem('pdfeditor.people.v1', JSON.stringify({names:['root'], def:'root'})); localStorage.setItem('pdfeditor.extra.test', 'keep'); window.__marker = 1; });
+const bad = [['a.json', '{"a":1}'], ['b.json', 'x{'], ['c.json', JSON.stringify({app:'PDF 工作台', kind:'settings', settings:{}})]];
+const badOut = [];
+for (const [n, t] of bad) {
+  const f = path.join(TMP, n); fs.writeFileSync(f, t);
+  await A(() => document.querySelectorAll('#toasts .toast').forEach(e => e.remove()));
+  await pick(f);
+  badOut.push({n, toast:(await toasts()).some(x => x.includes('這不是 PDF 工作台的設定檔')), title:await title(), theme:await LS('pdfeditor.theme'), marker:await A(() => window.__marker)});
+}
+check('not a settings file (other JSON, broken, nothing usable): says so, changes nothing', badOut.every(r => r.toast && r.title !== '匯入設定' && r.theme === 'light' && r.marker === 1), badOut);
+const parsed = await A(() => window.__pdfapp.parseSettingsFile(JSON.stringify({app:'PDF 工作台', kind:'settings', settings:{'pdfeditor.theme':'light', evil:'x', 'pdfeditor.people.v1':5, 'pdfeditor.seenversion.v1':'0.0.1', 'pdfeditor.fontcat.v2':'{}'}})));
+check('only usable settings are taken (pdfeditor. keys, text values, not the font cache or the version record)', parsed && parsed.ok && JSON.stringify(parsed.entries) === JSON.stringify([['pdfeditor.theme', 'light']]), parsed);
+await pick(FILE);
+const t1 = await title(), b1 = await bodyText();
+check('a settings file: asked first, with its name and how many settings', t1 === '匯入設定' && b1.includes('settings.json') && b1.includes('2 項'), {t1, b1});
+await win.click('#modal .mf button:has-text("取消")'); await win.waitForTimeout(600);
+check('取消: nothing changed, no reload', (await LS('pdfeditor.theme')) === 'light' && (await A(() => window.__marker)) === 1);
+await pick(FILE);
+await win.click('#modal .mf button:has-text("匯入並重新載入")'); await win.waitForTimeout(4500);
+const after = await A(() => ({marker:window.__marker ?? null, theme:localStorage.getItem('pdfeditor.theme'), shown:document.documentElement.dataset.theme, people:window.__pdfapp.people(), extra:localStorage.getItem('pdfeditor.extra.test'), seen:localStorage.getItem('pdfeditor.seenversion.v1')}));
+check('匯入並重新載入: reloaded, the settings back and in use (dark, 王小明 the default author)', after.marker === null && after.theme === 'dark' && after.shown === 'dark' && after.people.def === '王小明' && after.people.author === '王小明' && after.people.names.includes('王小明'), after);
+check('匯入: a setting not in the file is kept; the version record untouched', after.extra === 'keep' && after.seen === seen0, after);
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
