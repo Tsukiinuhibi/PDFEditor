@@ -8611,6 +8611,43 @@ new ResizeObserver(() => fitViewbar()).observe($('#viewbar'));
 document.fonts.ready.then(fitViewbar);
 
 /* ====================================================================
+   版本記錄 (what's new): app/CHANGELOG.md, one section per version ("## PDF 工作台 vX.Y.Z"), newest first. Shown once
+   after an update, and in 設定 → 軟體更新. scripts/check.mjs makes sure each release adds its notes at the top.
+   ==================================================================== */
+function parseChangelog(text){
+  const t = String(text || ''), heads = [...t.matchAll(/^## PDF 工作台 v(\d+\.\d+\.\d+)\s*$/gm)];
+  return heads.map((m, k) => ({version:m[1], md:t.slice(m.index + m[0].length, k + 1 < heads.length ? heads[k + 1].index : t.length).trim()}));
+}
+function cmpVersion(a, b){
+  const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
+  for (let k = 0; k < Math.max(x.length, y.length); k++) { const d = (x[k] || 0) - (y[k] || 0); if (d) return d; }
+  return 0;
+}
+// the notes as HTML: "###" headings, "- " lists, paragraphs, **bold** and `code`; anything else stays plain text
+function notesHTML(sections){
+  const inline = v => esc(v).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>');
+  return sections.map(sec => {
+    let html = `<h3 class="wn-v">v${esc(sec.version)}</h3>`, list = false;
+    for (const raw of String(sec.md).split('\n')) {
+      const line = raw.trim(), li = /^[-*]\s+(.*)$/.exec(line);
+      if (li) { if (!list) { html += '<ul>'; list = true; } html += `<li>${inline(li[1])}</li>`; continue; }
+      if (list) { html += '</ul>'; list = false; }
+      const h = /^#{3,}\s+(.*)$/.exec(line);
+      if (h) html += `<h4>${inline(h[1])}</h4>`;
+      else if (line && !/^<!--.*-->$/.test(line)) html += `<p>${inline(line)}</p>`;
+    }
+    return html + (list ? '</ul>' : '');
+  }).join('');
+}
+// the history, read once ([] when it cannot be read)
+let changelogP = null;
+function loadChangelog(url = 'CHANGELOG.md'){
+  const get = () => fetch(url).then(r => r.ok ? r.text() : '').then(parseChangelog).catch(() => []);
+  if (url !== 'CHANGELOG.md') return get();
+  return changelogP || (changelogP = get());
+}
+
+/* ====================================================================
    Desktop: open-with, updates
    ==================================================================== */
 const UPD = {state:{state:'idle'}, info:null, modalOpen:false, dismissed:null};
@@ -8694,6 +8731,7 @@ function setTheme(t){
 if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyTheme();
 paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {
+  changelog:url => loadChangelog(url), notesHTML,
   fontIdState:() => { const p = OCR.panel; if (!p) return null;
     const row = r => { const b = r.querySelector('button[data-fa]'), pct = r.querySelector('.fi-pct');
       return {key:r.dataset.key || '', label:(r.querySelector('.fi-label') || r.querySelector('.fi-name') || {}).textContent || '', src:(r.querySelector('.fi-src') || {}).textContent || '',
