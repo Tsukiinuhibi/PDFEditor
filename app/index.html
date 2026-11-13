@@ -5961,8 +5961,8 @@ const STYLES = (() => {
 })();
 const saveStyles = () => { try { localStorage.setItem(STYLE_KEY, JSON.stringify(STYLES)); } catch (_) {} };
 
-function styleBar(t){
-  const def = DRAW_TOOLS[t], st = STYLES[t] || {}, k = def.kind;
+function styleBar(t, st = STYLES[t] || {}, obj = false){   // obj: the bar of a selected object (styleOf it), not of the tool
+  const def = DRAW_TOOLS[t], k = def.kind;
   const sw = (key, allowNone) => `<button class="cpick${st[key] ? '' : ' none'}" data-cp="${key}" data-none="${allowNone ? 1 : ''}" title="選擇顏色" style="--c:${st[key] || 'transparent'}"><i></i>▾</button>`;
   const presets = (PRESETS[k] || []).map((p, n) => `<button class="pchip" data-p="${n}" title="${p.n}"><i style="${k === 'text' || k === 'fill' ? `background:${p.color};box-shadow:0 0 0 1px rgba(0,0,0,.18)` : `border:${Math.min(3, p.width || 1) + 1}px ${p.dash ? 'dashed' : 'solid'} ${p.color};background:${p.fill || 'transparent'};opacity:${p.opacity || 1};box-shadow:0 0 0 1px rgba(0,0,0,.15)`}"></i>${p.n}</button>`).join('');
   const widthSel = `<label class="sb-l">粗細<select data-s="width">${[0.5, 0.8, 1, 1.2, 1.5, 2, 3, 4, 6, 8, 10, 14].map(v => `<option value="${v}"${+st.width === v ? ' selected' : ''}>${v} pt</option>`).join('')}</select></label>`;
@@ -5974,6 +5974,7 @@ function styleBar(t){
   if (k === 'box' || k === 'poly') h = `<span class="sb-g">${presets}</span><span class="sb-h">框線</span>${sw('color')}${(k === 'box' || def.closed) ? `<span class="sb-h">填色</span>${sw('fill', true)}` : ''}${widthSel}${dash}${opSel}`;
   if (k === 'pen') h = `<span class="sb-g">${presets}</span>${sw('color')}${widthSel}${opSel}`;
   if (k === 'eraser') h = `<span class="sb-h">大小</span>${[[6, '小'], [14, '中'], [28, '大'], [48, '特大']].map(([v, n]) => `<button class="pchip${st.size === v ? ' on' : ''}" data-s="size" data-v="${v}"><i style="border-radius:50%;width:${6 + v / 4}px;height:${6 + v / 4}px;background:#adb5bd"></i>${n}</button>`).join('')}`;
+  if (k === 'fill' && obj) return `<span class="sb-g">${presets}</span><span class="sb-h">顏色</span>${sw('color')}${opSel}`;
   if (k === 'fill') h = `<span class="sb-g">${presets}</span><span class="sb-h">顏色</span>${sw('color')}<button class="pchip" data-h="eyedrop" title="滴管：吸取畫面上的顏色">${icon('dropper')}滴管</button>${opSel}
     <span class="sb-h">方式</span>${[['auto', '點選區塊'], ['rect', '矩形'], ['lasso', '套索'], ['nodes', '節點']].map(([v, n]) => `<button class="pchip${st.mode === v ? ' on' : ''}" data-s="mode" data-v="${v}">${n}</button>`).join('')}
     ${st.mode === 'nodes' ? `<span class="sb-tip">點出節點，點回起點／雙擊／Enter 完成・可拖曳節點・Backspace 退一點</span>` : ''}
@@ -6593,6 +6594,7 @@ function deselectAnnot(){
   AS.el.remove(); AS.bar.remove(); AS.veil && AS.veil.remove();
   if (S.els[AS.i]) S.els[AS.i].style.zIndex = '';
   AS = null; clearSnapMarks();
+  paintObjBar();
 }
 function snapshot(i, box){
   const src = S.els[i] && S.els[i].querySelector('canvas.pc'); if (!src) return null;
@@ -6625,6 +6627,46 @@ function selectAnnot(i, a){
   drawASel();
   addLayerPicker(i, a);
   addGeomHandles(i, a);
+  paintObjBar();
+}
+/* 選到物件時工具列換成它的編輯功能: an object this program drew (PDFE) shows the settings of the tool that draws it, with
+   its own values, in the bar above the pages (#hint.objbar) */
+function objKind(dict){
+  if (!dict.get(N_('PDFE'))) return null;   // another program's object: move and delete only
+  const sub = subOf(dict), subjObj = dict.lookup(N_('Subj')), subj = subjObj && subjObj.decodeText ? subjObj.decodeText() : '';
+  const cloud = !!dict.lookupMaybe(N_('BE'), PDFDict);
+  if (sub === 'Square') return cloud ? 'cloud' : 'rect';
+  if (sub === 'Circle') return cloud ? 'cloud' : 'ellipse';
+  if (sub === 'Line') { const le = dict.lookupMaybe(N_('LE'), PDFArray); return le && le.asArray().some(x => String(x) !== '/None') ? 'arrow' : 'line'; }
+  if (sub === 'Polygon') return subj === '填色' ? 'fill' : 'polygon';
+  if (sub === 'PolyLine') return 'polyline';
+  if (sub === 'Ink') return 'pen';
+  if (sub === 'Highlight') return 'hlText';
+  if (sub === 'Underline') return 'underline';
+  if (sub === 'StrikeOut') return 'strike';
+  return null;
+}
+function readObjStyle(dict){
+  const st = readAnnStyle(dict);
+  if (subOf(dict) === 'Line') {
+    const le = dict.lookupMaybe(N_('LE'), PDFArray), n = le ? le.asArray().map(String) : ['/None', '/None'];
+    st.head = n[0] !== '/None' ? 'both' : n[1] === '/ClosedArrow' ? 'closed' : 'open';
+  }
+  return st;
+}
+let OBJBAR = null;   // the object the bar shows: {i, id, kind}
+async function paintObjBar(){
+  const h = $('#hint');
+  const drop = () => { OBJBAR = null; if (h.classList.contains('objbar')) { h.classList.remove('objbar', 'show', 'styl'); h.innerHTML = ''; } };
+  if (S.tool !== 'select' || !AS) return drop();
+  const {i, a} = AS, doc = await geoDoc(), ref = findAnnotRef(doc, i, a.id);
+  if (!AS || AS.a.id !== a.id) return;   // the selection changed meanwhile: that call paints
+  const dict = ref && doc.context.lookup(ref, PDFDict), kind = dict && objKind(dict);
+  if (!kind || S.tool !== 'select') return drop();
+  const def = DRAW_TOOLS[kind];
+  h.innerHTML = `<b class="sb-t">${icon(def.ic)}已選取：${esc(def.label.replace('工具', ''))}</b><span class="sb-row">${styleBar(kind, readObjStyle(dict), true)}</span>`;
+  h.classList.add('show', 'styl', 'objbar');
+  OBJBAR = {i, id:a.id, kind};
 }
 function drawASel(){
   if (!AS) return;
@@ -9054,6 +9096,8 @@ paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {
   people:() => ({names:PEOPLE ? [...PEOPLE.names] : [], def:PEOPLE ? PEOPLE.def : '', author:AUTHOR}),
   settingsSnapshot, parseSettingsFile,
+  annStyle:async (i, id) => { const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); if (!ref) return null; const d = doc.context.lookup(ref, PDFDict), t = boxTurn(d);
+    return {kind:objKind(d), ...readObjStyle(d), deg:t ? t.deg : 0}; },
   clip:() => ({last:LAST_CLIP, note:NOTE_CLIP ? {contents:NOTE_CLIP.contents, author:NOTE_CLIP.author} : null}),
   changelog:url => loadChangelog(url), notesHTML, whatsNewList, showWhatsNew, checkWhatsNew, updState:st => { UPD.state = st; renderUpdate(); },
   fontIdState:() => { const p = OCR.panel; if (!p) return null;
