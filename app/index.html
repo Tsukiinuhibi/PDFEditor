@@ -1429,6 +1429,7 @@ function layout(){
   S.rows = rowsFor();
   const sc = S.scale, n = S.pages.length;
   const shown = isCont() ? S.rows.map((_, i) => i) : [Math.max(0, rowOf(S.current))];
+  if (MS && !shown.some(ri => (S.rows[ri] || []).includes(MS.i))) clearMulti();   // its page is no longer on screen
   let maxW = 0;
   shown.forEach(ri => S.rows[ri].forEach(p => maxW = Math.max(maxW, S.pages[p].w * sc)));
   const contentW = (isTwo() ? 2 * maxW + GAP : maxW) + 2 * MARGIN;
@@ -1858,9 +1859,9 @@ function setTool(t){
   paintActionButtons();
   rememberTool(t);
   const h = $('#hint');
-  if (h.classList.contains('objbar')) { h.classList.remove('objbar'); OBJBAR = null; }   // the tool's own bar from here
+  if (h.classList.contains('objbar')) { h.classList.remove('objbar', 'multi'); OBJBAR = null; }   // the tool's own bar from here
   h.classList.toggle('styl', !!DRAW_TOOLS[t]);
-  if (!HINTS[t]) { h.classList.remove('show'); h.innerHTML = ''; if (t === 'select' && AS) paintObjBar(); return; }
+  if (!HINTS[t]) { h.classList.remove('show'); h.innerHTML = ''; if (t === 'select' && (AS || MS)) paintObjBar(); return; }
   if (t === 'textbox') {
     h.classList.add('styl');
     h.innerHTML = `<b class="sb-t" title="${esc(HINTS[t])}">${icon('text')}文字方塊</b><span class="sb-q" title="${esc(HINTS[t])}">?</span><span class="sb-row">${textBarHTML()}</span><span class="sp"></span><button data-h="done" title="回到選取工具（Esc，或在頁面空白處按右鍵）">完成 (Esc)</button>`;
@@ -2456,7 +2457,7 @@ async function backToSelect(){
     setTool('select');   // a text box being typed in is saved first, then the tool changes
     await tbSaving; await noteSaving;
     if (S.tool !== 'select' && !TBE) setTool('select');
-  } else deselectAnnot();
+  } else { deselectAnnot(); clearMulti(); }
 }
 pagesEl.addEventListener('pointermove', e => textboxHover(e));
 pagesEl.addEventListener('pointerleave', () => { if (S.tool === 'textbox') clearTextMarks(); });
@@ -3528,6 +3529,7 @@ function paintThumbSel(){
 function thumbClick(e, i){
   $('#side').focus && $('#side').setAttribute('tabindex', '-1');
   if (AS) deselectAnnot();   // working on pages now: Ctrl+C / Ctrl+X / Delete are about the pages, not an object on one
+  clearMulti();
   if (e.ctrlKey || e.metaKey) {
     if (S.thumbSel.has(i) && S.thumbSel.size > 1) S.thumbSel.delete(i); else S.thumbSel.add(i);
     S.thumbAnchor = i;
@@ -7068,9 +7070,12 @@ async function moveObjects(i, moves, label){
 // drag one of the selected objects: all of them move by the same amount
 function dragMulti(e){
   const {i, items, els} = MS, pg = S.pages[i], p0 = pagePointXY(i, e.clientX, e.clientY);
+  // as with one object, each keeps at least half of itself on the page
+  const xr = [Math.max(...items.map(a => -a.x - a.w / 2)), Math.min(...items.map(a => pg.w - a.w / 2 - a.x))];
+  const yr = [Math.max(...items.map(a => -a.y - a.h / 2)), Math.min(...items.map(a => pg.h - a.h / 2 - a.y))];
   let dx = 0, dy = 0, moved = false;
   const move = ev => {
-    const p = pagePointXY(i, ev.clientX, ev.clientY); dx = p.x - p0.x; dy = p.y - p0.y;
+    const p = pagePointXY(i, ev.clientX, ev.clientY); dx = clamp(p.x - p0.x, xr[0], xr[1]); dy = clamp(p.y - p0.y, yr[0], yr[1]);
     if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return;
     moved = true;
     els.forEach(el => { el.style.transform = `translate(${dx / pg.w * S.els[i].clientWidth}px, ${dy / pg.h * S.els[i].clientHeight}px)`; });
@@ -7096,6 +7101,7 @@ function snapshot(i, box){
   return c;
 }
 function selectAnnot(i, a){
+  clearMulti();   // one object chosen: the group is let go (Delete, the bar and the keys are about this one now)
   deselectAnnot();
   const pg = S.pages[i], ovl = S.els[i].querySelector('.ovl');
   const movable = !NO_MOVE.has(a.subtype), resizable = movable && a.subtype !== 'Text' && a.subtype !== 'FreeText';

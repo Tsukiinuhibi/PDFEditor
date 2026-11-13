@@ -157,5 +157,40 @@ const after = (await anns(1)).filter(a => before.some(b => b.id === a.id));
 const top = Math.min(...before.map(b => b.y));
 check('a line, a text box and a rectangle, 靠上: their tops line up; each keeps its size', n3 === 3 && after.length === 3 && after.every(a => near(a.y, top, .8)) && after.every(a => { const b = before.find(x => x.id === a.id); return near(a.w, b.w, .8) && near(a.h, b.h, .8); }), {n3, before, after});
 
+// ---- part 3 (final review): the multi-selection never outlives what it was made for -----------------------------------------
+await see(0, 250, 220);
+await tool('rect'); await drag(await P(0, 400, 100), await P(0, 460, 140));
+await tool('select');
+const fourth = (await anns(0)).find(a => a.sub === 'Square' && near(a.x, 398, 6));
+await marquee();
+await win.mouse.click(...await P(0, fourth.x + 4, fourth.y + fourth.h / 2)); await win.waitForTimeout(700);
+const afterClick = {multi:await multi(), sel:(await A(() => window.__pdfapp.sel()))?.id, outlines:await A(() => document.querySelectorAll('.asel.multi').length)};
+await win.keyboard.press('Delete'); await win.waitForTimeout(1800);
+const leftSq = (await anns(0)).filter(a => a.sub === 'Square').map(a => a.id);
+check('a plain click on another object: the group is let go; Delete removes only that object', afterClick.multi === null && afterClick.sel === fourth.id && !afterClick.outlines && leftSq.length === 3 && !leftSq.includes(fourth.id), {afterClick, leftSq});
+await undo();
+await marquee();
+await win.mouse.click(...await P(0, 520, 300), {button:'right'}); await win.waitForTimeout(700);   // empty space, on screen
+check('a right-click on empty space lets the group go', (await multi()) === null && !(await A(() => document.querySelectorAll('.asel.multi').length)));
+await marquee();
+await A(() => window.__pdfapp.setTool('select')); await win.waitForTimeout(400);
+check('choosing 選取 again while several are selected: the bar stays', (await multi())?.ids.length === 3 && (await barTitle() || '').includes('已選取 3 個物件'), {m:await multi(), t:await barTitle()});
+const before3 = (await anns(0)).filter(a => a.sub === 'Square' && rects.some(r => r.id === a.id));
+const lm = before3.reduce((p, q) => (p.x < q.x ? p : q));
+await drag(await P(0, lm.x + 4, lm.y + lm.h / 2), await P(0, lm.x + 700, lm.y + lm.h / 2), {wait:2000});
+const after3 = (await anns(0)).filter(a => before3.some(b => b.id === a.id));
+check('a group dragged far off the page: each object keeps at least half on the page', after3.length === 3 && after3.every(a => a.x + a.w / 2 <= 595 + .5 && a.x + a.w / 2 >= -.5), after3);
+await undo();
+await win.click('[data-view="single"]'); await win.waitForTimeout(900);
+await see(0, 250, 220); await marquee();
+const mSingle = await multi();
+await win.keyboard.press('PageDown'); await win.waitForTimeout(1200);
+check('one page at a time: turning the page lets the group go', mSingle?.ids.length === 3 && (await multi()) === null && (await barTitle()) === null, {mSingle, m:await multi()});
+await win.keyboard.press('PageUp'); await win.waitForTimeout(1200);
+await see(0, 250, 220); await marquee();
+await win.click('.thumb[data-i="1"]'); await win.waitForTimeout(800);
+check('clicking a thumbnail lets the group go (Delete is about pages then)', (await multi()) === null);
+await win.click('[data-view="continuous"]'); await win.waitForTimeout(900);
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
