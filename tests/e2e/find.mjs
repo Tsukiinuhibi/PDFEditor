@@ -77,5 +77,26 @@ check('another tab: searched again in that document; back: the 4 matches again',
 await key('Escape');
 check('Esc: the bar closes, no marks left', !(await st()).open && (await marks()).all === 0);
 
+// ---- part 2: the 搜尋 tab, scanned pages -------------------------------------------------------------------------------
+await key('Control+f'); await type('hello');
+await win.click('#side .tab[data-tab="find"]'); await win.waitForTimeout(700);
+const rows = () => Ev(() => [...document.querySelectorAll('#p-find .fd-hit')].map(r => ({k:+r.dataset.k, t:r.textContent, cur:r.classList.contains('cur'), ocr:!!r.querySelector('.fd-ocr')})));
+let rs = await rows();
+const pgs = await Ev(() => [...document.querySelectorAll('#p-find .fd-pg')].map(d => d.textContent));
+check('the 搜尋 tab: the 4 matches page by page, each with its line; the current one marked', rs.length === 4 && pgs.join() === '第 1 頁,第 2 頁' && rs[0].t.includes('Hello World') && rs[0].cur, {rs, pgs});
+await win.click('#p-find .fd-hit[data-k="3"]'); await win.waitForTimeout(800);
+check('a row clicked: that match is the current one', (await st()).cur === 3 && (await label()).includes('第 4／4 筆') && (await rows())[3].cur);
+await opt('scans');
+await win.waitForFunction(() => window.__pdfapp.find().n >= 5, null, {timeout:120000}).catch(() => {});
+s = await st(); rs = await rows();
+check('也搜尋掃描頁: page 3 read by OCR, its Hello found and marked 辨識 (also in the tab)', s.n === 5 && s.hits[4].i === 2 && s.hits[4].ocr && rs.length === 5 && rs[4].ocr, {s, rs});
+await opt('scans');
+const off = (await st()).n;
+const t0 = Date.now(); await opt('scans');
+await win.waitForFunction(() => window.__pdfapp.find().n >= 5, null, {timeout:30000}).catch(() => {});
+check('off: 4; on again: the page read before is used (at once)', off === 4 && (await st()).n === 5 && Date.now() - t0 < 6000, {off, ms:Date.now() - t0});
+await opt('scans');
+await key('Escape');
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

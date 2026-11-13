@@ -276,6 +276,13 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .findbar .fb-o.on{background:rgba(28,100,217,.14);color:#1c64d9}
 .fhit{position:absolute;background:rgba(255,212,59,.45);mix-blend-mode:multiply;pointer-events:none;border-radius:1px;z-index:2}
 .fhit.cur{background:rgba(255,140,0,.55);outline:2px solid #f08c00}
+.fd-sum{font-size:12px;color:var(--ink2);margin:2px 0 6px}
+.fd-pg{font-size:11px;color:var(--ink3);margin:8px 0 2px;letter-spacing:.02em}
+.fd-hit{font-size:12px;line-height:1.5;color:var(--ink2);padding:4px 6px;border-radius:5px;cursor:pointer;word-break:break-all}
+.fd-hit:hover{background:var(--hover)}
+.fd-hit.cur{background:rgba(255,140,0,.16);color:var(--ink)}
+.fd-hit b{color:var(--ink);background:rgba(255,212,59,.55);font-weight:600;border-radius:2px}
+.fd-ocr{font-size:10px;color:#b35c00;border:1px solid #f0c088;border-radius:3px;padding:0 3px;margin-left:4px}
 .pr-grid{display:grid;grid-template-columns:minmax(320px,1.15fr) minmax(330px,1fr);gap:20px}
 .pr-prev{height:min(60vh,600px);display:flex;align-items:center;justify-content:center;background:var(--desk);border-radius:8px;overflow:hidden}
 .pr-prev canvas{box-shadow:0 2px 12px rgba(0,0,0,.28);background:#fff}
@@ -873,7 +880,7 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
 .ly-adopt{margin:4px 0 2px 18px;padding:4px 8px;font-size:11.5px;border:1px dashed var(--line);border-radius:6px;background:var(--surface);color:var(--ink2);cursor:pointer}
 .ly-note{margin-top:10px;font-size:11.5px;line-height:1.6;color:var(--ink3)}
 .ly-pick{height:24px;font-size:12px;border:1px solid var(--line);border-radius:5px;background:var(--surface);color:var(--ink);max-width:150px}
-.tabs .tab{padding-left:6px;padding-right:6px}
+.tabs .tab{padding-left:0;padding-right:0;white-space:nowrap;min-width:0}
 
 /* editing the PDF's own text */
 .txhov{position:absolute;outline:1.5px solid rgba(28,100,217,.55);background:rgba(28,100,217,.06);pointer-events:none;border-radius:2px;z-index:3}
@@ -985,18 +992,20 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
       <button class="tab" data-tab="anns">註解</button>
       <button class="tab" data-tab="atts">附件</button>
       <button class="tab" data-tab="layers">圖層</button>
+      <button class="tab" data-tab="find">搜尋</button>
     </div>
     <div class="panel on" id="p-thumbs"></div>
     <div class="panel" id="p-images"></div>
     <div class="panel" id="p-anns"></div>
     <div class="panel" id="p-atts"></div>
     <div class="panel" id="p-layers"></div>
+    <div class="panel" id="p-find"></div>
   </aside>
   <div class="vwrap" id="vwrap"><canvas class="ruler h" id="rulerH"></canvas><canvas class="ruler v" id="rulerV"></canvas><div class="rcorner"></div>
   <div class="findbar" id="findBar" hidden>
     <div class="fb-row"><input type="text" id="findQ" placeholder="尋找" spellcheck="false" autocomplete="off"><span class="fb-n" id="findN"></span>
       <button data-fa="prev" title="上一筆（Shift+Enter）">▲</button><button data-fa="next" title="下一筆（Enter）">▼</button>
-      <button class="fb-o" data-fo="case" title="區分大小寫">Aa</button><button class="fb-o" data-fo="word" title="全字相符（英文、數字）">全字</button><button class="fb-o" data-fo="width" title="全形、半形視為相同">全＝半</button>
+      <button class="fb-o" data-fo="case" title="區分大小寫">Aa</button><button class="fb-o" data-fo="word" title="全字相符（英文、數字）">全字</button><button class="fb-o" data-fo="width" title="全形、半形視為相同">全＝半</button><button class="fb-o" data-fo="scans" title="也搜尋掃描頁：沒有文字的頁用文字辨識讀（只能找，不能取代）">掃描頁</button>
       <button data-fa="close" title="關閉（Esc）">✕</button></div>
   </div>
   <div class="viewer" id="viewer" tabindex="0">
@@ -8672,13 +8681,14 @@ function showTab(t){
   if (t === 'anns') buildAnnsPanel();
   if (t === 'atts') buildAttsPanel();
   if (t === 'layers') buildLayersPanel();
+  if (t === 'find') buildFindPanel();
   if (t === 'thumbs') updatePager();
 }
 $$('.tab').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 setTimeout(wireLayersPanel, 0);
 function refreshPanels(){
   const on = $('.panel.on').id.slice(2);
-  if (on === 'images') buildImagesPanel(); if (on === 'anns') buildAnnsPanel(); if (on === 'atts') buildAttsPanel(); if (on === 'layers') buildLayersPanel();
+  if (on === 'images') buildImagesPanel(); if (on === 'anns') buildAnnsPanel(); if (on === 'atts') buildAttsPanel(); if (on === 'layers') buildLayersPanel(); if (on === 'find') buildFindPanel();
 }
 
 let thumbObs = null;
@@ -9823,38 +9833,85 @@ function pieceBox(it, c0, c1){
   if (dir === 90) return {x:v.x, y:v.y + v.h * f0, w:v.w, h:v.h * (f1 - f0)};
   return {x:v.x, y:v.y + v.h * (1 - f1), w:v.w, h:v.h * (f1 - f0)};
 }
+// a page without text read by OCR (only when 掃描頁 is on): lines like findLines, each character with its own box
+const FIND_OCR = new WeakMap();   // document → Map(page object → promise of lines)
+function ocrLines(i){
+  const d = activeDoc(), ref = S.pages[i].page.ref, key = ref ? ref.num + 'R' + ref.gen : 'p' + i;
+  if (!FIND_OCR.has(d)) FIND_OCR.set(d, new Map());
+  const memo = FIND_OCR.get(d); if (memo.has(key)) return memo.get(key);
+  const p = (async () => {
+    const pg = S.pages[i], img = await ocrImage(i, {x:0, y:0, w:pg.w, h:pg.h}), k = (img.width - 48) / pg.w, m = 24;   // ocrImage: a 24 px white margin
+    const w = await ocrWorker('eng+chi_tra'); await w.setParameters({tessedit_pageseg_mode:'3', preserve_interword_spaces:'1'});
+    const {data} = await w.recognize(img, {}, {text:true, blocks:true}), byLine = new Map();
+    ocrSymbols(data, false).forEach(y => { if (!byLine.has(y.li)) byLine.set(y.li, []); byLine.get(y.li).push(y); });
+    return [...byLine.values()].map(list => {
+      let text = ''; const boxes = [];
+      list.forEach((y, n) => {
+        const prev = list[n - 1], gap = prev && y.bbox.x0 - prev.bbox.x1 > (prev.bbox.y1 - prev.bbox.y0) * .3;
+        if (gap && !(CJK_RE.test(prev.text) && CJK_RE.test(y.text))) { text += ' '; boxes.push(null); }   // a space between words, none between Chinese characters
+        for (const ch of y.text) { text += ch; boxes.push({x:(y.bbox.x0 - m) / k, y:(y.bbox.y0 - m) / k, w:(y.bbox.x1 - y.bbox.x0) / k, h:(y.bbox.y1 - y.bbox.y0) / k}); }
+      });
+      const bs = boxes.filter(Boolean);
+      return {text, boxes, ocr:true, top:Math.min(...bs.map(b => b.y)), left:Math.min(...bs.map(b => b.x)), fs:Math.max(...bs.map(b => b.h))};
+    }).filter(l => l.text.trim());
+  })().catch(e => { console.warn(e); memo.delete(key); return []; });
+  memo.set(key, p); return p;
+}
 function hitBoxes(ln, s, e){
   if (ln.boxes) return ln.boxes.slice(s, e).filter(Boolean);   // a line read by OCR: a box for each character
   return ln.at.filter(a => a.to > s && a.from < e).map(a => pieceBox(a.item, Math.max(s, a.from) - a.from, Math.min(e, a.to) - a.from));
 }
 async function searchDoc(){
   const seq = ++FIND.seq, o = {...FIND.opts}, q = FIND.q, before = FIND.hits[FIND.cur];
-  if (!S.pdf || !q) { FIND.hits = []; FIND.cur = -1; FIND.done = ''; paintFind(); return; }
+  if (!S.pdf || !q) { FIND.hits = []; FIND.cur = -1; FIND.done = ''; paintFind(); buildFindPanel(); return; }
   setFindLabel('搜尋中…');
-  const nq = normFind(q, o), hits = [];
+  const nq = normFind(q, o), hits = [], scans = [];
+  const look = (i, lines) => lines.forEach((ln, li) => {
+    const t = normFind(ln.text, o);
+    for (let k = t.indexOf(nq); k >= 0; k = t.indexOf(nq, k + Math.max(1, nq.length))) {
+      if (o.word && (wordCh(ln.text[k - 1]) || wordCh(ln.text[k + nq.length]))) continue;
+      hits.push({i, li, s:k, e:k + nq.length, ocr:!!ln.ocr, boxes:hitBoxes(ln, k, k + nq.length), ctx:ln.text, line:ln});
+    }
+  });
   for (let i = 0; i < S.pages.length; i++) {
     const lines = await findLines(i); if (seq !== FIND.seq) return;
-    lines.forEach((ln, li) => {
-      const t = normFind(ln.text, o);
-      for (let k = t.indexOf(nq); k >= 0; k = t.indexOf(nq, k + Math.max(1, nq.length))) {
-        if (o.word && (wordCh(ln.text[k - 1]) || wordCh(ln.text[k + nq.length]))) continue;
-        hits.push({i, li, s:k, e:k + nq.length, ocr:!!ln.ocr, boxes:hitBoxes(ln, k, k + nq.length), ctx:ln.text, line:ln});
-      }
-    });
+    if (lines.length) look(i, lines); else scans.push(i);   // a page without text: a scan, read only when 掃描頁 is on
   }
-  FIND.hits = hits; FIND.done = q + '|' + JSON.stringify(o) + '|' + S.version;
+  const publish = () => { hits.sort((a, b) => a.i - b.i || a.li - b.li || a.s - b.s); FIND.hits = hits.slice(); FIND.done = q + '|' + JSON.stringify(o) + '|' + S.version; };
+  publish();
   // the same match as before when it is still there, else the first one from the current page on
-  const same = before && hits.findIndex(h => h.i === before.i && h.li === before.li && h.s === before.s);
-  FIND.cur = !hits.length ? -1 : same >= 0 ? same : Math.max(0, hits.findIndex(h => h.i >= S.current));
-  paintFind();
-  if (FIND.cur >= 0 && !(same >= 0)) showHit(FIND.cur);
+  const same = before ? FIND.hits.findIndex(h => h.i === before.i && h.li === before.li && h.s === before.s) : -1;
+  FIND.cur = !FIND.hits.length ? -1 : same >= 0 ? same : Math.max(0, FIND.hits.findIndex(h => h.i >= S.current));
+  paintFind(); buildFindPanel();
+  if (FIND.cur >= 0 && same < 0) showHit(FIND.cur);
+  if (!o.scans || !scans.length) return;
+  for (let n = 0; n < scans.length; n++) {   // the scanned pages, read one at a time; the matches so far stay usable
+    setFindLabel(`${FIND.hits.length ? `第 ${FIND.cur + 1}／${FIND.hits.length} 筆 · ` : ''}辨識掃描頁…（${n + 1}／${scans.length}）`);
+    const lines = await ocrLines(scans[n]); if (seq !== FIND.seq) return;
+    const cur = FIND.hits[FIND.cur]; look(scans[n], lines); publish();
+    FIND.cur = cur ? FIND.hits.indexOf(cur) : FIND.hits.length ? Math.max(0, FIND.hits.findIndex(h => h.i >= S.current)) : -1;
+    paintFind(); buildFindPanel();
+  }
 }
+function buildFindPanel(){
+  const p = $('#p-find'); if (!p || !p.classList.contains('on')) return;
+  if (!FIND.q || !S.pdf) { p.innerHTML = '<div class="empty-note">按 Ctrl+F 輸入要找的字，符合的地方會列在這裡。</div>'; return; }
+  if (!FIND.hits.length) { p.innerHTML = `<div class="empty-note">找不到「${esc(FIND.q)}」。</div>`; return; }
+  let pg = -1;
+  p.innerHTML = `<div class="fd-sum">「${esc(FIND.q)}」共 ${FIND.hits.length} 筆</div>` + FIND.hits.map((h, k) => {
+    const a = Math.max(0, h.s - 14), b = Math.min(h.ctx.length, h.e + 18);
+    const row = `<div class="fd-hit${k === FIND.cur ? ' cur' : ''}" data-k="${k}">${a ? '…' : ''}${esc(h.ctx.slice(a, h.s))}<b>${esc(h.ctx.slice(h.s, h.e))}</b>${esc(h.ctx.slice(h.e, b))}${b < h.ctx.length ? '…' : ''}${h.ocr ? '<span class="fd-ocr">辨識</span>' : ''}</div>`;
+    return (h.i !== pg ? `<div class="fd-pg">第 ${(pg = h.i) + 1} 頁</div>` : '') + row;
+  }).join('');
+}
+$('#p-find').addEventListener('click', e => { const r = e.target.closest('.fd-hit'); if (!r) return; FIND.cur = +r.dataset.k; paintFind(); showHit(FIND.cur); });
 function scheduleFind(ms = 150){ clearTimeout(FIND.timer); FIND.timer = setTimeout(searchDoc, ms); }
 function setFindLabel(t){ const n = $('#findN'); if (n) n.textContent = t; }
 function paintFind(){
   $$('.fhit').forEach(d => d.remove());
   if (FIND.open) S.els.forEach((_, i) => paintFindPage(i));
   setFindLabel(!FIND.q ? '' : FIND.hits.length ? `第 ${FIND.cur + 1}／${FIND.hits.length} 筆` : '沒有找到');
+  $$('#p-find .fd-hit').forEach(r => r.classList.toggle('cur', +r.dataset.k === FIND.cur));
 }
 function paintFindPage(i){
   const el = S.els[i], ovl = el && el.querySelector('.ovl'), pg = S.pages[i]; if (!ovl || !pg) return;
