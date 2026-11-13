@@ -163,70 +163,24 @@ ipcMain.handle('file:save-as', async (_e, suggested, data, opts) => {
   allowDir(path.dirname(r.filePath));
   return r.filePath;
 });
-// 轉存 Word with Microsoft Word: Word 2013 and later open a PDF as an editable document (their own conversion). Word is
-// found through the registry and run in the background by PowerShell over COM: the PDF opened read-only without the
-// conversion question, saved as .docx, Word always closed. The paths go in environment variables (Chinese paths survive);
-// the conversion question (DisableConvertPdfWarning) is turned off for the run and put back afterwards. Word writes into a
-// temporary folder; the .docx is copied to its place only when it is done.
+// 轉存 Word with Microsoft Word: see word.js (it runs Word through PowerShell; kept apart so it can be tested without Word)
+const W = require('./word');
 const { execFile } = require('child_process');
-const os = require('os');
-const WORD_PS = `$ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$in = $env:PDFE_IN; $out = $env:PDFE_OUT
-$key = "HKCU:\\Software\\Microsoft\\Office\\$($env:PDFE_WORDVER).0\\Word\\Options"
-$had = $null
-try { $had = (Get-ItemProperty -Path $key -Name DisableConvertPdfWarning -ErrorAction Stop).DisableConvertPdfWarning } catch { }
-try { if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }; Set-ItemProperty -Path $key -Name DisableConvertPdfWarning -Value 1 -Type DWord } catch { }
-$word = $null; $code = 0
-try {
-  $word = New-Object -ComObject Word.Application
-  $word.Visible = $false
-  $word.DisplayAlerts = 0
-  # FileName, ConfirmConversions, ReadOnly, AddToRecentFiles
-  $doc = $word.Documents.Open($in, $false, $true, $false)
-  try { $doc.SaveAs2($out, 16) } finally { $doc.Close(0) }
-  [Console]::Out.WriteLine('PDFE_OK')
-} catch {
-  [Console]::Out.WriteLine('PDFE_ERR:' + $_.Exception.Message); $code = 2
-} finally {
-  if ($word) { try { $word.Quit(0) } catch { }; [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) }
-  try { if ($null -eq $had) { Remove-ItemProperty -Path $key -Name DisableConvertPdfWarning -ErrorAction SilentlyContinue } else { Set-ItemProperty -Path $key -Name DisableConvertPdfWarning -Value $had -Type DWord } } catch { }
-}
-exit $code
-`;
 const runFile = (file, args, opts = {}) => new Promise(res => { const child = execFile(file, args, { windowsHide: true, encoding: 'utf8', maxBuffer: 4 << 20, ...opts },
   (err, stdout, stderr) => res({ err, stdout: String(stdout || ''), stderr: String(stderr || '') })); if (opts.onChild) opts.onChild(child); });
-const wordVersion = async () => {
-  if (process.platform !== 'win32') return 0;
-  const m = /Word\.Application\.(\d+)/.exec((await runFile('reg', ['query', 'HKCR\\Word.Application\\CurVer', '/ve'])).stdout);
-  return m ? +m[1] : 0;
-};
-// the Word this program started (an /Automation WINWORD.EXE started after `since`): closed when a run is stopped
-const killWord = since => runFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-  "Get-CimInstance Win32_Process -Filter \"Name='WINWORD.EXE'\" | Where-Object { $_.CommandLine -match 'Automation' -and $_.CreationDate -ge [datetime]::Parse('"
-  + since.toISOString() + "') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"], { timeout: 20000 });
-const wordJobs = new Map();   // id → {child, since, cancelled}
-ipcMain.handle('word:detect', async () => { const v = await wordVersion(); return v >= 15 ? { ok: true, version: v } : { ok: false }; });
+const wordJobs = new Map();   // id → {child, cancelled}
+ipcMain.handle('word:detect', async () => { const v = await W.wordVersion(runFile); return v >= 15 ? { ok: true, version: v } : { ok: false }; });
 ipcMain.handle('word:convert', async (_e, id, pdf, out) => {
-  const v = await wordVersion();
-  if (v < 15) return { ok: false, why: 'word', msg: '這台電腦沒有可以轉換 PDF 的 Word（需要 Word 2013 以後的版本）' };
-  if (typeof out !== 'string' || !isAllowed(path.dirname(out))) return { ok: false, why: 'word', msg: '不能存到這個位置' };
-  const job = { since: new Date(Date.now() - 3000), cancelled: false, child: null }; wordJobs.set(id, job);
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pdfe-word-'));
+  const job = { cancelled: false, child: null }; wordJobs.set(id, job);   // (first: a 取消 that comes early is not lost)
   try {
-    const inPdf = path.join(dir, 'in.pdf'), tmpOut = path.join(dir, 'out.docx'), ps1 = path.join(dir, 'convert.ps1');
-    await fs.writeFile(inPdf, toBuf(pdf)); await fs.writeFile(ps1, '﻿' + WORD_PS, 'utf8');
-    const r = await runFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ps1],
-      { timeout: 10 * 60 * 1000, env: { ...process.env, PDFE_IN: inPdf, PDFE_OUT: tmpOut, PDFE_WORDVER: String(v) }, onChild: c => { job.child = c; } });
-    if (job.cancelled) { await killWord(job.since); return { ok: false, why: 'cancel' }; }
-    if (r.err && r.err.killed) { await killWord(job.since); return { ok: false, why: 'timeout' }; }
-    if (!/PDFE_OK/.test(r.stdout)) { const m = /PDFE_ERR:(.*)/.exec(r.stdout); return { ok: false, why: 'word', msg: (m ? m[1] : r.stderr || (r.err && r.err.message) || '').trim().slice(0, 300) }; }
-    await fs.copyFile(tmpOut, out);
-    return { ok: true };
-  } catch (err) { return { ok: false, why: 'word', msg: String((err && err.message) || err) }; }
-  finally { wordJobs.delete(id); fs.rm(dir, { recursive: true, force: true }).catch(() => {}); }
+    const v = await W.wordVersion(runFile);
+    if (v < 15) return { ok: false, why: 'word', msg: '這台電腦沒有可以轉換 PDF 的 Word（需要 Word 2013 以後的版本）' };
+    if (typeof out !== 'string' || !savedHere.has(path.resolve(out))) return { ok: false, why: 'word', msg: '不能存到這個位置' };
+    return await W.convertWithWord({ pdf: toBuf(pdf), out, version: v, run: runFile, job });
+  } finally { wordJobs.delete(id); }
 });
 ipcMain.handle('word:cancel', (_e, id) => { const j = wordJobs.get(id); if (j) { j.cancelled = true; if (j.child) j.child.kill(); } });
+const savedHere = new Set();   // files of another kind chosen with file:choose-save in this run (the only ones open-path opens)
 // a place for a new file of another kind (a .docx): the save dialog only, the caller writes there; never the opened PDF
 ipcMain.handle('file:choose-save', async (_e, suggested, opts) => {
   const ext = (path.extname(String(suggested)).slice(1) || 'bin').toLowerCase();
@@ -235,12 +189,12 @@ ipcMain.handle('file:choose-save', async (_e, suggested, opts) => {
     const r = await dialog.showSaveDialog(win, { title: '另存新檔', defaultPath: suggested,
       filters: [{ name: ext.toUpperCase() + ' 檔案', extensions: [ext] }, { name: '所有檔案', extensions: ['*'] }] });
     if (r.canceled || !r.filePath) return null;
-    if (!avoid.includes(path.resolve(r.filePath).toLowerCase())) { allowDir(path.dirname(r.filePath)); return r.filePath; }
+    if (!avoid.includes(path.resolve(r.filePath).toLowerCase())) { allowDir(path.dirname(r.filePath)); savedHere.add(path.resolve(r.filePath)); return r.filePath; }
     await dialog.showMessageBox(win, { type: 'warning', title: '不能覆蓋原檔', message: '不能存到原本的檔案', detail: '請換一個檔名或位置。' });
   }
 });
-// open a file this program wrote (a .docx in Word) with the computer's default program
-ipcMain.handle('app:open-path', async (_e, p) => (typeof p === 'string' && isAllowed(path.dirname(p)) ? shell.openPath(p) : 'not allowed'));
+// open a .docx this program saved (chosen with file:choose-save in this run) with the computer's default program
+ipcMain.handle('app:open-path', async (_e, p) => (typeof p === 'string' && /\.docx$/i.test(p) && savedHere.has(path.resolve(p)) ? shell.openPath(p) : 'not allowed'));
 ipcMain.handle('export:default-dir', (_e, pdfPath, last) => {
   if (last && picked.includes(path.resolve(last))) return path.resolve(last);
   if (pdfPath && isAllowed(path.dirname(pdfPath))) return path.dirname(pdfPath);

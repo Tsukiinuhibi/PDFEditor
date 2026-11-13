@@ -4788,9 +4788,10 @@ function runBox(r){
 // how much of box b lies inside box U (0–1)
 const boxShare = (b, U) => Math.max(0, Math.min(b.x1, U.x1) - Math.max(b.x0, U.x0)) * Math.max(0, Math.min(b.y1, U.y1) - Math.max(b.y0, U.y0)) / Math.max(1e-9, (b.x1 - b.x0) * (b.y1 - b.y0));
 // take the text inside box U (PDF units) out of page i; returns how many text operators were removed
-function removePageText(doc, i, U, {invisibleOnly = false} = {}){
+// (pick: the runs to take instead of those inside U)
+function removePageText(doc, i, U, {invisibleOnly = false, pick = null} = {}){
   const page = doc.getPage(i), bytes = pageContentBytes(doc, page); if (!bytes) return 0;
-  const hits = locateTextOps(doc, page, bytes).filter(r => !invisibleOnly || r.tr === 3 || r.tr === 7).filter(r => boxShare(runBox(r), U) >= .5).sort((a, b) => a.o.s - b.o.s);
+  const hits = locateTextOps(doc, page, bytes).filter(r => !invisibleOnly || r.tr === 3 || r.tr === 7).filter(r => pick ? pick(r) : boxShare(runBox(r), U) >= .5).sort((a, b) => a.o.s - b.o.s);
   if (!hits.length) return 0;
   const parts = []; let pos = 0;
   hits.forEach(r => {
@@ -10373,27 +10374,37 @@ function linkLook(doc, t, i, box){
    (XY-cut: a gap across everything first, then columns, left first) → paragraphs, written as OOXML in a zip (pako).
    ==================================================================== */
 // a copy of the chosen pages (0-based) with every visible annotation drawn into the page content (PDF 32000 12.5.5: the
-// appearance's box through its /Matrix, fitted onto /Rect) and no annotations left. Notes, links, pop-ups, hidden ones and
-// those on hidden layers stay out. Text boxes are not drawn (ours are pictures of their text): their text comes back per
-// page as {rect (PDF space), lines: [[runs]]} — ours from PDFE_RT, others' from /Contents. With realText (for Word, which
-// reads text and not pictures), ours are written onto the page as real text instead (realTextBox), or drawn as their
-// picture when that cannot be done. The document is not touched. → {bytes, boxes: [[text box] per chosen page]}
+// appearance's box through its /Matrix, fitted onto /Rect), in their stacking order, and no annotations left. Notes, links,
+// pop-ups, hidden ones and those on hidden layers stay out, and so does page content on a hidden layer. Text boxes are not
+// drawn (ours are pictures of their text): their text comes back per page as {rect (PDF space), lines: [[runs]]} — ours
+// from PDFE_RT, others' from /Contents. With realText (for Word, which reads text and not pictures) ours are written onto
+// the page as real text instead (realTextBox), or drawn as their picture when that cannot be done, and the text 修改原文
+// replaced (kept invisible) goes. The document is not touched. → {bytes, boxes: [[text box] per chosen page]}
 async function flattenForExport(pages, {realText = false} = {}){
   const doc = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false}), ctx = doc.context;
   const keep = [...new Set(pages)].sort((a, b) => a - b);
-  const L = readLayers(doc), ids = new Set(L.map(l => l.id)), hid = new Set(L.filter(l => !l.visible).map(l => l.id));
+  const L = readLayers(doc), ids = new Set(L.map(l => l.id)), hid = new Set(L.filter(l => !l.visible).map(l => l.id)), off = ocgsOff(doc);
   const num = v => v instanceof PDFNumber ? v.asNumber() : 0;
   const boxes = [];
   for (const pi of keep) {   // (numbered as in the document: the real-text writer reads the page's geometry from S.pages)
     const page = doc.getPage(pi), tbs = []; boxes.push(tbs);
+    stripHiddenContent(doc, page, off);
+    if (realText) dropHiddenOriginals(doc, pi);
     const annots = page.node.lookupMaybe(N_('Annots'), PDFArray); if (!annots) continue;
-    const ops = [], X = {};
+    let ops = [], X = {};
+    const flush = () => {   // the appearances so far, drawn after the page's content (and what was written before them)
+      if (!ops.length) return;
+      let res = page.node.Resources(); if (!res) { res = ctx.obj({}); page.node.set(N_('Resources'), res); }
+      let xo = res.lookupMaybe(N_('XObject'), PDFDict); if (!xo) { xo = ctx.obj({}); res.set(N_('XObject'), xo); }
+      Object.entries(X).forEach(([k, ref]) => xo.set(N_(k), ref));
+      appendPageOps(doc, page, ops.join('\n')); ops = []; X = {};
+    };
     for (let k = 0; k < annots.size(); k++) {
       const d = annots.lookupMaybe(k, PDFDict); if (!d) continue;
       const sub = String(d.get(N_('Subtype')) || '').slice(1), F = num(d.get(N_('F')));
       if (['Text', 'Link', 'Popup'].includes(sub) || (F & 2) || (F & 32)) continue;
       const lay = ids.size ? ocOfDict(doc, d, ids) : null; if (lay && hid.has(lay)) continue;
-      if (sub === 'FreeText' && realText && await realTextBox(doc, pi, d)) continue;
+      if (sub === 'FreeText' && realText) { flush(); if (await realTextBox(doc, pi, d)) continue; }   // (in its place among the others)
       if (sub === 'FreeText' && !realText) {
         const rc = d.lookupMaybe(N_('Rect'), PDFArray), rt = readRT(d); if (!rc) continue;
         let lines = rt && Array.isArray(rt.lines) ? rt.lines : null;
@@ -10418,15 +10429,64 @@ async function flattenForExport(pages, {realText = false} = {}){
       if (!st.dict.get(N_('Subtype'))) st.dict.set(N_('Subtype'), N_('Form'));
       X[name] = n; ops.push(`q ${[sx, 0, 0, sy, rx0 - tx0 * sx, ry0 - ty0 * sy].map(v => +v.toFixed(6)).join(' ')} cm /${name} Do Q`);
     }
-    const {XObject} = page.node.normalizedEntries();
+    flush();
     page.node.delete(N_('Annots'));
-    if (!ops.length) continue;
-    Object.entries(X).forEach(([k, ref]) => XObject.set(N_(k), ref));
-    page.node.wrapContentStreams(ctx.getPushGraphicsStateContentStream(), ctx.getPopGraphicsStateContentStream());
-    page.node.addContentStream(ctx.register(ctx.stream(ops.join('\n'))));
   }
   const kept = new Set(keep); for (let k = doc.getPageCount() - 1; k >= 0; k--) if (!kept.has(k)) doc.removePage(k);
   return {bytes:await doc.save({useObjectStreams:false}), boxes};
+}
+// a content stream added at the end of a page of the copy, the page's own content wrapped in q … Q first. (Contents may
+// be one stream or an array of them: the real-text writer leaves a single stream.)
+function appendPageOps(doc, page, text){
+  const ctx = doc.context, C = page.node.get(N_('Contents')), cur = C && ctx.lookup(C);
+  const list = cur instanceof PDFArray ? cur.asArray() : C ? [C] : [];
+  page.node.set(N_('Contents'), ctx.obj([ctx.getPushGraphicsStateContentStream(), ...list, ctx.getPopGraphicsStateContentStream(), ctx.register(ctx.stream(text))]));
+}
+// the optional-content groups (layers) that are off in the document's own settings, by refId
+function ocgsOff(doc){
+  const o = doc.catalog.lookupMaybe(N_('OCProperties'), PDFDict), D = o && o.lookupMaybe(N_('D'), PDFDict);
+  if (!D) return new Set();
+  const list = a => a ? a.asArray().filter(r => r instanceof PDFRef).map(refId) : [];
+  const base = D.lookupMaybe(N_('BaseState'), PDFName), on = new Set(list(D.lookupMaybe(N_('ON'), PDFArray)));
+  return base && base.asString() === '/OFF' ? new Set(list(o.lookupMaybe(N_('OCGs'), PDFArray)).filter(id => !on.has(id))) : new Set(list(D.lookupMaybe(N_('OFF'), PDFArray)));
+}
+// page content on a hidden layer (BDC /OC /name … EMC; a membership dictionary counts as hidden when all its groups are)
+// taken out of a page of the copy
+function stripHiddenContent(doc, page, off){
+  if (!off.size) return;
+  const res = page.node.Resources(), props = res && res.lookupMaybe(N_('Properties'), PDFDict);
+  if (!props) return;
+  const bytes = pageContentBytes(doc, page); if (!bytes) return;
+  const hidden = o => {
+    if (!(o.op === 'BDC' && o.args[0] && o.args[0].name === 'OC' && o.args[1] && o.args[1].name)) return false;
+    const ref = props.get(N_(o.args[1].name)); if (!(ref instanceof PDFRef)) return false;
+    const d = doc.context.lookup(ref, PDFDict);
+    if (d && String(d.get(N_('Type'))) === '/OCMD') {
+      let g = d.get(N_('OCGs')); if (g instanceof PDFRef && !off.has(refId(g))) g = doc.context.lookup(g);
+      const gs = g instanceof PDFArray ? g.asArray() : g ? [g] : [];
+      return gs.length > 0 && gs.every(r => r instanceof PDFRef && off.has(refId(r)));
+    }
+    return off.has(refId(ref));
+  };
+  const cut = []; let depth = 0, from = null;
+  for (const o of csTokens(bytes)) {
+    if (o.op === 'BDC' || o.op === 'BMC') { depth++; if (!from && hidden(o)) from = {s:o.s, depth}; }
+    else if (o.op === 'EMC') { if (from && depth === from.depth) { cut.push([from.s, o.e]); from = null; } depth = Math.max(0, depth - 1); }
+  }
+  if (!cut.length) return;
+  const parts = []; let pos = 0; cut.forEach(([s, e]) => { parts.push(bytes.subarray(pos, s)); pos = e; }); parts.push(bytes.subarray(pos));
+  page.node.set(N_('Contents'), doc.context.register(doc.context.flateStream(concatBytes(parts))));
+}
+// 修改原文 keeps the text it replaced, invisible, inside /PDFE_Hide: Word would read it as text (it reads the invisible
+// text of scans), so for Word it goes from the copy — its width kept, so the text after it stays where it was
+function dropHiddenOriginals(doc, i){
+  const bytes = pageContentBytes(doc, doc.getPage(i)); if (!bytes) return;
+  const spans = []; let depth = 0, from = null;
+  for (const o of csTokens(bytes)) {
+    if (o.op === 'BDC' || o.op === 'BMC') { depth++; if (!from && o.args[0] && o.args[0].name === 'PDFE_Hide') from = {s:o.s, depth}; }
+    else if (o.op === 'EMC') { if (from && depth === from.depth) { spans.push([from.s, o.e]); from = null; } depth = Math.max(0, depth - 1); }
+  }
+  if (spans.length) removePageText(doc, i, null, {invisibleOnly:true, pick:r => spans.some(([s, e]) => r.o.s >= s && r.o.e <= e)});
 }
 // one of our text boxes (PDFE_RT) written onto page i of the copy as real text, as 修改原文 writes it; false when it cannot
 // be (turned or upright-vertical boxes, characters no font has, a font that will not embed): then its picture is drawn
@@ -10463,64 +10523,90 @@ async function wordItems(page, vp){
   }
   return {items:out, ops};
 }
-// pieces on one baseline → a line; a wide gap (a column gutter) starts another. Runs: pieces of one style, with a space
-// where words stood apart (none between Chinese characters)
-function wordLines(items){
+// the glyphs a page shows, counted by whether they can be seen: text render mode 3 or 7 draws nothing (a scan's text layer)
+function textGlyphs(ops){
+  const O = pdfjsLib.OPS, shows = new Set([O.showText, O.showSpacedText, O.nextLineShowText, O.nextLineSetSpacingShowText]);
+  let mode = 0; const stack = [], n = {shown:0, hidden:0};
+  for (let k = 0; k < ops.fnArray.length; k++) {
+    const f = ops.fnArray[k], a = ops.argsArray[k];
+    if (f === O.save || f === O.paintFormXObjectBegin) stack.push(mode);
+    else if (f === O.restore || f === O.paintFormXObjectEnd) { if (stack.length) mode = stack.pop(); }
+    else if (f === O.setTextRenderingMode) mode = a[0];
+    else if (shows.has(f)) for (const g of (a || []).find(x => Array.isArray(x)) || []) if (g && typeof g === 'object' && g.unicode && g.unicode.trim()) n[mode === 3 || mode === 7 ? 'hidden' : 'shown']++;
+  }
+  return n;
+}
+// pieces in reading order → lines: pieces of one region that overlap in height (a raised footnote mark too) make a line,
+// read left to right. Runs: pieces of one style, with a space where words stood apart (none between Chinese characters);
+// a small raised piece is a superscript (written at the line's size, raised)
+function wordLines(seq){
   const lines = [];
-  for (const it of [...items].sort((a, b) => a.base - b.base || a.x - b.x)) {
-    const ln = lines.find(l => Math.abs(l.base - it.base) < Math.min(l.fs, it.fs) * 0.4 && it.x >= l.x1 - l.fs * 0.5 && it.x - l.x1 < Math.max(l.fs, it.fs) * 2.5);
-    if (ln) { ln.items.push(it); ln.x1 = Math.max(ln.x1, it.x + it.w); ln.fs = Math.max(ln.fs, it.fs); ln.y0 = Math.min(ln.y0, it.top); ln.y1 = Math.max(ln.y1, it.bottom); }
-    else lines.push({items:[it], base:it.base, x0:it.x, x1:it.x + it.w, fs:it.fs, y0:it.top, y1:it.bottom});
+  for (const it of seq) {
+    const ln = lines[lines.length - 1], ov = ln ? Math.min(ln.y1, it.y1) - Math.max(ln.y0, it.y0) : -1;
+    if (ln && ln.reg === it.reg && ov >= Math.min(ln.y1 - ln.y0, it.y1 - it.y0) * 0.5) {
+      ln.items.push(it); ln.x0 = Math.min(ln.x0, it.x0); ln.x1 = Math.max(ln.x1, it.x1); ln.y0 = Math.min(ln.y0, it.y0); ln.y1 = Math.max(ln.y1, it.y1);
+    } else lines.push({items:[it], x0:it.x0, x1:it.x1, y0:it.y0, y1:it.y1, reg:it.reg, col:it.col});
   }
   for (const l of lines) {
-    l.items.sort((a, b) => a.x - b.x); l.runs = [];
+    l.items.sort((a, b) => a.x0 - b.x0);
+    const main = l.items.reduce((m, it) => it.fs > m.fs ? it : m, l.items[0]); l.fs = main.fs; l.base = main.base; l.runs = [];
     l.items.forEach((it, k) => {
       const prev = l.items[k - 1]; let s = it.str;
-      if (prev) { const gap = it.x - (prev.x + prev.w), pc = prev.str.slice(-1), nc = s[0]; if (gap > Math.min(prev.fs, it.fs) * 0.18 && pc !== ' ' && nc !== ' ' && !(WD_CJK.test(pc) && WD_CJK.test(nc))) s = ' ' + s; }
-      const st = {size:Math.round(it.fs * 2) / 2, bold:it.bold, italic:it.italic, name:it.name}, last = l.runs[l.runs.length - 1];
-      if (last && last.size === st.size && last.bold === st.bold && last.italic === st.italic && last.name === st.name) last.text += s; else l.runs.push({text:s, ...st});
+      if (prev) { const gap = it.x0 - prev.x1, pc = prev.str.slice(-1), nc = s[0]; if (gap > Math.min(prev.fs, it.fs) * 0.18 && pc !== ' ' && nc !== ' ' && !(WD_CJK.test(pc) && WD_CJK.test(nc))) s = ' ' + s; }
+      const sup = it.fs < main.fs * 0.8 && it.base < main.base - main.fs * 0.15;
+      const st = {size:Math.round((sup ? main.fs : it.fs) * 2) / 2, bold:it.bold, italic:it.italic, name:it.name, sup}, last = l.runs[l.runs.length - 1];
+      if (last && ['size', 'bold', 'italic', 'name', 'sup'].every(q => last[q] === st[q])) last.text += s; else l.runs.push({text:s, ...st});
     });
     l.text = l.runs.map(r => r.text).join('');
   }
   return lines;
 }
-// reading order of boxes {x0, y0, x1, y1}: cut at the widest gap between rows when it runs across everything, else at a
-// column gutter (left first); each box learns the left edge of its column (col), which its indent is measured from
-function wordCut(boxes, fs, col){
+let WD_REG = 0;
+// reading order of boxes {x0, y0, x1, y1}: a column gutter first (a gap of 0.9 em or more down the whole region, the
+// region three lines high or more), left column first; else the widest gap between rows. Each box learns its region
+// (reg: one per column) and its column's left edge (col), which indents are measured from
+function wordCut(boxes, fs, col = null, reg = 0){
   if (!boxes.length) return [];
   if (col == null) col = Math.min(...boxes.map(b => b.x0));
-  if (boxes.length === 1) { boxes[0].col = col; return boxes; }
+  const leaf = () => { boxes.forEach(b => { b.col = col; b.reg = reg; }); return [...boxes].sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0); };
+  if (boxes.length === 1) return leaf();
   const gaps = (lo, hi) => {
     const s = [...boxes].sort((a, b) => a[lo] - b[lo]), out = []; let end = s[0][hi];
     for (let k = 1; k < s.length; k++) { if (s[k][lo] > end) out.push({at:(end + s[k][lo]) / 2, size:s[k][lo] - end}); end = Math.max(end, s[k][hi]); }
     return out.sort((a, b) => b.size - a.size);
   };
-  const rows = gaps('y0', 'y1'), cols = gaps('x0', 'x1').filter(g => g.size >= fs * 1.5);
-  const split = (key, at, c1, c2) => { const a = boxes.filter(b => b[key] <= at), b2 = boxes.filter(b => b[key] > at); return a.length && b2.length ? [...wordCut(a, fs, c1(a)), ...wordCut(b2, fs, c2(b2))] : null; };
-  const left = g => Math.min(...g.map(b => b.x0));
-  if (rows.length && (!cols.length || rows[0].size >= fs * 0.6)) { const r = split('y1', rows[0].at, () => col, () => col); if (r) return r; }
-  if (cols.length) { const r = split('x1', cols[0].at, left, left); if (r) return r; }
-  if (rows.length) { const r = split('y1', rows[0].at, () => col, () => col); if (r) return r; }
-  boxes.forEach(b => { b.col = col; }); return [...boxes].sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0);
+  const cols = gaps('x0', 'x1').filter(g => g.size >= fs * 0.9), rows = gaps('y0', 'y1');
+  if (cols.length && Math.max(...boxes.map(b => b.y1)) - Math.min(...boxes.map(b => b.y0)) >= fs * 3) {
+    const at = cols[0].at, a = boxes.filter(b => b.x1 <= at), b2 = boxes.filter(b => b.x1 > at);
+    if (a.length && b2.length) return [...wordCut(a, fs, Math.min(...a.map(b => b.x0)), ++WD_REG), ...wordCut(b2, fs, Math.min(...b2.map(b => b.x0)), ++WD_REG)];
+  }
+  if (rows.length) {
+    const at = rows[0].at, a = boxes.filter(b => b.y1 <= at), b2 = boxes.filter(b => b.y1 > at);
+    if (a.length && b2.length) return [...wordCut(a, fs, col, reg), ...wordCut(b2, fs, col, reg)];
+  }
+  return leaf();
 }
-// consecutive lines of one column → paragraphs: the same size and weight, normal spacing, the same left edge (or a
-// first-line indent), and the line before running on (a short line ends a paragraph). Lines are joined with a space,
-// none between Chinese characters; a hyphen at a line end before a small letter goes.
+// consecutive lines of one region → paragraphs: the same size and weight, normal spacing, the same left edge (or the first
+// line set in), and the line before reaching the right edge of the region's lines of its size (a short line ends a
+// paragraph: lists, addresses, headings; a wider title does not count). Lines are joined with a space, none between
+// Chinese characters; a hyphen at a line end before a small letter goes.
 function wordParagraphs(seq){
+  const lines = seq.filter(b => b.runs), right = l => Math.max(...lines.filter(o => o.reg === l.reg && Math.abs(o.fs - l.fs) <= l.fs * 0.15).map(o => o.x1));
   const out = []; let cur = null;
   const close = () => { if (cur) out.push(cur); cur = null; };
   for (const b of seq) {
     if (!b.runs) { close(); out.push(b); continue; }
-    const last = cur && cur.lines[cur.lines.length - 1], ref = cur && cur.lines[cur.lines.length > 1 ? 1 : 0];
-    const joins = !!last && b.col === last.col && Math.abs(b.fs - last.fs) <= last.fs * 0.15 && b.y0 - last.y1 < last.fs * 0.8 && b.y0 > last.y0
-      && Math.abs(b.x0 - ref.x0) < last.fs * (cur.lines.length > 1 ? 1 : 3) && last.x1 > Math.max(...cur.lines.map(l => l.x1)) - last.fs * 4
-      && b.runs[0].bold === last.runs[last.runs.length - 1].bold;
-    if (!joins) { close(); cur = {lines:[b], runs:b.runs.map(r => ({...r})), y0:b.y0, y1:b.y1, col:b.col}; continue; }
+    const last = cur && cur.lines[cur.lines.length - 1], first = cur && cur.lines[0];
+    const aligned = !!cur && (cur.lines.length > 1 ? Math.abs(b.x0 - cur.lines[1].x0) < last.fs
+      : Math.abs(b.x0 - first.x0) < last.fs || (b.x0 < first.x0 && first.x0 - b.x0 <= last.fs * 3));   // (or the first line set in)
+    const joins = aligned && b.reg === last.reg && Math.abs(b.fs - last.fs) <= last.fs * 0.15 && b.y0 - last.y1 < last.fs * 0.8 && b.y0 > last.y0
+      && last.x1 >= right(last) - last.fs * 4 && b.runs[0].bold === last.runs[last.runs.length - 1].bold;
+    if (!joins) { close(); cur = {lines:[b], runs:b.runs.map(r => ({...r})), y0:b.y0, y1:b.y1, col:b.col, reg:b.reg}; continue; }
     const pc = last.text.slice(-1), nc = b.text[0], tail = cur.runs[cur.runs.length - 1];
-    let runs = b.runs.map(r => ({...r}));
+    const runs = b.runs.map(r => ({...r}));
     if (pc === '-' && /[a-z]/.test(nc)) tail.text = tail.text.slice(0, -1);
     else if (!(WD_CJK.test(pc) || WD_CJK.test(nc) || pc === ' ' || nc === ' ')) runs[0].text = ' ' + runs[0].text;
-    runs.forEach(r => { const p = cur.runs[cur.runs.length - 1]; if (p.size === r.size && p.bold === r.bold && p.italic === r.italic && p.name === r.name) p.text += r.text; else cur.runs.push(r); });
+    runs.forEach(r => { const p = cur.runs[cur.runs.length - 1]; if (['size', 'bold', 'italic', 'name', 'sup'].every(q => p[q] === r[q])) p.text += r.text; else cur.runs.push(r); });
     cur.lines.push(b); cur.y1 = b.y1;
   }
   close();
@@ -10567,23 +10653,40 @@ async function wordOcrLines(page){
 }
 // one page → one section of the Word file: its size, margins from where the content lies, its paragraphs and pictures.
 // tbs: the page's text boxes (flattenForExport), each a block of its own placed by where it lies, each of its lines a
-// paragraph. A picture covering most of a page with no text is a scan: read by OCR (ocr) or kept as one picture; one with
-// text on it (a scan that has its text) is left out, or the text would show twice.
+// paragraph. A picture covering most of the page decides what the page is: its text drawn invisibly → a scan that has its
+// text (the text, not the picture, or it would show twice); little or no visible text → a scan, read by OCR (ocr) — a
+// photo that gives no text stays a picture — or kept as one picture with everything on it; much visible text → an ordinary
+// page with a large picture (both kept).
 async function wordSection(page, tbs = [], {ocr = true, reading = () => {}} = {}){
-  const vp = page.getViewport({scale:1}), {items, ops} = await wordItems(page, vp);
-  let lines = wordLines(items), pics = imageBoxesOf(ops, vp.transform, vp.width, vp.height);
-  const big = pics.find(b => b.w * b.h >= vp.width * vp.height * 0.6);
-  if (big && items.length) pics = pics.filter(b => b !== big);
-  else if (big && ocr) { reading(); lines = await wordOcrLines(page); pics = pics.filter(b => b !== big); }
+  const vp = page.getViewport({scale:1}), wi = await wordItems(page, vp), ops = wi.ops;
+  let items = wi.items, pics = imageBoxesOf(ops, vp.transform, vp.width, vp.height);
+  const big = pics.find(b => b.w * b.h >= vp.width * vp.height * 0.6), tg = textGlyphs(ops);
+  if (big && tg.hidden > 0 && tg.hidden >= tg.shown) pics = pics.filter(b => b !== big);
+  else if (big && tg.shown < 30) {
+    items = [];
+    if (ocr) {
+      reading();
+      const ol = await wordOcrLines(page);
+      if (ol.reduce((n, l) => n + l.text.replace(/\s/g, '').length, 0) >= 5) {
+        items = ol.map(l => ({str:l.text, x:l.x0, w:l.x1 - l.x0, base:l.base, fs:l.fs, top:l.y0, bottom:l.y1, bold:false, italic:false, name:''}));
+        pics = pics.filter(b => b !== big);
+      }
+    }
+  }
   const PPT = 2, cv = pics.length ? await wordRender(page, PPT) : null;   // pictures at 144 dpi, as they show on the page
   const imgs = [];
   for (const b of pics) imgs.push({x0:b.x, y0:b.y, x1:b.x + b.w, y1:b.y + b.h, pic:{png:await wordCrop(cv, PPT, b), w:b.w, h:b.h}});
   if (cv) cv.width = cv.height = 0;
   const boxes = tbs.map(t => { const r = vp.convertToViewportRectangle(t.rect); return {x0:Math.min(r[0], r[2]), y0:Math.min(r[1], r[3]), x1:Math.max(r[0], r[2]), y1:Math.max(r[1], r[3]), tb:t}; });
-  const all = [...lines, ...boxes, ...imgs], fs = lines.length ? lines.map(l => l.fs).sort((a, b) => a - b)[lines.length >> 1] : 12;
-  const seq = wordCut(all, fs, null), paras = wordParagraphs(seq);
-  const m = v => Math.max(18, Math.min(72, v)), has = all.length > 0;
-  const margin = has ? {l:m(Math.min(...all.map(b => b.x0))), t:m(Math.min(...all.map(b => b.y0))), r:m(vp.width - Math.max(...all.map(b => b.x1))), b:m(vp.height - Math.max(...all.map(b => b.y1)))} : {l:72, t:72, r:72, b:72};
+  const pieces = items.map(it => ({...it, x0:it.x, x1:it.x + it.w, y0:it.top, y1:it.bottom}));
+  const fs = pieces.length ? pieces.map(p => p.fs).sort((a, b) => a - b)[pieces.length >> 1] : 12;
+  const seq = []; let run = [];
+  const flush = () => { if (run.length) { seq.push(...wordLines(run)); run = []; } };
+  for (const b of wordCut([...pieces, ...boxes, ...imgs], fs)) { if (b.str != null) run.push(b); else { flush(); seq.push(b); } }
+  flush();
+  const paras = wordParagraphs(seq);
+  const m = v => Math.max(18, Math.min(72, v)), has = seq.length > 0;
+  const margin = has ? {l:m(Math.min(...seq.map(b => b.x0))), t:m(Math.min(...seq.map(b => b.y0))), r:m(vp.width - Math.max(...seq.map(b => b.x1))), b:m(vp.height - Math.max(...seq.map(b => b.y1)))} : {l:72, t:72, r:72, b:72};
   const mid = (margin.l + vp.width - margin.r) / 2, right = vp.width - margin.r;
   let prev = margin.t; const blocks = [];
   for (const p of paras) {
@@ -10598,31 +10701,36 @@ async function wordSection(page, tbs = [], {ocr = true, reading = () => {}} = {}
         runs:ln.filter(r => r.text).map(r => { const [font, ea] = wordFonts(r.font || 'PDFE Sans'); return {text:r.text, size:r.size || 12, bold:!!r.bold, italic:!!r.italic, underline:!!r.underline, color:r.color, font, ea}; })}));
       continue;
     }
-    const l0 = p.lines[0], one = p.lines.length === 1;
+    const l0 = p.lines[0], l1 = p.lines[1], one = p.lines.length === 1, from = Math.max(margin.l, p.col ?? margin.l);
     const align = one && Math.abs((l0.x0 + l0.x1) / 2 - mid) < l0.fs && l0.x0 - margin.l > l0.fs * 3 ? 'center' : one && Math.abs(l0.x1 - right) < l0.fs && l0.x0 - margin.l > l0.fs * 6 ? 'right' : 'left';
+    const setIn = !!l1 && l0.x0 - l1.x0 > l0.fs * 0.5;   // the first line set in
     const pitch = one ? 0 : (p.lines[p.lines.length - 1].base - l0.base) / (p.lines.length - 1);
-    blocks.push({type:'p', align, before, indent:align === 'left' ? Math.max(0, l0.x0 - Math.max(margin.l, p.col ?? margin.l)) : 0, line:pitch,
-      runs:p.runs.map(r => { const [font, ea] = wordFonts(r.name); return {text:r.text, size:r.size, bold:r.bold, italic:r.italic, font, ea}; })});
+    blocks.push({type:'p', align, before, line:pitch, indent:align === 'left' ? Math.max(0, (setIn ? l1.x0 : l0.x0) - from) : 0, firstLine:align === 'left' && setIn ? l0.x0 - l1.x0 : 0,
+      runs:p.runs.map(r => { const [font, ea] = wordFonts(r.name); return {text:r.text, size:r.size, bold:r.bold, italic:r.italic, sup:r.sup, font, ea}; })});
   }
   return {w:vp.width, h:vp.height, margin, blocks};
 }
 
 // .docx writing: OOXML parts in a zip (makeZip, the parts deflated, the pictures stored)
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-// sections [{w, h, margin:{t, r, b, l}, blocks:[{type:'p', align, before, indent, line, runs:[{text, size, bold, italic, underline, color, font, ea}]}
+// sections [{w, h, margin:{t, r, b, l}, blocks:[{type:'p', align, before, indent, firstLine, line, runs:[{text, size, bold, italic, underline, sup, color, font, ea}]}
 //   | {type:'img', png, w, h, before, indent}]}] (points) → a .docx (a Blob): one section per page, page breaks between
 function docxBytes(sections, meta = {}){
   const xe = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;'}[c])).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f￾￿]/g, '');
   const tw = pt => Math.round(pt * 20), emu = pt => Math.round(pt * 12700), media = [], body = []; let pic = 0;
   const run = r => {
     const pr = [];
+    // (in the schema's order: rFonts, b, i, color, sz, u, vertAlign — Word is lenient, stricter readers are not)
     if (r.font || r.ea) pr.push(`<w:rFonts${r.font ? ` w:ascii="${xe(r.font)}" w:hAnsi="${xe(r.font)}"` : ''}${r.ea ? ` w:eastAsia="${xe(r.ea)}"` : ''}/>`);
-    if (r.bold) pr.push('<w:b/><w:bCs/>'); if (r.italic) pr.push('<w:i/><w:iCs/>'); if (r.underline) pr.push('<w:u w:val="single"/>');
+    if (r.bold) pr.push('<w:b/><w:bCs/>'); if (r.italic) pr.push('<w:i/><w:iCs/>');
     if (/^#[0-9a-f]{6}$/i.test(r.color || '') && !/^#0{6}$/.test(r.color)) pr.push(`<w:color w:val="${r.color.slice(1).toUpperCase()}"/>`);
     if (r.size) { const hp = Math.max(2, Math.round(r.size * 2)); pr.push(`<w:sz w:val="${hp}"/><w:szCs w:val="${hp}"/>`); }
+    if (r.underline) pr.push('<w:u w:val="single"/>'); if (r.sup) pr.push('<w:vertAlign w:val="superscript"/>');
     return `<w:r>${pr.length ? `<w:rPr>${pr.join('')}</w:rPr>` : ''}<w:t xml:space="preserve">${xe(r.text)}</w:t></w:r>`;
   };
-  const ppr = (b, extra = '') => `<w:pPr>${b.align && b.align !== 'left' ? `<w:jc w:val="${b.align}"/>` : ''}<w:spacing w:before="${tw(Math.max(0, b.before || 0))}" w:after="0"${b.line ? ` w:line="${tw(b.line)}" w:lineRule="atLeast"` : ''}/>${b.indent ? `<w:ind w:left="${tw(Math.max(0, b.indent))}"/>` : ''}${extra}</w:pPr>`;
+  const ppr = (b, extra = '') => `<w:pPr><w:spacing w:before="${tw(Math.max(0, b.before || 0))}" w:after="0"${b.line ? ` w:line="${tw(b.line)}" w:lineRule="atLeast"` : ''}/>`
+    + (b.indent || b.firstLine ? `<w:ind w:left="${tw(Math.max(0, b.indent || 0))}"${b.firstLine ? ` w:firstLine="${tw(b.firstLine)}"` : ''}/>` : '')
+    + `${b.align && b.align !== 'left' ? `<w:jc w:val="${b.align}"/>` : ''}${extra}</w:pPr>`;   // (spacing, ind, jc, sectPr: the schema's order)
   const sect = sc => { const m = sc.margin || {t:72, r:72, b:72, l:72};
     return `<w:sectPr><w:type w:val="nextPage"/><w:pgSz w:w="${tw(sc.w)}" w:h="${tw(sc.h)}"${sc.w > sc.h ? ' w:orient="landscape"' : ''}/><w:pgMar w:top="${tw(m.t)}" w:right="${tw(m.r)}" w:bottom="${tw(m.b)}" w:left="${tw(m.l)}" w:header="0" w:footer="0" w:gutter="0"/></w:sectPr>`; };
   sections.forEach((sc, k) => {

@@ -2,7 +2,7 @@
 // Microsoft Word when it is installed, otherwise by the built-in converter (text → paragraphs, sizes, bold, italic,
 // pictures, scanned pages). The save dialog is answered by the test; the .docx is unzipped and read.
 import { launchPath, TMP, ROOT } from './_env.mjs';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFString, PDFOperator, StandardFonts, rgb, pushGraphicsState, popGraphicsState, beginText, endText, setFontAndSize, setTextRenderingMode, TextRenderingMode, moveText, showText } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import zlib from 'zlib';
 import fs from 'fs';
@@ -28,6 +28,21 @@ const xmlText = s => s.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&g
 // the paragraphs of document.xml: their text and their raw XML
 const paras = xml => (xml.match(/<w:p>[\s\S]*?<\/w:p>|<w:p [\s\S]*?<\/w:p>/g) || []).map(x => ({x, text:xmlText((x.match(/<w:t[^>]*>[\s\S]*?<\/w:t>/g) || []).join(''))})).filter(p => p.text || /<w:drawing>/.test(p.x));
 
+// children of w:pPr / w:rPr out of the schema's order (ECMA-376 CT_PPr / CT_RPr), as "parent: tag after tag"
+const P_ORDER = ['w:pStyle', 'w:keepNext', 'w:keepLines', 'w:pageBreakBefore', 'w:widowControl', 'w:numPr', 'w:pBdr', 'w:shd', 'w:tabs', 'w:spacing', 'w:ind', 'w:jc', 'w:rPr', 'w:sectPr'];
+const R_ORDER = ['w:rStyle', 'w:rFonts', 'w:b', 'w:bCs', 'w:i', 'w:iCs', 'w:caps', 'w:strike', 'w:vanish', 'w:color', 'w:spacing', 'w:w', 'w:kern', 'w:position', 'w:sz', 'w:szCs', 'w:highlight', 'w:u', 'w:effect', 'w:shd', 'w:vertAlign', 'w:lang'];
+const orderFaults = xml => {
+  const out = [];
+  for (const [tag, order] of [['w:pPr', P_ORDER], ['w:rPr', R_ORDER]]) {
+    for (const m of xml.matchAll(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'g'))) {
+      let inner = m[1]; if (tag === 'w:pPr') inner = inner.replace(/<w:sectPr>[\s\S]*?<\/w:sectPr>/g, '<w:sectPr/>').replace(/<w:rPr>[\s\S]*?<\/w:rPr>/g, '<w:rPr/>');
+      const kids = [...inner.matchAll(/<(w:[A-Za-z]+)[\s/>]/g)].map(k => k[1]);
+      for (let k = 1; k < kids.length; k++) if (order.indexOf(kids[k]) < order.indexOf(kids[k - 1])) out.push(`${tag}: ${kids[k]} after ${kids[k - 1]}`);
+    }
+  }
+  return [...new Set(out)];
+};
+
 // page 1: a title, two English paragraphs, a Chinese one; page 2 landscape; page 3 turned by /Rotate 90 (a text box goes there)
 const doc = await PDFDocument.create(); doc.registerFontkit(fontkit);
 const H = await doc.embedFont(StandardFonts.Helvetica), HB = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -40,12 +55,14 @@ const smallPng = (() => { const W = 40, Hh = 20, raw = Buffer.alloc((W * 3 + 1) 
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ih), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]); })();
 const p1 = doc.addPage([595, 842]), title = 'Quarterly Report';
 p1.drawText(title, {x:(595 - HB.widthOfTextAtSize(title, 24)) / 2, y:770, size:24, font:HB});
-p1.drawText('The first paragraph has two lines of text that', {x:72, y:720, size:12, font:H});
-p1.drawText('continue on the second line.', {x:72, y:705, size:12, font:H});
-p1.drawText('Second paragraph: A&B <x> are kept, and', {x:72, y:675, size:12, font:H});
-p1.drawText('it ends here.', {x:72, y:660, size:12, font:H});
-p1.drawText('第一行的中文字寫到這裡', {x:72, y:630, size:12, font:TC});
-p1.drawText('第二行接在後面。', {x:72, y:614, size:12, font:TC});
+// paragraphs set as a program sets them: lines run to the right margin (451 pt wide), the last one shorter
+const wrap = (text, font, w, cjk = false) => { const parts = cjk ? [...text] : text.split(' '), out = []; let line = '';
+  for (const p of parts) { const t = line ? line + (cjk ? '' : ' ') + p : p; if (font.widthOfTextAtSize(t, 12) > w) { out.push(line); line = p; } else line = t; } out.push(line); return out; };
+const PARA1 = 'The first paragraph has enough words in it to run from the left margin all the way across to the right margin, and then it continues on the second line.';
+const PARA2 = 'Second paragraph: A&B <x> are kept, and this line too runs on across the whole width of the page before it ends here.';
+const PARA3 = '第一行的中文字從左邊一直寫到右邊的邊界才換行，第二行接在後面，中間不應該多出空白，這樣才是一個完整的段落。';
+let yy = 720;
+for (const [text, font, cjk] of [[PARA1, H, false], [PARA2, H, false], [PARA3, TC, true]]) { wrap(text, font, 451, cjk).forEach(l => { p1.drawText(l, {x:72, y:yy, size:12, font}); yy -= 15; }); yy -= 15; }
 doc.addPage([842, 595]).drawText('Page two', {x:72, y:520, size:12, font:H});
 doc.addPage([595, 842]).setRotation({type:'degrees', angle:90});
 const PDF = path.join(TMP, 'word.pdf'); fs.writeFileSync(PDF, await doc.save());
@@ -55,6 +72,7 @@ const win = await app.firstWindow(); win.on('pageerror', e => console.log('PAGEE
 await win.waitForTimeout(3000);
 await win.waitForFunction(() => !!(window.__pdfapp && window.__pdfapp.S.pages.length), null, {timeout:30000});
 const Ev = win.evaluate.bind(win);
+const openOther = await Ev(p => window.desktop.openPath(p), path.join(TMP, 'other.exe'));
 // the save dialog: answered with a file in TMP
 const answerSave = out => app.evaluate(({ipcMain}, out) => { ipcMain.removeHandler('file:choose-save'); ipcMain.handle('file:choose-save', () => out); }, out);
 const waitFile = async (f, ms = 120000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (fs.existsSync(f) && fs.statSync(f).size > 0) { await win.waitForTimeout(300); return true; } await win.waitForTimeout(250); } return false; };
@@ -79,6 +97,10 @@ await win.click('[data-tool="textbox"]'); await win.waitForTimeout(300);
 const pb = await win.locator('.page').nth(2).boundingBox();
 await win.mouse.click(pb.x + 120, pb.y + 140); await win.waitForTimeout(300);
 await win.keyboard.type('旋轉頁的方塊'); await win.waitForTimeout(200);
+await win.keyboard.press('Control+A'); await win.waitForTimeout(150);
+await win.click('#hint [data-tb="underline"]'); await win.waitForTimeout(200);
+await win.click('#hint [data-tbc="color"]'); await win.waitForTimeout(200);
+await win.click('#cpMenu .cp-sw[data-v="#e03131"]'); await win.waitForTimeout(200);
 await win.keyboard.press('Escape'); await win.waitForTimeout(2500);
 const before = await Ev(() => ({undo:window.__pdfapp.S.undo.length, dirty:window.__pdfapp.S.dirty}));
 const nAnn = await Ev(async () => (await window.__pdfapp.getAnns(0)).filter(a => a.subtype === 'Stamp').length);
@@ -88,6 +110,7 @@ await win.click('[data-amenu="output"] .sp-arr'); await win.waitForTimeout(300);
 await win.click('#toolMenu button:has-text("Word 檔")'); await win.waitForTimeout(600);
 const d = await dlg();
 check('(setup) the dropped picture is an image annotation on page 1', nAnn === 1, nAnn);
+check('the bridge opens only a .docx this program saved, nothing else in an open folder', openOther === 'not allowed', openOther);
 check('輸出 ▾ 轉存 Word: 「轉存成 Word」; no Word on this computer: its choice is off and the built-in converter is chosen', !!d && d.title.includes('轉存成 Word') && d.wordOff && d.how === 'builtin' && d.note.includes('沒有 Word') && !d.go, d);
 await win.click('#wdGo');
 const made = await waitFile(OUT);
@@ -99,11 +122,14 @@ check('〔轉存〕: a .docx with all its parts; 「已轉存成 Word」', !!z &
 const xml = z ? z['word/document.xml'].toString('utf8') : '', P = paras(xml), texts = P.map(p => p.text);
 const at = t => P.find(p => p.text.includes(t));
 check('the paragraphs, in order: the title, two English ones (lines joined with a space), the Chinese one (no space), the dropped picture, Page two, the text box',
-  JSON.stringify(texts) === JSON.stringify(['Quarterly Report', 'The first paragraph has two lines of text that continue on the second line.', 'Second paragraph: A&B <x> are kept, and it ends here.', '第一行的中文字寫到這裡第二行接在後面。', '', 'Page two', '旋轉頁的方塊'])
+  JSON.stringify(texts) === JSON.stringify(['Quarterly Report', PARA1, PARA2, PARA3, '', 'Page two', '旋轉頁的方塊'])
   && /<w:drawing>/.test(P[4].x) && Object.keys(z || {}).filter(n => n.startsWith('word/media/')).length === 1, texts);
 check('the title is bold, 24 pt and centred; & < > are escaped in the XML', !!at('Quarterly') && /<w:b\/>/.test(at('Quarterly').x) && /<w:sz w:val="48"\/>/.test(at('Quarterly').x) && /<w:jc w:val="center"\/>/.test(at('Quarterly').x) && xml.includes('A&amp;B &lt;x&gt;'), at('Quarterly') && at('Quarterly').x.slice(0, 400));
 const sects = xml.match(/<w:sectPr>[\s\S]*?<\/w:sectPr>/g) || [];
 check('one section per page, the second one landscape (842 × 595 pt)', sects.length === 3 && /w:w="16840" w:h="11900" w:orient="landscape"/.test(sects[1]) && !/landscape/.test(sects[0]), sects.map(s => s.slice(0, 160)));
+const tbRun = (at('旋轉頁的方塊') || {x:''}).x;
+check('a styled run (the red, underlined text box): its colour and underline written; pPr and rPr children in the schema\'s order',
+  /<w:color w:val="E03131"\/>/.test(tbRun) && /<w:u w:val="single"\/>/.test(tbRun) && orderFaults(xml).length === 0, {faults:orderFaults(xml), run:tbRun.slice(0, 300)});
 const after = await Ev(() => ({undo:window.__pdfapp.S.undo.length, dirty:window.__pdfapp.S.dirty}));
 check('the document itself is unchanged (no undo step, same unsaved state)', JSON.stringify(before) === JSON.stringify(after), {before, after});
 
@@ -118,11 +144,18 @@ q1.drawText('Before the picture.', {x:72, y:760, size:12, font:H2});
 q1.drawImage(pic, {x:72, y:620, width:160, height:80});
 q1.drawText('After the picture.', {x:72, y:590, size:12, font:H2});
 d2.addPage([595, 842]).drawImage(scan, {x:0, y:0, width:595, height:842});   // a scanned page
-const q3 = d2.addPage([595, 842]); q3.drawImage(scan, {x:0, y:0, width:595, height:842});   // a scanned page that already has its text
-q3.drawText('HIDDEN LAYER TEXT', {x:72, y:700, size:24, font:H2, color:rgb(1, 1, 1)});
+const q3 = d2.addPage([595, 842]); q3.drawImage(scan, {x:0, y:0, width:595, height:842});   // a scanned page that already has its text (invisible, mode 3)
+q3.drawText(' ', {x:0, y:0, size:1, font:H2});   // (puts the font into the page's resources)
+const fk = q3.node.newFontDictionary(H2.name, H2.ref);
+q3.pushOperators(pushGraphicsState(), beginText(), setFontAndSize(fk, 24), setTextRenderingMode(TextRenderingMode.Invisible), moveText(72, 700), showText(H2.encodeText('HIDDEN LAYER TEXT')), endText(), popGraphicsState());
+const q4 = d2.addPage([595, 842]); q4.drawImage(scan, {x:0, y:0, width:595, height:842});   // a scan with a page number on it (real text)
+q4.drawText('Page 7', {x:280, y:30, size:10, font:H2});
+const photo = await d2.embedPng(Buffer.from((await Ev(() => { const c = document.createElement('canvas'); c.width = 600; c.height = 850; const g = c.getContext('2d'), gr = g.createLinearGradient(0, 0, 600, 850);
+  gr.addColorStop(0, '#2a6fdb'); gr.addColorStop(1, '#f2c14e'); g.fillStyle = gr; g.fillRect(0, 0, 600, 850); return c.toDataURL('image/png'); })).split(',')[1], 'base64'));
+d2.addPage([595, 842]).drawImage(photo, {x:0, y:0, width:595, height:842});   // a full-page photo: no text in it
 const PDF2 = path.join(TMP, 'word2.pdf'); fs.writeFileSync(PDF2, await d2.save());
 await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), PDF2);
-await win.waitForFunction(() => window.__pdfapp.S.pages.length === 3 && /word2/.test(window.__pdfapp.S.name), null, {timeout:30000}); await win.waitForTimeout(1500);
+await win.waitForFunction(() => window.__pdfapp.S.pages.length === 5 && /word2/.test(window.__pdfapp.S.name), null, {timeout:30000}); await win.waitForTimeout(1500);
 const exportTo = async (out, {ocr = true} = {}) => {
   await answerSave(out);
   await win.click('[data-amenu="output"] .sp-arr'); await win.waitForTimeout(300);
@@ -137,12 +170,46 @@ const z2 = await exportTo(path.join(TMP, 'pics.docx')), x2 = z2 ? z2['word/docum
 const media2 = z2 ? Object.keys(z2).filter(n => n.startsWith('word/media/')) : [];
 const iPic = P2.findIndex(p => /<w:drawing>/.test(p.x));
 check('a picture: in word/media as a PNG, placed between the paragraphs above and below it',
-  media2.length === 1 && z2[media2[0]].subarray(1, 4).toString() === 'PNG' && iPic > 0 && P2[iPic - 1].text === 'Before the picture.' && P2[iPic + 1].text === 'After the picture.', {media2, texts:P2.map(p => p.text || '[picture]')});
+  media2.length === 2 && z2[media2[0]].subarray(1, 4).toString() === 'PNG' && iPic > 0 && P2[iPic - 1].text === 'Before the picture.' && P2[iPic + 1].text === 'After the picture.', {media2, texts:P2.map(p => p.text || '[picture]')});
 check('a scanned page, 文字辨識 on: its text is read (no picture of it); a scanned page that has its text already: that text, not the picture',
-  /SCAN/.test(x2) && /12345/.test(x2) && P2.some(p => p.text === 'HIDDEN LAYER TEXT') && media2.length === 1, P2.map(p => p.text || '[picture]'));
+  /SCAN/.test(x2) && /12345/.test(x2) && P2.some(p => p.text === 'HIDDEN LAYER TEXT'), P2.map(p => p.text || '[picture]'));
+check('a scan with only a page number on it is still read as a scan; a photo with no text in it stays a picture (nothing is lost)',
+  (x2.match(/SCAN TEST/g) || []).length === 2 && media2.length === 2 && /<w:drawing>/.test(P2[P2.length - 1].x), P2.map(p => p.text || '[picture]'));
 const z3 = await exportTo(path.join(TMP, 'scan.docx'), {ocr:false}), x3 = z3 ? z3['word/document.xml'].toString('utf8') : '';
 const media3 = z3 ? Object.keys(z3).filter(n => n.startsWith('word/media/')) : [];
-check('文字辨識 off: the scanned page is one picture of the whole page, and no text is made up', media3.length === 2 && !/SCAN/.test(x3) && /HIDDEN LAYER TEXT/.test(x3), {media3, texts:paras(x3).map(p => p.text || '[picture]')});
+check('文字辨識 off: each scanned page is one picture of the whole page (its page number in it), and no text is made up',
+  media3.length === 4 && !/SCAN/.test(x3) && !/Page 7/.test(x3) && /HIDDEN LAYER TEXT/.test(x3), {media3, texts:paras(x3).map(p => p.text || '[picture]')});
+// reading order: two columns 12 pt apart on one grid (with a footnote mark), a list, a one-line paragraph and an indented one;
+// page 2 holds text on a hidden layer
+const d4 = await PDFDocument.create(), H4 = await d4.embedFont(StandardFonts.Helvetica), c4 = d4.context;
+const r1 = d4.addPage([595, 842]), fill = (words, w) => { const out = []; let line = ''; for (const wd of words) { const t = line ? line + ' ' + wd : wd; if (H4.widthOfTextAtSize(t, 10) > w) { out.push(line); line = wd; } else line = t; } out.push(line); return out; };
+const tTitle = 'Two Column Study'; r1.drawText(tTitle, {x:(595 - H4.widthOfTextAtSize(tTitle, 18)) / 2, y:780, size:18, font:H4});
+const words = n => Array.from({length:n}, (_, k) => ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta'][k % 8] + (k + 1));
+const L4 = fill(['Left'].concat(words(30)), 216), R4 = fill(['Right'].concat(words(30)), 216);
+L4.forEach((t, k) => r1.drawText(t, {x:72, y:740 - k * 12, size:10, font:H4}));
+R4.forEach((t, k) => r1.drawText(t, {x:300, y:740 - k * 12, size:10, font:H4}));
+r1.drawText('1', {x:72 + H4.widthOfTextAtSize(L4[1], 10), y:728 + 3.5, size:6, font:H4});   // a footnote mark after the second left line
+['1. Apples', '2. Oranges', '3. Pears'].forEach((t, k) => r1.drawText(t, {x:72, y:640 - k * 12, size:10, font:H4}));
+r1.drawText('A short note.', {x:72, y:590, size:10, font:H4});
+const ind = fill(['Indented'].concat(words(20)), 432);
+r1.drawText(ind[0], {x:90, y:578, size:10, font:H4}); ind.slice(1).forEach((t, k) => r1.drawText(t, {x:72, y:566 - k * 12, size:10, font:H4}));
+const r2 = d4.addPage([595, 842]);
+r2.drawText('Visible text.', {x:72, y:760, size:12, font:H4});
+const ocg = c4.register(c4.obj({Type:'OCG', Name:PDFString.of('Secret')}));
+d4.catalog.set(PDFName.of('OCProperties'), c4.obj({OCGs:[ocg], D:{Order:[ocg], OFF:[ocg]}}));
+r2.node.Resources().set(PDFName.of('Properties'), c4.obj({oc1:ocg}));
+r2.pushOperators(PDFOperator.of('BDC', [PDFName.of('OC'), PDFName.of('oc1')]));
+r2.drawText('SECRET LAYER TEXT', {x:72, y:700, size:12, font:H4});
+r2.pushOperators(PDFOperator.of('EMC', []));
+const PDF4 = path.join(TMP, 'word4.pdf'); fs.writeFileSync(PDF4, await d4.save());
+await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), PDF4);
+await win.waitForFunction(() => window.__pdfapp.S.pages.length === 2 && /word4/.test(window.__pdfapp.S.name), null, {timeout:30000}); await win.waitForTimeout(1500);
+const z4 = await exportTo(path.join(TMP, 'order.docx')), x4 = z4 ? z4['word/document.xml'].toString('utf8') : '', T4 = paras(x4).map(p => p.text);
+const leftText = L4.join(' ').replace(L4[1], L4[1] + '1'), rightText = R4.join(' ');
+check('two columns 12 pt apart on one grid: the left column (with its footnote mark in place), then the right one', T4[0] === tTitle && T4[1] === leftText && T4[2] === rightText, T4.slice(0, 3));
+check('a list of short lines stays three paragraphs; a one-line paragraph keeps to itself, the indented paragraph after it stays whole',
+  JSON.stringify(T4.slice(3, 8)) === JSON.stringify(['1. Apples', '2. Oranges', '3. Pears', 'A short note.', ind.join(' ')]), T4.slice(3, 8));
+check('text on a hidden layer is not converted', /Visible text\./.test(x4) && !/SECRET/.test(x4), T4.slice(-2));
 const fonts = await Ev(() => ['ABCDEF+MingLiU', 'DFKaiShu-SB-Estd-BF', 'MicrosoftJhengHei-Bold', 'TimesNewRomanPSMT', 'Helvetica-Bold', 'SomethingElse'].map(n => window.__pdfapp.wordFonts(n)));
 check('font names → Windows fonts: 細明體, 標楷體, 正黑體, Times New Roman, Arial; others left to Word', JSON.stringify(fonts) === JSON.stringify([[null, '新細明體'], [null, '標楷體'], [null, '微軟正黑體'], ['Times New Roman', null], ['Arial', null], [null, null]]), fonts);
 // 取消 during a long conversion
@@ -177,6 +244,18 @@ await app.evaluate(({ipcMain}) => {
   ipcMain.removeHandler('app:open-path'); ipcMain.handle('app:open-path', (_e, p) => { global.__word.opened = p; return ''; });
 });
 await win.locator('.dtab').first().click(); await win.waitForTimeout(1200);
+await Ev(() => window.__pdfapp.scrollToPage(0)); await win.waitForTimeout(800);
+await win.click('[data-tool="textbox"]'); await win.waitForTimeout(300);
+const pb1 = await win.locator('.page').nth(0).boundingBox(), sc1 = await Ev(() => window.__pdfapp.S.scale);
+await win.mouse.click(pb1.x + 300 * sc1, pb1.y + 470 * sc1); await win.waitForTimeout(300);
+await win.keyboard.type('第一頁的方塊'); await win.waitForTimeout(200);
+await win.keyboard.press('Escape'); await win.waitForTimeout(2500);
+await Ev(() => window.__pdfapp.setTool('select')); await win.waitForTimeout(300);
+await win.keyboard.press('Control+F'); await win.waitForTimeout(600);
+await Ev(() => { const q = document.querySelector('#findQ'); q.value = 'Quarterly'; q.dispatchEvent(new Event('input', {bubbles:true})); }); await win.waitForTimeout(900);
+await win.click('#findBar [data-fa="rep"]'); await Ev(() => { document.querySelector('#findR').value = 'Annual'; });
+await win.click('#findBar [data-fa="all"]'); await win.waitForTimeout(4500);
+await win.keyboard.press('Escape'); await win.waitForTimeout(500);
 const OUT5 = path.join(TMP, 'byword.docx'); await answerSave(OUT5);
 await win.click('[data-amenu="output"] .sp-arr'); await win.waitForTimeout(300);
 await win.click('#toolMenu button:has-text("Word 檔")'); await win.waitForTimeout(800);
@@ -189,8 +268,9 @@ await win.waitForFunction(() => (document.querySelector('#wdGo') || {}).textCont
 const sentB64 = await app.evaluate(() => global.__word.sent), sentOut = await app.evaluate(() => global.__word.out);
 const sent = sentB64 ? Buffer.from(sentB64, 'base64') : null, sentDoc = sent ? await PDFDocument.load(sent) : null;
 const sentTexts = sent ? await pageTexts(sent) : [];
-check('Word gets the chosen pages (1 and 3) flattened: no annotations left, the text box written as real text', !!sentDoc && sentDoc.getPageCount() === 2
-  && sentDoc.getPages().every(pg => { const an = pg.node.Annots(); return !an || an.size() === 0; }) && /Quarterly Report/.test(sentTexts[0] || '') && /旋轉頁的方塊/.test((sentTexts[1] || '').replace(/\s/g, '')) && sentOut === OUT5,
+check('Word gets the chosen pages (1 and 3) flattened: no annotations left, both text boxes (one beside a picture) written as real text, the replaced word only in its new form',
+  !!sentDoc && sentDoc.getPageCount() === 2 && sentDoc.getPages().every(pg => { const an = pg.node.Annots(); return !an || an.size() === 0; })
+  && /Annual Report/.test(sentTexts[0] || '') && !/Quarterly/.test(sentTexts[0] || '') && /第一頁的方塊/.test((sentTexts[0] || '').replace(/\s/g, '')) && /旋轉頁的方塊/.test((sentTexts[1] || '').replace(/\s/g, '')) && sentOut === OUT5,
   {pages:sentDoc && sentDoc.getPageCount(), sentTexts, sentOut});
 await win.click('#wdGo'); await win.waitForTimeout(600);
 const opened = await app.evaluate(() => global.__word.opened), closed = !(await Ev(() => document.querySelector('#mask').classList.contains('show')));
@@ -205,11 +285,11 @@ const failed1 = await Ev(() => ({err:document.querySelector('#wdErr').textConten
 await win.click('#wdGo');
 const fb = await waitFile(OUT6), zf = fb ? unzip(fs.readFileSync(OUT6)) : null;
 check('Word fails: 「Word 轉換失敗：…」 and the built-in converter is chosen; 〔轉存〕 again makes the .docx that way',
-  failed1.err.includes('測試用的錯誤') && failed1.how === 'builtin' && failed1.go === '轉存' && !!zf && /Quarterly Report/.test(zf['word/document.xml'].toString('utf8')), {failed1, fb});
+  failed1.err.includes('測試用的錯誤') && failed1.how === 'builtin' && failed1.go === '轉存' && !!zf && /Annual Report/.test(zf['word/document.xml'].toString('utf8')) && !/Quarterly/.test(zf['word/document.xml'].toString('utf8')), {failed1, fb});
 await win.click('#wdCancel'); await win.waitForTimeout(300);
-const mainSrc = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8'), ps = (mainSrc.match(/const WORD_PS = `([\s\S]*?)`;/) || [])[1] || '';
-check('the script Word runs: paths from the environment, opened read-only without asking, saved as .docx, Word always closed, the PDF question turned off and back',
-  ps.includes('$env:PDFE_IN') && ps.includes('$env:PDFE_OUT') && ps.includes('Documents.Open($in, $false, $true, $false)') && /SaveAs2\(\$out, 16\)/.test(ps) && /finally[\s\S]*Quit\(/.test(ps) && /DisableConvertPdfWarning[\s\S]*Remove-ItemProperty/.test(ps), ps.slice(0, 200));
+const mainSrc = fs.readFileSync(path.join(ROOT, 'word.js'), 'utf8'), ps = (mainSrc.match(/const WORD_PS = `([\s\S]*?)`;/) || [])[1] || '';
+check('the script Word runs: paths from the environment, opened read-only without asking, saved as .docx, Word always closed',
+  ps.includes('$env:PDFE_IN') && ps.includes('$env:PDFE_OUT') && ps.includes('Documents.Open($in, $false, $true, $false)') && /SaveAs2\(\$out, 16\)/.test(ps) && /finally[\s\S]*Quit\(/.test(ps), ps.slice(0, 200));
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
