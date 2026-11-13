@@ -187,7 +187,8 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - **對到內容**：`imageDrawsIn(doc, i)` 用 pdf-lib 走頁面內容與它畫的表單（`csTokens`：內嵌圖片 `BI…EI` 現在是自己的運算子 `{op:'BI', s, e}`），列出每個畫圖指令：所在的內容（`holder`：頁面或表單）、位元組範圍、圖片單位正方形到頁面的矩陣 `M`、裁切、`full`／`box`（畫面座標）、像素大小。紅框與指令用 `full` 對（四邊差 ≤ 1.5 pt）。`imageKey`：同一物件或內容相同的副本＝同一張圖。
 - **刪除**（`deletePageImage`）：`findImageGroup` 找出點的那個紅框下的指令（疊在一起的都算）與全文件同一張圖的各處；多處先問〔只刪這一張〕〔全部 N 處都刪〕，看得到的範圍 ≥ 頁面 90% 先確認。指令換成空白（`editHolder`，頁面合併成一段串流）；「只這一張」而指令在被畫在多處的表單裡時，`cloneChain` 先複製表單再改。圖上看不見的文字（`removePageText(…, {invisibleOnly:true})`，繪製模式 3、7）一起刪；改過的頁面拿掉 `/Thumb`、`/PieceInfo`。`purgeImages`：沒有指令再畫的圖片，從走過的資源拿掉名稱，`reachableRefs` 確定沒人指到後才刪物件（含 `SMask`／`Mask`）。
 - **更換**（`replacePageImage`）：`pickImage()` → `openReplaceDialog`（預覽、保持比例／填滿、〔↺〕〔↻〕、只這一張／全部 N 處）→ 指令換成 `q T cm /PDFE_Im<n> Do Q`。`replaceArea`／`replacePlacement`：新圖在畫面上是正的，舊圖刻意的斜角（不是 90° 倍數）保留，90° 轉向與翻轉不帶過去；`T = M_new · M⁻¹`，所以新圖仍在舊圖的裁切裡。疊在一起的只換第一張、其他刪掉。
-- **另存時清理**：`saveAsNew(bytes, suffix, {clean = true})` 先 `pruneUnused`（從 trailer 的 `Root`、`Info`、`Encrypt` 標記找得到的物件，其他刪掉；沒東西可刪就原封不動）。`S.signed` 時不清；數位簽章在簽之前先清、簽好的不再動。
+- **另存時清理**：`saveAsNew(bytes, suffix, {clean = true})` 先 `pruneUnused`（從 trailer 的 `Root`、`Info`、`Encrypt` 標記找得到的物件，其他刪掉；沒東西可刪就原封不動）。照原樣存、不清的：加密的檔案（trailer 有 `/Encrypt`：pdf-lib 會把仍是密文的字串放進新的物件串流）、有數位簽章的（`hasSignature`：簽章欄位有 `/V`，或有 `/Perms`）、有 pdf-lib 讀不懂的物件的（`hasUnreadable`：`PDFInvalidObject`，它指到的東西看不到）；`S.signed` 時也不清。數位簽章在簽之前先清、簽好的不再動。`purgeImages` 在有讀不懂的物件時不刪任何物件。
+- 表單物件沒有自己的 `/Resources`（用畫它那一層的）：`addXObject` 先複製一份當時有效的資源（指令記在 `draw.res`，表單鏈記在 `chain[k].pres`）再加名稱。
 
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
@@ -331,6 +332,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 - 字型辨識：新安裝的字型要重開程式才讀得到。幾乎一樣的字型（Arial 與 Helvetica 系、新細明體與細明體）分數會非常接近，排序可能互換。Google 清單會過時（改名、下架的家族請求失敗會跳過，`scripts/check-google-fonts.mjs` 找得出來）。送到 Google 的是要比對的那幾個字（去重複、依碼位排序），不是原文。比對只用測試機上的字型與合成掃描驗證過，Windows 上幾百個字型的速度要實測；很緊的英文排版、離本字很遠的部首仍可能切錯（那個字會比不像而被排除）。
 - 文字辨識：一次只用一種書寫方向；整頁混有直書時，直書部分要另外框選並切到「直書」。直書的辨識率比橫書低一些（測試範例 9 個字錯 1 個）。
 - 安裝檔沒有程式碼簽章，Windows 會顯示 SmartScreen 警告。**使用者已決定不做程式碼簽章**（2026-11-12，看過 SignPath、Certum 開源憑證、Microsoft Store、商業 OV 憑證的比較後），不用再提。
+- 加密（只有擁有者密碼、不用密碼就能開）的 PDF，**修改後**另存時，pdf-lib 會把仍是密文的字串寫進新的物件串流，存出的檔案可能打不開（v1.0.35 審查發現，早就存在；另存時的清理已避開，修改的情形還沒處理，可改成這類檔案存檔時不用物件串流）。
 - `app/index.html` 是單一大檔。如果要拆成多個模組，app:// 協定和 CSP 已經支援 ES module。
 
 ### 使用者排定的待辦（依順序，一版一項）
