@@ -266,6 +266,28 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 @keyframes np{0%,70%{outline-color:var(--seal)}100%{outline-color:transparent}}
 .thumb.newpage .tc{outline:3px solid var(--seal);outline-offset:2px}
 .ex-grid{display:grid;grid-template-columns:minmax(300px,1fr) minmax(380px,1.15fr);gap:20px}
+.pr-grid{display:grid;grid-template-columns:minmax(320px,1.15fr) minmax(330px,1fr);gap:20px}
+.pr-prev{height:min(60vh,600px);display:flex;align-items:center;justify-content:center;background:var(--desk);border-radius:8px;overflow:hidden}
+.pr-prev canvas{box-shadow:0 2px 12px rgba(0,0,0,.28);background:#fff}
+.pr-nav{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:8px;font-size:13px;color:var(--ink2)}
+.pr-right{max-height:min(66vh,660px);overflow:auto;padding-right:4px}
+.pr-right .field{margin-bottom:7px}
+.pr-row .field.pr-copies{flex:0 0 92px;min-width:0}
+.pr-row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+.pr-row .field{flex:1;min-width:120px}
+.pr-row .chk{padding:0 0 10px}
+.pr-err{color:#c92a2a;font-size:12px;min-height:0;margin:-4px 0 8px}
+.pr-err:empty{display:none}
+.pr-sum{margin-right:auto;font-size:13px;color:var(--ink2)}
+#printRoot{display:none}
+@media print{
+  html,body{background:#fff!important;height:auto!important;overflow:visible!important;display:block!important}
+  body>*:not(#printRoot){display:none!important}
+  #printRoot{display:block!important}
+  .psheet{overflow:hidden;break-inside:avoid}
+  .psheet:not(:last-child){break-after:page}
+  .psheet img{display:block;width:100%;height:100%}
+}
 .ex-h{font-weight:700;font-size:13px;margin-bottom:8px;color:var(--ink)}
 .ex-pages{max-height:min(62vh,640px);--tw:104px}
 .ex-fmts{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
@@ -872,7 +894,7 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
   <div class="grp"><div class="btns">
     <button class="rb" data-act="open" title="開啟 (Ctrl+O)"><i data-i="open"></i>開啟</button>
     <button class="rb primary" data-act="save" data-need title="另存新檔 (Ctrl+S)：修改後的內容一律存成新檔案，不會覆蓋原檔"><i data-i="save"></i>另存新檔</button>
-    <button class="rb" data-act="exportImages" data-need title="將頁面轉存成 PNG、JPG、WebP、BMP、TIFF、GIF 圖片"><i data-i="toImage"></i>轉存圖片</button>
+    <button class="rb split" data-amenu="output" data-need title="輸出：點按執行，點 ▾ 選擇（列印、轉存圖片）"><span class="sp-main"></span><span class="sp-arr">▾</span></button>
   </div><div class="cap">檔案</div></div>
   <div class="grp"><div class="btns"><div class="rstack">
     <button class="rs" data-act="undo" id="bUndo" title="復原 (Ctrl+Z)"><i data-i="undo"></i>復原</button>
@@ -1050,6 +1072,7 @@ const FONT = '"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif';
 const ICONS = {
   open:'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
   save:'M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14',
+  print:'M7 9V4h10v5M7 17H5.5A2.5 2.5 0 0 1 3 14.5v-3A2.5 2.5 0 0 1 5.5 9h13a2.5 2.5 0 0 1 2.5 2.5v3a2.5 2.5 0 0 1-2.5 2.5H17M7 14h10v6H7z',
   undo:'M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11',
   redo:'m15 14 5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13',
   pageAdd:'M6 3h8l4 4v14H6zM14 3v4h4M12 11v6M9 14h6',
@@ -1960,6 +1983,7 @@ window.addEventListener('keydown', e => {
   if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); actions.open(); return; }
   if (!S.pdf) return;
   if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); actions.save(); return; }
+  if (mod && !e.shiftKey && e.code === 'KeyP') { e.preventDefault(); actions.print(); return; }
   if (isTyping(e)) return;
   if (e.code === 'Space') {
     e.preventDefault();
@@ -3366,7 +3390,8 @@ async function afterEdit(){}   // edits stay in the app until the user saves a n
 /* ---------------- page picker (shared by 減頁 and 插入PDF) ---------------- */
 function parseRange(txt, n){
   const out = new Set();
-  for (const part of String(txt).replace(/[，、；;\s]+/g, ',').split(',')) {
+  txt = String(txt).replace(/[０-９]/g, d => String.fromCharCode(d.charCodeAt(0) - 0xFEE0)).replace(/～/g, '~');
+  for (const part of txt.replace(/[，、；;\s]+/g, ',').split(',')) {
     if (!part) continue;
     const m = /^(\d*)\s*[-~－–]\s*(\d*)$/.exec(part);
     if (m) {
@@ -3749,6 +3774,7 @@ const actions = {
   cutPages(){ return copySelected(true); },
   pastePages(){ return pasteClip(); },
   exportImages(){ return openExportImages(); },
+  print(){ return openPrint(); },
   async delPage(){
     const n = S.pages.length;
     if (n <= 1) { toast('文件至少要保留一頁', 'err'); return; }
@@ -6973,6 +6999,7 @@ function showToolMenu(btn, which){
 document.addEventListener('pointerdown', e => { const m = $('#toolMenu'); if (m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('[data-menu],[data-amenu]')) m.style.display = 'none'; }, true);
 /* buttons that gather a few related actions (加頁、旋轉、簽署): the main part repeats the one used last, ▾ lists them all */
 const ACTION_MENUS = {
+  output:[{act:'print', ic:'print', label:'列印', long:'列印…（Ctrl+P）'}, {act:'exportImages', ic:'toImage', label:'轉存圖片', long:'將頁面轉存成圖片…'}],
   pageAdd:[{act:'addPage', ic:'pageAdd', label:'加頁', long:'加入空白頁…'}, {act:'insertPdf', ic:'pageIns', label:'插入PDF', long:'從 PDF 插入頁面…'}],
   rotate:[{act:'rotL', ic:'rotL', label:'左轉', long:'向左轉 90°'}, {act:'rotR', ic:'rotR', label:'右轉', long:'向右轉 90°'}],
   sign:[{tool:'signature', ic:'pen', label:'手寫簽名', long:'手寫簽名'}, {tool:'digisign', ic:'shield', label:'數位簽章', long:'數位簽章（憑證）'}, {act:'attach', ic:'clip', label:'附加檔案', long:'附加檔案到 PDF 內'}],
@@ -9405,6 +9432,234 @@ async function addLayerPicker(i, a){
 }
 
 /* ====================================================================
+   列印. The program lays the sides of paper out itself: printPlan says which pages go where on each side (in points) and
+   drawSide draws a side with pdf.js for printing (intent 'print': hidden layers and annotations marked not to print stay
+   out). The preview draws the same plan, so what is seen is what is printed. To print, every side is drawn at the chosen
+   dpi into #printRoot (shown only when printing; @page is the paper, no margins) and the main process prints the window to
+   the printer with the copies, collation, sides, colour and paper. 〔印表機內容…〕 sends the same through the system's
+   print window (trays, stapling and other settings of the printer's own).
+   ==================================================================== */
+const PAPERS = {A4:[210, 297], A3:[297, 420], A5:[148, 210], B4:[257, 364, 'B4（JIS）'], B5:[182, 257, 'B5（JIS）'], Letter:[215.9, 279.4], Legal:[215.9, 355.6]};
+const MM_PT = 72 / 25.4;
+const PRINT_KEY = 'pdfeditor.print.v1';
+// remembered for each printer; the pages, copies, odd/even and reverse start afresh every time
+const PRINT_DEF = {paper:'A4', orient:'auto', layout:'normal', scale:'fit', pct:100, margin:5, nup:4, order:'h', borders:false, bind:'left', bsides:'both',
+  ppct:200, overlap:10, marks:true, labels:true, duplex:'simplex', color:'color', annots:'all', quality:300};
+function printPrefs(){
+  try { const v = JSON.parse(localStorage.getItem(PRINT_KEY)); if (v && typeof v === 'object') return {last:typeof v.last === 'string' ? v.last : '', by:v.by && typeof v.by === 'object' ? v.by : {}}; } catch (_) {}
+  return {last:'', by:{}};
+}
+function printerSettings(name){
+  const b = printPrefs().by[name] || {}, out = {...PRINT_DEF};
+  Object.keys(PRINT_DEF).forEach(k => { if (b[k] !== undefined && typeof b[k] === typeof PRINT_DEF[k]) out[k] = b[k]; });
+  if (!PAPERS[out.paper]) out.paper = PRINT_DEF.paper;
+  return out;
+}
+function savePrintPrefs(st){
+  const p = printPrefs(); p.last = st.printer; p.by[st.printer] = Object.fromEntries(Object.keys(PRINT_DEF).map(k => [k, st[k]]));
+  try { localStorage.setItem(PRINT_KEY, JSON.stringify(p)); } catch (_) {}
+}
+// the pages to print, in page order: the range, then odd or even page numbers ([] when a custom range is wrong or empty)
+function printPages(st){
+  const n = S.pages.length; let list;
+  if (st.range === 'current') list = [S.current];
+  else if (st.range === 'selected') list = selectedPages();
+  else if (st.range === 'custom') { const r = parseRange(st.custom, n); list = r ? [...r].sort((a, b) => a - b) : []; }
+  else list = S.pages.map((_, i) => i);
+  if (st.subset === 'odd') list = list.filter(i => i % 2 === 0);
+  if (st.subset === 'even') list = list.filter(i => i % 2 === 1);
+  return list;
+}
+const pageWH = i => [S.pages[i].w, S.pages[i].h];   // as shown (its /Rotate applied), in points
+// the paper in points, upright or lying
+function paperOf(st, landscape){ const [a, b] = PAPERS[st.paper] || PAPERS.A4, w = Math.min(a, b) * MM_PT, h = Math.max(a, b) * MM_PT; return landscape ? {w:h, h:w} : {w, h}; }
+// a w×h page fitted into a bw×bh box: its scale, and a quarter turn when that makes it larger
+function fitIn(w, h, bw, bh){ const a = Math.min(bw / w, bh / h), b = Math.min(bw / h, bh / w); return b > a * 1.0001 ? {s:b, rot:90} : {s:a, rot:0}; }
+// a page placed at scale s (turned rot) with its middle at (cx, cy): an item of a side
+const placeAt = (i, s, rot, cx, cy) => { const [w, h] = pageWH(i), W = (rot % 180 ? h : w) * s, H = (rot % 180 ? w : h) * s; return {i, x:cx - W / 2, y:cy - H / 2, w:W, h:H, rot}; };
+/* every side of paper: {paper:{w, h}, sides:[{items:[{i (null: a blank page), x, y, w, h, rot, clip?}], label}], duplex, sheets} */
+function printPlan(st){
+  const pages = printPages(st), m = (+st.margin || 0) * MM_PT, first = pages.length ? pageWH(pages[0]) : [1, 1.4];
+  let paper, sides = [];
+  {   // 一般: a page on each side, turned a quarter when it lies the other way, in the middle
+    paper = paperOf(st, st.orient === 'landscape' || (st.orient === 'auto' && first[0] > first[1]));
+    const bw = Math.max(1, paper.w - 2 * m), bh = Math.max(1, paper.h - 2 * m);
+    sides = pages.map(i => {
+      const [w, h] = pageWH(i), f = fitIn(w, h, bw, bh);
+      const s = st.scale === 'shrink' ? Math.min(1, f.s) : st.scale === 'actual' ? 1 : st.scale === 'custom' ? clamp(+st.pct || 100, 1, 1000) / 100 : f.s;
+      return {items:[placeAt(i, s, f.rot, paper.w / 2, paper.h / 2)], label:`第 ${i + 1} 頁`};
+    });
+  }
+  if (st.reverse) sides.reverse();
+  const duplex = st.duplex || 'simplex';
+  return {paper, sides, duplex, sheets:duplex === 'simplex' ? sides.length : Math.ceil(sides.length / 2)};
+}
+// part of a page drawn for printing: the page at scale s (turned rot), the rectangle r of that picture (pixels)
+let PR_CACHE = new Map();
+async function printPiece(i, s, rot, annots, r, cache){
+  const key = cache && [S.version, i, s.toFixed(5), rot, annots, r.x, r.y, r.w, r.h].join('|');
+  if (cache && PR_CACHE.has(key)) return PR_CACHE.get(key);
+  const pg = S.pages[i], vp = pg.page.getViewport({scale:s, rotation:(pg.rot + rot) % 360});
+  const c = document.createElement('canvas'); c.width = Math.max(1, r.w); c.height = Math.max(1, r.h);
+  await pg.page.render({canvasContext:c.getContext('2d'), viewport:vp, transform:[1, 0, 0, 1, -r.x, -r.y], intent:'print',
+    annotationMode:annots ? pdfjsLib.AnnotationMode.ENABLE : pdfjsLib.AnnotationMode.DISABLE,
+    optionalContentConfigPromise:S.pdf.getOptionalContentConfig({intent:'print'})}).promise;
+  if (cache) { if (PR_CACHE.size > 40) PR_CACHE.clear(); PR_CACHE.set(key, c); }
+  return c;
+}
+function toGray(c){
+  const g = c.getContext('2d'), d = g.getImageData(0, 0, c.width, c.height), a = d.data;
+  for (let p = 0; p < a.length; p += 4) a[p] = a[p + 1] = a[p + 2] = Math.round(a[p] * .299 + a[p + 1] * .587 + a[p + 2] * .114);
+  g.putImageData(d, 0, 0);
+}
+// a side of paper drawn at k pixels a point: only what lies on the paper (inside its clip) is drawn
+async function drawSide(plan, side, k, st, {cache = false} = {}){
+  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(plan.paper.w * k)); c.height = Math.max(1, Math.round(plan.paper.h * k));
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+  for (const it of side.items) {
+    if (it.i == null) continue;   // a blank page
+    const lim = it.clip || {x:0, y:0, w:plan.paper.w, h:plan.paper.h};
+    const x0 = Math.max(it.x, lim.x), y0 = Math.max(it.y, lim.y), x1 = Math.min(it.x + it.w, lim.x + lim.w), y1 = Math.min(it.y + it.h, lim.y + lim.h);
+    if (x1 - x0 < .5 || y1 - y0 < .5) continue;
+    const [w, h] = pageWH(it.i), s = (it.rot % 180 ? it.w / h : it.w / w) * k;
+    const r = {x:Math.floor((x0 - it.x) * k), y:Math.floor((y0 - it.y) * k), w:Math.ceil((x1 - x0) * k), h:Math.ceil((y1 - y0) * k)};
+    const pc = await printPiece(it.i, s, it.rot, st.annots !== 'none', r, cache);
+    g.drawImage(pc, it.x * k + r.x, it.y * k + r.y);
+  }
+  if (st.color === 'gray') toGray(c);
+  return c;
+}
+
+// the print window
+let PR = null;   // {st, printers, plan, cur, err, job, body, seq}
+const printerLabel = name => !name ? '系統預設印表機' : ((PR && PR.printers.find(p => p.name === name)) || {label:name}).label;
+function printFormHTML(st, printers){
+  const opt = (v, t, cur) => `<option value="${esc(String(v))}"${String(v) === String(cur) ? ' selected' : ''}>${esc(t)}</option>`;
+  const n = S.pages.length, sel = (S.thumbSel || new Set()).size > 1;
+  return `<div class="pr-left"><div class="pr-prev" id="prPrev"></div>
+      <div class="pr-nav"><button class="mini" id="prBack" title="上一面">◀</button><span id="prPos"></span><button class="mini" id="prFwd" title="下一面">▶</button></div></div>
+    <div class="pr-right">
+      <div class="field"><label>印表機</label><select data-p="printer">${opt('', '系統預設印表機', st.printer)}${printers.map(p => opt(p.name, p.label, st.printer)).join('')}</select></div>
+      <div class="pr-row"><div class="field pr-copies"><label>份數</label><input type="number" data-p="copies" min="1" max="999" value="1"></div>
+        <div class="field"><label>頁面</label><select data-p="range">${opt('all', `全部（${n} 頁）`, 'all')}${opt('current', `目前頁（第 ${S.current + 1} 頁）`, '')}${sel ? opt('selected', `選取的頁（${S.thumbSel.size} 頁）`, '') : ''}${opt('custom', '自訂', '')}</select></div></div>
+      <div class="pr-row" data-show="extra"><div class="field" data-show="custom"><label>範圍</label><input type="text" data-p="custom" placeholder="例如 1-3, 5, 8-"></div>
+        <label class="chk" data-show="copies"><input type="checkbox" data-p="collate" checked> 自動分頁</label></div>
+      <div class="pr-err"></div>
+      <div class="pr-row"><div class="field"><label>奇偶頁</label><select data-p="subset">${opt('all', '所有頁', 'all')}${opt('odd', '只印奇數頁', '')}${opt('even', '只印偶數頁', '')}</select></div>
+        <label class="chk"><input type="checkbox" data-p="reverse"> 反向列印</label></div>
+      <div class="pr-row"><div class="field"><label>紙張</label><select data-p="paper">${Object.entries(PAPERS).map(([k, v]) => opt(k, v[2] || k, st.paper)).join('')}</select></div>
+        <div class="field"><label>方向</label><select data-p="orient">${opt('auto', '自動', st.orient)}${opt('portrait', '直向', st.orient)}${opt('landscape', '橫向', st.orient)}</select></div></div>
+      <div class="pr-row"><div class="field"><label>版面</label><select data-p="layout">${opt('normal', '一般（每面一頁）', st.layout)}</select></div>
+        <div class="field" data-lay="normal"><label>縮放</label><select data-p="scale">${opt('fit', '符合紙張', st.scale)}${opt('shrink', '只縮小過大的頁面', st.scale)}${opt('actual', '實際大小', st.scale)}${opt('custom', '自訂比例', st.scale)}</select></div>
+        <div class="field pr-copies" data-lay="normal" data-show="pct"><label>比例（%）</label><input type="number" data-p="pct" min="1" max="1000" value="${st.pct}"></div></div>
+      <div class="pr-row"><div class="field"><label>邊界</label><select data-p="margin">${opt(0, '無', st.margin)}${opt(5, '窄（5 mm）', st.margin)}${opt(10, '一般（10 mm）', st.margin)}</select></div>
+        <div class="field"><label>雙面</label><select data-p="duplex">${opt('simplex', '單面', st.duplex)}${opt('longEdge', '雙面（長邊翻頁）', st.duplex)}${opt('shortEdge', '雙面（短邊翻頁）', st.duplex)}</select></div></div>
+      <div class="pr-row"><div class="field"><label>色彩</label><select data-p="color">${opt('color', '彩色', st.color)}${opt('gray', '黑白（灰階）', st.color)}</select></div>
+        <div class="field"><label>內容</label><select data-p="annots">${opt('all', '文件與註解', st.annots)}${opt('none', '只有文件', st.annots)}</select></div>
+        <div class="field"><label>品質</label><select data-p="quality">${opt(150, '一般（150 dpi）', st.quality)}${opt(300, '精細（300 dpi）', st.quality)}</select></div></div>
+    </div>`;
+}
+// the form shows st (after another printer's settings came in)
+function fillPrintForm(){
+  const {st, body} = PR;
+  body.querySelectorAll('[data-p]').forEach(el => { const v = st[el.dataset.p]; if (v === undefined) return; if (el.type === 'checkbox') el.checked = !!v; else el.value = String(v); });
+}
+function wirePrint(){
+  const {body} = PR;
+  const take = e => {
+    const el = e.target.closest && e.target.closest('[data-p]'); if (!el || !PR) return;
+    const k = el.dataset.p, st = PR.st;
+    st[k] = el.type === 'checkbox' ? el.checked : (typeof PRINT_DEF[k] === 'number' ? +el.value : el.value);
+    if (k === 'printer') { Object.assign(st, printerSettings(st.printer)); fillPrintForm(); }
+    if (k === 'range' && st.range === 'custom') setTimeout(() => { const c = body.querySelector('[data-p="custom"]'); c && c.focus(); }, 0);
+    refreshPrint();
+  };
+  body.addEventListener('input', e => { if (e.target.type !== 'checkbox' && e.target.tagName !== 'SELECT') take(e); });
+  body.addEventListener('change', take);
+  body.querySelector('#prBack').onclick = () => { if (PR.cur > 0) { PR.cur--; refreshPrint(); } };
+  body.querySelector('#prFwd').onclick = () => { if (PR.plan && PR.cur < PR.plan.sides.length - 1) { PR.cur++; refreshPrint(); } };
+}
+// the plan, the messages and the preview after a change
+function refreshPrint(){
+  if (!PR) return;
+  const {st, body} = PR;
+  PR.err = st.range === 'custom' && !printPages({...st, subset:'all'}).length ? '頁面範圍的格式不對，例如：1-3, 5, 8-' : '';
+  PR.plan = printPlan(st);
+  const n = PR.plan.sides.length; PR.cur = clamp(PR.cur, 0, Math.max(0, n - 1));
+  body.querySelector('.pr-err').textContent = PR.err;
+  const shown = {custom:st.range === 'custom', pct:st.scale === 'custom', copies:+st.copies > 1};
+  shown.extra = shown.custom || shown.copies;
+  body.querySelectorAll('[data-show],[data-lay]').forEach(el => { el.style.display = (!el.dataset.lay || el.dataset.lay === st.layout) && (!el.dataset.show || shown[el.dataset.show]) ? '' : 'none'; });
+  const side = PR.plan.sides[PR.cur];
+  body.querySelector('#prPos').textContent = n ? `第 ${PR.cur + 1}／${n} 面${side && side.label ? '　' + side.label : ''}` : '沒有要列印的頁面';
+  body.querySelector('#prBack').disabled = PR.cur <= 0; body.querySelector('#prFwd').disabled = PR.cur >= n - 1;
+  const sum = $('#prSum'); if (sum && !PR.job) sum.textContent = n ? `共 ${PR.plan.sheets} 張紙${+st.copies > 1 ? ` × ${+st.copies} 份` : ''}` : '';
+  const go = $('#prGo'), sys = $('#prSys'); if (go && !PR.job) { go.disabled = sys.disabled = !!PR.err || !n || !DESK || !DESK.print; }
+  previewPrint();
+}
+async function previewPrint(){
+  const seq = PR.seq = (PR.seq || 0) + 1, box = PR.body.querySelector('#prPrev'), side = PR.plan.sides[PR.cur];
+  if (!side) { box.innerHTML = ''; return; }
+  const dpr = window.devicePixelRatio || 1, k = Math.min((box.clientWidth - 24) / PR.plan.paper.w, (box.clientHeight - 24) / PR.plan.paper.h);
+  const c = await drawSide(PR.plan, side, k * dpr, PR.st, {cache:true}).catch(e => { console.error(e); return null; });
+  if (!c || !PR || seq !== PR.seq) return;
+  c.style.width = c.width / dpr + 'px'; c.style.height = c.height / dpr + 'px';
+  box.innerHTML = ''; box.appendChild(c);
+}
+async function openPrint(){
+  if (!S.pdf || PR) return;
+  if (!(await settleEdits())) return;
+  let printers = [];
+  try { printers = DESK && DESK.print ? await DESK.print.printers() : []; } catch (e) { console.error(e); }
+  const prefs = printPrefs(), printer = printers.some(p => p.name === prefs.last) ? prefs.last : '';
+  PR = {st:{printer, ...printerSettings(printer), copies:1, collate:true, range:'all', custom:'', subset:'all', reverse:false}, printers, cur:0, plan:null, err:'', job:null};
+  const body = document.createElement('div'); body.id = 'prDlg'; body.className = 'pr-grid';
+  body.innerHTML = printFormHTML(PR.st, printers); PR.body = body;
+  await openModal({title:'列印', body, width:1060, buttons:[
+    {label:'取消', id:'prCancel', handler:() => { if (PR && PR.job) { PR.job.cancel = true; return; } return null; }},
+    {label:'印表機內容…', id:'prSys', handler:async () => (await runPrint({dialog:true})) ? true : undefined},
+    {label:'列印', id:'prGo', primary:true, handler:async () => (await runPrint({dialog:false})) ? true : undefined},
+  ], onOpen:(mb, mf) => { const sum = document.createElement('span'); sum.id = 'prSum'; sum.className = 'pr-sum'; mf.prepend(sum); wirePrint(); refreshPrint(); }});
+  if (PR && PR.job) PR.job.cancel = true;
+  PR = null; PR_CACHE.clear();
+}
+// every side drawn at the chosen dpi into the print view, then printed; 〔取消〕 stops it while the sides are being drawn
+async function runPrint({dialog}){
+  if (!PR || PR.job || PR.err || !PR.plan || !PR.plan.sides.length || !DESK || !DESK.print) return false;
+  const {st, plan} = PR, k = (+st.quality || 300) / 72, root = $('#printRoot'), job = PR.job = {cancel:false}, urls = [], sum = $('#prSum');
+  const stopped = () => job.cancel || !PR || PR.job !== job;
+  S.exporting = true; $('#prGo').disabled = $('#prSys').disabled = true;
+  try {
+    savePrintPrefs(st);
+    root.innerHTML = `<style>@page{size:${plan.paper.w.toFixed(2)}pt ${plan.paper.h.toFixed(2)}pt;margin:0}</style>`;
+    for (let n = 0; n < plan.sides.length; n++) {
+      if (stopped()) throw new Error('cancel');
+      sum.textContent = `正在準備列印…（${n + 1}／${plan.sides.length}）`;
+      const c = await drawSide(plan, plan.sides[n], k, st), url = URL.createObjectURL(await blobOf(c, 'image/jpeg', .92));
+      c.width = c.height = 0; urls.push(url);
+      const d = document.createElement('div'); d.className = 'psheet'; d.style.width = plan.paper.w.toFixed(2) + 'pt'; d.style.height = plan.paper.h.toFixed(2) + 'pt';
+      const img = new Image(); img.src = url; d.appendChild(img); root.appendChild(d);
+      await img.decode().catch(() => {});
+    }
+    if (stopped()) throw new Error('cancel');
+    sum.textContent = '正在送到印表機…';
+    const [a, b] = PAPERS[st.paper] || PAPERS.A4;
+    const r = await DESK.print.run({dialog, deviceName:st.printer || '', copies:clamp(Math.round(+st.copies || 1), 1, 999), collate:!!st.collate,
+      duplexMode:plan.duplex, color:st.color !== 'gray', landscape:plan.paper.w > plan.paper.h, pageSize:{width:Math.round(Math.min(a, b) * 1000), height:Math.round(Math.max(a, b) * 1000)}});
+    if (!r || !r.ok) { if (!(r && /cancel/i.test(r.why || ''))) toast('列印失敗：' + ((r && r.why) || '印表機沒有回應'), 'err'); return false; }
+    toast(`已送到「${printerLabel(st.printer)}」`);
+    return true;
+  } catch (e) {
+    if (e.message === 'cancel') { toast('已取消列印'); return false; }
+    console.error(e); toast('列印失敗：' + (e.message || e), 'err'); return false;
+  } finally {
+    root.innerHTML = ''; urls.forEach(u => URL.revokeObjectURL(u));
+    S.exporting = false;
+    if (PR && PR.job === job) { PR.job = null; refreshPrint(); }
+  }
+}
+
+/* ====================================================================
    Sample document
    ==================================================================== */
 async function makeSample(){
@@ -9552,7 +9807,7 @@ function keyFromEvent(e){
 }
 // shortcuts the app already uses; a custom binding may not take them over
 const RESERVED = [K('KeyO', 'O', {ctrl:1}), K('KeyS', 'S', {ctrl:1}), K('KeyZ', 'Z', {ctrl:1}), K('KeyY', 'Y', {ctrl:1}), K('KeyZ', 'Z', {ctrl:1, shift:1}),
-  K('KeyC', 'C', {ctrl:1}), K('KeyX', 'X', {ctrl:1}), K('KeyV', 'V', {ctrl:1}), K('KeyW', 'W', {ctrl:1}), K('KeyA', 'A', {ctrl:1}),
+  K('KeyC', 'C', {ctrl:1}), K('KeyX', 'X', {ctrl:1}), K('KeyV', 'V', {ctrl:1}), K('KeyW', 'W', {ctrl:1}), K('KeyA', 'A', {ctrl:1}), K('KeyP', 'P', {ctrl:1}),
   K('Tab', 'Tab', {ctrl:1}), K('Tab', 'Tab', {ctrl:1, shift:1}), K('Digit0', '0', {ctrl:1}), K('Equal', '=', {ctrl:1}), K('Minus', '-', {ctrl:1}),
   K('Space', '空白鍵'), K('Escape', 'Esc'), K('Delete', 'Delete'), K('KeyR', 'R', {ctrl:1}), K('Enter', 'Enter'),
   K('BracketRight', ']', {ctrl:1}), K('BracketRight', ']', {ctrl:1, shift:1}), K('BracketLeft', '[', {ctrl:1}), K('BracketLeft', '[', {ctrl:1, shift:1})];
@@ -9989,6 +10244,9 @@ window.__pdfapp = {
   },
   imageBoxes:i => detectImages(i),
   multi:() => MS ? {i:MS.i, ids:MS.items.map(a => a.id)} : null,
+  parseRange, printPlan,
+  printState:() => PR && PR.plan ? {open:true, sides:PR.plan.sides.length, sheets:PR.plan.sheets, pos:PR.cur, paper:PR.plan.paper, duplex:PR.plan.duplex, error:PR.err,
+    items:(PR.plan.sides[PR.cur] || {items:[]}).items, label:(PR.plan.sides[PR.cur] || {}).label || ''} : {open:false},
   annotsOrder:async i => {   // (tests) page i's /Annots as it stands: each entry's id, subtype, the object a note window belongs to, its layer
     const doc = await geoDoc(), arr = doc.getPage(i).node.lookupMaybe(N_('Annots'), PDFArray), ids = new Set(readLayers(doc).map(l => l.id));
     return arr ? arr.asArray().filter(r => r instanceof PDFRef).map(r => { const d = doc.context.lookupMaybe(r, PDFDict), par = d && d.get(N_('Parent'));
@@ -10070,5 +10328,6 @@ window.__pdfapp = {
     return out; },
   fontReady:() => loadFontCatalog().then(fontAnalysisDone)};
 </script>
+<div id="printRoot" aria-hidden="true"></div>
 </body>
 </html>

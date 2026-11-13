@@ -13,7 +13,7 @@ b = await win.locator('.page').first().boundingBox(); await win.mouse.click(b.x 
 // region render now includes objects: the rectangle's red edge should be in the picture
 const px = await win.evaluate(async () => { const pg = window.__pdfapp.S.pages[0]; const c = await window.__pdfapp.renderRegion(0, {x:0, y:0, w:pg.w, h:pg.h}, 1); const g = c.getContext('2d'); let red = 0; const d = g.getImageData(0, 0, c.width, c.height).data; for (let k = 0; k < d.length; k += 4) if (d[k] > 200 && d[k + 1] < 80 && d[k + 2] < 80) red++; return red; });
 console.log('red pixels in region render:', px);
-await win.click('[data-act="exportImages"], [data-act="exportImg"], [title*="轉存圖片"]').catch(e => console.log('no btn', e.message.slice(0, 80)));
+await win.click('[data-amenu="output"] .sp-arr'); await win.waitForTimeout(300); await win.click('#toolMenu button:has-text("轉存成圖片")').catch(e => console.log('no btn', e.message.slice(0, 80)));   // 輸出 ▾ → 轉存圖片
 await win.waitForTimeout(1500);
 console.log('dialog', await win.locator('#exOk').count(), 'TBE after open', JSON.stringify(await win.evaluate(() => window.__pdfapp.TBE())));
 const before = new Set(fs.readdirSync(TMP));

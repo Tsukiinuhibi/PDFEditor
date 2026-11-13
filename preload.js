@@ -20,6 +20,10 @@ contextBridge.exposeInMainWorld('desktop', {
     write: (root, sub, name, data) => ipcRenderer.invoke('export:write', root, sub, name, data),
     openFolder: dir => ipcRenderer.invoke('export:open-folder', dir),
   },
+  print: {
+    printers: () => ipcRenderer.invoke('print:printers'),
+    run: opts => ipcRenderer.invoke('print:run', opts),
+  },
   onOpenPath: cb => ipcRenderer.on('open-path', (_e, p) => cb(p)),
   onAppCommand: cb => ipcRenderer.on('app-command', (_e, c) => cb(c)),
   update: {

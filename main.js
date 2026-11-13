@@ -225,6 +225,24 @@ ipcMain.handle('app:set-theme', (_e, t) => {
 });
 ipcMain.handle('app:open-external', (_e, url) => { if (/^https:\/\//i.test(url)) shell.openExternal(url); });
 
+/* ---------------- 列印 ---------------- */
+// the printers (the page lists 「系統預設印表機」 first: Electron does not say which one is the default) and printing this
+// window, whose print view (#printRoot) the page has filled with the sides of paper. The end-to-end tests put their own
+// printer list and printing in place (global.__pdfePrinters / __pdfePrintHook).
+ipcMain.handle('print:printers', async e => {
+  const list = global.__pdfePrinters ? await global.__pdfePrinters() : await e.sender.getPrintersAsync();
+  return (list || []).map(p => ({ name: p.name, label: p.displayName || p.name }));
+});
+ipcMain.handle('print:run', (e, o) => new Promise(resolve => {
+  const opts = {
+    silent: !o.dialog, printBackground: true, deviceName: o.deviceName || undefined, copies: o.copies, collate: o.collate,
+    duplexMode: o.duplexMode, color: o.color, landscape: o.landscape, pageSize: o.pageSize, margins: { marginType: 'none' },
+  };
+  const done = (ok, why) => resolve({ ok: !!ok, why: why || '' });
+  try { (global.__pdfePrintHook || ((wc, op, cb) => wc.print(op, cb)))(e.sender, opts, done); }
+  catch (err) { done(false, String((err && err.message) || err)); }
+}));
+
 /* ---------------- auto update ---------------- */
 let updater = null;
 let updateState = { state: 'idle' };
