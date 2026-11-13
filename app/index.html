@@ -1800,8 +1800,15 @@ async function detectImages(i){
   const key = S.version + ':' + i; if (S.imgCache.has(key)) return S.imgCache.get(key);
   const p = (async () => {
     const pg = S.pages[i];
-    const ops = await pg.page.getOperatorList({annotationMode:pdfjsLib.AnnotationMode.DISABLE});
-    const O = pdfjsLib.OPS, U = pdfjsLib.Util, vt = pg.vp1.transform;
+    return imageBoxesOf(await pg.page.getOperatorList({annotationMode:pdfjsLib.AnnotationMode.DISABLE}), pg.vp1.transform, pg.w, pg.h);
+  })().then(out => { imgResolved.set(key, out); return out; }).catch(e => { console.warn(e); return []; });
+  S.imgCache.set(key, p); return p;
+}
+// the pictures an operator list paints, as boxes in the page view (vt: the page's view transform at scale 1; W × H its size):
+// {x, y, w, h: the part that shows (clipped), nw × nh: its pixels, full: the whole picture}
+function imageBoxesOf(ops, vt, W, H){
+  {
+    const O = pdfjsLib.OPS, U = pdfjsLib.Util;
     // the clip (page view, [x0, y0, x1, y1]) follows the clipping paths: a path's box (its control points included: pdf.js
     // leaves curves out of its own minMax) takes effect at the end of the path, like in the renderer
     let ctm = [1, 0, 0, 1, 0, 0], clip = null, path = null, pending = false; const stack = [], out = [];
@@ -1819,7 +1826,7 @@ async function detectImages(i){
       return x0 <= x1 && y0 <= y1 ? [x0, y0, x1, y1] : null;
     };
     const add = (nw, nh) => {
-      const f = view([0, 0, 1, 1], ctm), v = boxMeet(boxMeet(f, clip), [0, 0, pg.w, pg.h]);
+      const f = view([0, 0, 1, 1], ctm), v = boxMeet(boxMeet(f, clip), [0, 0, W, H]);
       if (!v || v[2] - v[0] < 4 || v[3] - v[1] < 4) return;
       const full = {x:f[0], y:f[1], w:f[2] - f[0], h:f[3] - f[1]};
       if (!out.some(o => sameBox(o.full, full, 1))) out.push({x:v[0], y:v[1], w:v[2] - v[0], h:v[3] - v[1], nw:nw | 0, nh:nh | 0, full});
@@ -1847,8 +1854,7 @@ async function detectImages(i){
       }
     }
     return out;
-  })().then(out => { imgResolved.set(key, out); return out; }).catch(e => { console.warn(e); return []; });
-  S.imgCache.set(key, p); return p;
+  }
 }
 
 /* render a region (visual pt coords) of a page to a canvas */
@@ -10512,12 +10518,52 @@ function wordFonts(name){
     : /Courier/i.test(n) ? 'Courier New' : /Georgia/i.test(n) ? 'Georgia' : /Verdana/i.test(n) ? 'Verdana' : /Tahoma/i.test(n) ? 'Tahoma' : /Garamond/i.test(n) ? 'Garamond' : /Segoe/i.test(n) ? 'Segoe UI' : null;
   return [lat, ea];
 }
-// one page → one section of the Word file: its size, margins from where the text lies, its paragraphs. tbs: the page's text
-// boxes (flattenForExport), each a block of its own placed among the lines by where it lies; each of its lines a paragraph
-async function wordSection(page, tbs = []){
-  const vp = page.getViewport({scale:1}), {items} = await wordItems(page, vp), lines = wordLines(items);
+// a page of the copy drawn on a canvas, white behind it (s: pixels per point)
+async function wordRender(page, s){
+  const vp = page.getViewport({scale:s}), c = document.createElement('canvas'); c.width = Math.max(1, Math.ceil(vp.width)); c.height = Math.max(1, Math.ceil(vp.height));
+  await page.render({canvasContext:c.getContext('2d'), viewport:vp, background:'#ffffff'}).promise;
+  return c;
+}
+// part b (page view points) of such a canvas → PNG bytes
+async function wordCrop(c, s, b){
+  const o = document.createElement('canvas'); o.width = Math.max(1, Math.round(b.w * s)); o.height = Math.max(1, Math.round(b.h * s));
+  o.getContext('2d').drawImage(c, b.x * s, b.y * s, b.w * s, b.h * s, 0, 0, o.width, o.height);
+  const blob = await new Promise(r => o.toBlob(r, 'image/png')); o.width = o.height = 0;
+  return new Uint8Array(await blob.arrayBuffer());
+}
+// a scanned page read by OCR, as 尋找 reads one (300 dpi, a white margin): lines as wordLines makes them
+async function wordOcrLines(page){
+  const vp = page.getViewport({scale:1}), ppt = Math.max(1, Math.min(300 / 72, 3600 / Math.max(vp.width, vp.height)));
+  const c = await wordRender(page, ppt), m = 24, img = document.createElement('canvas'); img.width = c.width + 2 * m; img.height = c.height + 2 * m;
+  const g = img.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, img.width, img.height); g.drawImage(c, m, m); c.width = c.height = 0;
+  const w = await findWorker(); await w.setParameters({tessedit_pageseg_mode:'3', preserve_interword_spaces:'1'});
+  const {data} = await w.recognize(img, {}, {text:true, blocks:true}), byLine = new Map(); img.width = img.height = 0;
+  ocrSymbols(data, false).forEach(y => { if (!byLine.has(y.li)) byLine.set(y.li, []); byLine.get(y.li).push(y); });
+  return [...byLine.values()].map(list => {
+    let text = '';
+    list.forEach((y, n) => { const prev = list[n - 1]; if (prev && y.bbox.x0 - prev.bbox.x1 > (prev.bbox.y1 - prev.bbox.y0) * .3 && !(CJK_RE.test(prev.text) && CJK_RE.test(y.text))) text += ' '; text += y.text; });
+    const b = list.map(y => y.bbox), hs = b.map(q => (q.y1 - q.y0) / ppt).sort((p, q) => p - q), fs = Math.round(Math.max(6, (hs[hs.length >> 1] || 10) * 1.2) * 2) / 2;
+    const y1 = (Math.max(...b.map(q => q.y1)) - m) / ppt;
+    return {x0:(Math.min(...b.map(q => q.x0)) - m) / ppt, x1:(Math.max(...b.map(q => q.x1)) - m) / ppt, y0:(Math.min(...b.map(q => q.y0)) - m) / ppt, y1, base:y1, fs, text,
+      runs:[{text, size:fs, bold:false, italic:false, name:''}]};
+  }).filter(l => l.text.trim());
+}
+// one page → one section of the Word file: its size, margins from where the content lies, its paragraphs and pictures.
+// tbs: the page's text boxes (flattenForExport), each a block of its own placed by where it lies, each of its lines a
+// paragraph. A picture covering most of a page with no text is a scan: read by OCR (ocr) or kept as one picture; one with
+// text on it (a scan that has its text) is left out, or the text would show twice.
+async function wordSection(page, tbs = [], {ocr = true, reading = () => {}} = {}){
+  const vp = page.getViewport({scale:1}), {items, ops} = await wordItems(page, vp);
+  let lines = wordLines(items), pics = imageBoxesOf(ops, vp.transform, vp.width, vp.height);
+  const big = pics.find(b => b.w * b.h >= vp.width * vp.height * 0.6);
+  if (big && items.length) pics = pics.filter(b => b !== big);
+  else if (big && ocr) { reading(); lines = await wordOcrLines(page); pics = pics.filter(b => b !== big); }
+  const PPT = 2, cv = pics.length ? await wordRender(page, PPT) : null;   // pictures at 144 dpi, as they show on the page
+  const imgs = [];
+  for (const b of pics) imgs.push({x0:b.x, y0:b.y, x1:b.x + b.w, y1:b.y + b.h, pic:{png:await wordCrop(cv, PPT, b), w:b.w, h:b.h}});
+  if (cv) cv.width = cv.height = 0;
   const boxes = tbs.map(t => { const r = vp.convertToViewportRectangle(t.rect); return {x0:Math.min(r[0], r[2]), y0:Math.min(r[1], r[3]), x1:Math.max(r[0], r[2]), y1:Math.max(r[1], r[3]), tb:t}; });
-  const all = [...lines, ...boxes], fs = lines.length ? lines.map(l => l.fs).sort((a, b) => a - b)[lines.length >> 1] : 12;
+  const all = [...lines, ...boxes, ...imgs], fs = lines.length ? lines.map(l => l.fs).sort((a, b) => a - b)[lines.length >> 1] : 12;
   const seq = wordCut(all, fs, null), paras = wordParagraphs(seq);
   const m = v => Math.max(18, Math.min(72, v)), has = all.length > 0;
   const margin = has ? {l:m(Math.min(...all.map(b => b.x0))), t:m(Math.min(...all.map(b => b.y0))), r:m(vp.width - Math.max(...all.map(b => b.x1))), b:m(vp.height - Math.max(...all.map(b => b.y1)))} : {l:72, t:72, r:72, b:72};
@@ -10525,6 +10571,11 @@ async function wordSection(page, tbs = []){
   let prev = margin.t; const blocks = [];
   for (const p of paras) {
     const before = Math.max(0, p.y0 - prev); prev = p.y1;
+    if (p.pic) {   // a picture: a paragraph of its own, as large as on the page (smaller if it would not fit)
+      const maxW = vp.width - margin.l - margin.r, maxH = vp.height - margin.t - margin.b, k = Math.min(1, maxW / p.pic.w, maxH / p.pic.h);
+      blocks.push({type:'img', png:p.pic.png, w:p.pic.w * k, h:p.pic.h * k, before, indent:Math.max(0, Math.min(p.x0 - margin.l, maxW - p.pic.w * k))});
+      continue;
+    }
     if (p.tb) {   // a text box: its own lines, as typed, with their styles
       p.tb.lines.forEach((ln, k) => blocks.push({type:'p', before:k ? 0 : before, indent:Math.max(0, p.x0 - margin.l),
         runs:ln.filter(r => r.text).map(r => { const [font, ea] = wordFonts(r.font || 'PDFE Sans'); return {text:r.text, size:r.size || 12, bold:!!r.bold, italic:!!r.italic, underline:!!r.underline, color:r.color, font, ea}; })}));
@@ -10600,8 +10651,8 @@ function docxBytes(sections, meta = {}){
     ...media,
   ]);
 }
-// the copy (flattenForExport) → a .docx, page by page (step(k, n) before each); job.cancel stops it
-async function builtinDocx({bytes, boxes}, {job, step}){
+// the copy (flattenForExport) → a .docx, page by page (step(k, n, note) before each); job.cancel stops it between pages
+async function builtinDocx({bytes, boxes}, {job, step, ocr = true}){
   const pdf = await pdfjsLib.getDocument({...PDF_OPTS, data:bytes}).promise;
   try {
     const sections = [];
@@ -10609,7 +10660,7 @@ async function builtinDocx({bytes, boxes}, {job, step}){
       if (job.cancel) throw new Error('cancel');
       step(k, pdf.numPages);
       const page = await pdf.getPage(k);
-      sections.push(await wordSection(page, boxes[k - 1] || [])); page.cleanup();
+      sections.push(await wordSection(page, boxes[k - 1] || [], {ocr, reading:() => step(k, pdf.numPages, '（掃描頁，文字辨識中…）')})); page.cleanup();
     }
     if (job.cancel) throw new Error('cancel');
     return docxBytes(sections, {title:S.name.replace(/\.pdf$/i, ''), creator:AUTHOR || ''});
@@ -10627,6 +10678,7 @@ async function openWordDialog(){
       <input type="text" id="wdRange" placeholder="例如 1-3, 5, 8-" style="width:170px;display:none" spellcheck="false" autocomplete="off"></div></div>
     <div class="field"><label>轉換方式</label><select id="wdHow"><option value="word"${hasWord ? '' : ' disabled'}>用 Microsoft Word 轉換（最接近原本的版面）</option><option value="builtin">程式內建轉換</option></select>
       <div class="wd-note" id="wdNote">${hasWord ? 'Word 會在背景開啟並轉換，完成後自動關閉。' : '這台電腦沒有 Word，使用程式內建轉換：文字、段落、字級、粗體斜體；表格與多欄等複雜版面較弱。'}</div></div>
+    <label class="chk" id="wdOcrF"><input type="checkbox" id="wdOcr" checked> 掃描頁先做文字辨識（可以編輯文字，比較慢）</label>
     <div class="url-st" id="wdSt"></div><div class="pr-err" id="wdErr"></div>`;
   let done = null;   // the file written: 〔轉存〕 has become 〔開啟〕
   const $b = q => body.querySelector(q), setSt = t => { $b('#wdSt').textContent = t; }, setErr = t => { $b('#wdErr').textContent = t; };
@@ -10651,7 +10703,7 @@ async function openWordDialog(){
     try {
       setSt('準備中…');
       const flat = await flattenForExport(pages); if (job.cancel) throw new Error('cancel');
-      const out = await builtinDocx(flat, {job, step:(k, m) => setSt(`轉換中：第 ${k}／${m} 頁`)});
+      const out = await builtinDocx(flat, {job, ocr:$b('#wdOcr').checked, step:(k, m, note = '') => setSt(`轉換中：第 ${k}／${m} 頁${note}`)});
       if (job.cancel) throw new Error('cancel');
       const name = where ? where.split(/[\\/]/).pop() : fn;
       if (DESK) await DESK.writeFile(where, new Uint8Array(await out.arrayBuffer()));   // (makeZip gives a Blob)
@@ -11263,6 +11315,7 @@ window.__pdfapp = {
   imageBoxes:i => detectImages(i),
   multi:() => MS ? {i:MS.i, ids:MS.items.map(a => a.id)} : null,
   flatten:pages => flattenForExport(pages),   // (tests) the copy that 轉存 Word converts
+  wordFonts,
   links:async i => {   // (tests) page i's links: on screen, where they go, how they look
     const doc = await geoDoc();
     return Promise.all((await pageLinks(i)).map(async l => {
