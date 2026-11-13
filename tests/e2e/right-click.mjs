@@ -86,5 +86,21 @@ await tool('pen'); await rclick(await see(0, note.x + note.w / 2, note.y + note.
 check('a note keeps its own menu', ((await menu()) || []).includes('edit'), await menu());
 await win.keyboard.press('Escape'); await win.waitForTimeout(200);
 
+
+// ---- part 2: a right-click on an object selects it -----------------------------------------------------------------------
+const sq = (await anns(0, 'Square'))[0], onSq = () => see(0, sq.x + 4, sq.y + sq.h / 2);
+await tool('pen'); await rclick(await onSq());
+const s1 = await A(() => window.__pdfapp.sel());
+check('畫筆: a right-click on a rectangle goes back to 選取 and selects it', (await curTool()) === 'select' && s1?.id === sq.id && (await menu()) === null, {tool:await curTool(), s1});
+const poly = (await anns(0, 'Polygon'))[0];
+await click(await see(0, poly.x + poly.w / 2, poly.y + poly.h * 0.6));
+const s2a = await A(() => window.__pdfapp.sel());
+await rclick(await onSq());
+const s2 = await A(() => window.__pdfapp.sel());
+check('選取 with another object selected: a right-click on the rectangle selects it', s2a?.id === poly.id && s2?.id === sq.id, {s2a, s2});
+const barXY = await A(() => { const b = document.querySelector('.abar'); if (!b) return null; const r = b.getBoundingClientRect(); return [r.left + 6, r.top + r.height / 2]; });
+if (barXY) await rclick(barXY);
+check('a right-click on the bar beside the selection: still selected, no menu', !!barXY && (await A(() => window.__pdfapp.sel()))?.id === sq.id && (await menu()) === null, {barXY, sel:await A(() => window.__pdfapp.sel())});
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});   // unsaved changes: no asking

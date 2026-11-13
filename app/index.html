@@ -2388,9 +2388,18 @@ viewer.addEventListener('contextmenu', async e => {
   e.preventDefault();
   if (e.target.closest('.npop, .abar, .xbar')) return;   // an open note, the bar beside a selection: nothing
   const pel = e.target.closest('.page'), i = pel ? +pel.dataset.i : -1;
+  const pt = pel ? pagePointXY(i, e.clientX, e.clientY) : null;   // now: leaving a tool closes its bar above, and the pages move up
   if (pel) { const note = await noteAt(i, e.clientX, e.clientY); if (note) { showNoteMenu(e, i, note); return; } }
   await backToSelect();
+  if (pt && S.tool === 'select' && S.els[i]) { const a = await annAt(i, pt); if (a) selectAnnot(i, a); }   // on an object: select it
 });
+// the object under a point {x, y} of page i, the topmost one (a sticky note has its own menu; a signature field is not
+// selected)
+async function annAt(i, p){
+  const list = (await getAnns(i)).filter(a => a.subtype !== 'Text' && !a.sig);
+  for (let k = list.length - 1; k >= 0; k--) { const a = list[k]; if (p.x >= a.x && p.x <= a.x + a.w && p.y >= a.y && p.y <= a.y + a.h) return a; }
+  return null;
+}
 // as 完成 (Esc), and a polygon or a fill outline being drawn is finished when it has enough points (dropped quietly
 // when it has not)
 async function backToSelect(){
