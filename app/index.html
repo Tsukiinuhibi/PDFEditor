@@ -1365,7 +1365,7 @@ function mountDoc({scroll = 'current', anchorOffset = 0, scrollTop = 0, scrollLe
   });
   pagesEl.innerHTML = '';
   S.st = S.pages.map(() => ({rendered:0, ver:-1, task:null, ovlVer:-1}));
-  XS = null; AS = null; rulerPage = -1; clearSnapMarks(); if (NP) closeNoteDom(); POLY = null;
+  XS = null; AS = null; rulerPage = -1; clearSnapMarks(); if (NP) closeNoteDom(); POLY = null; paintObjBar();
   $('#welcome').style.display = 'none';
   $$('[data-need]').forEach(b => b.disabled = false);
   if (S.zoomMode !== 'custom') S.scale = fitScale(S.zoomMode);
@@ -1816,8 +1816,9 @@ function setTool(t){
   paintActionButtons();
   rememberTool(t);
   const h = $('#hint');
+  if (h.classList.contains('objbar')) { h.classList.remove('objbar'); OBJBAR = null; }   // the tool's own bar from here
   h.classList.toggle('styl', !!DRAW_TOOLS[t]);
-  if (!HINTS[t]) { h.classList.remove('show'); h.innerHTML = ''; return; }
+  if (!HINTS[t]) { h.classList.remove('show'); h.innerHTML = ''; if (t === 'select' && AS) paintObjBar(); return; }
   if (t === 'textbox') {
     h.classList.add('styl');
     h.innerHTML = `<b class="sb-t" title="${esc(HINTS[t])}">${icon('text')}文字方塊</b><span class="sb-q" title="${esc(HINTS[t])}">?</span><span class="sb-row">${textBarHTML()}</span><span class="sp"></span><button data-h="done" title="回到選取工具（Esc，或在頁面空白處按右鍵）">完成 (Esc)</button>`;
@@ -6640,6 +6641,7 @@ function objKind(dict){
   if (!dict.get(N_('PDFE'))) return null;   // another program's object: move and delete only
   const sub = subOf(dict), subj = subjOf(dict);
   const cloud = !!dict.lookupMaybe(N_('BE'), PDFDict);
+  if (sub === 'Square' && subj === '填色') return 'fill';
   if (sub === 'Square') return cloud ? 'cloud' : 'rect';
   if (sub === 'Circle') return cloud ? 'cloud' : 'ellipse';
   if (sub === 'Line') { const le = dict.lookupMaybe(N_('LE'), PDFArray); return le && le.asArray().some(x => String(x) !== '/None') ? 'arrow' : 'line'; }
@@ -6672,7 +6674,7 @@ async function paintObjBar(){
   const name = subjOf(dict) === '區域螢光筆' ? '區域螢光筆' : def.label.replace('工具', '');
   h.innerHTML = `<b class="sb-t">${icon(def.ic)}已選取：${esc(name)}</b><span class="sb-row">${styleBar(kind, readObjStyle(dict), true)}</span>`;
   h.classList.add('show', 'styl', 'objbar');
-  OBJBAR = {i, id:a.id, kind};
+  OBJBAR = {i, id:a.id, kind, doc:activeDoc()};
 }
 function drawASel(){
   if (!AS) return;
@@ -6760,7 +6762,7 @@ function readAnnStyle(dict){
 }
 // an object of ours drawn again from its geometry and the style st (resizing: map moves its points, nb is the new
 // box; restyling: neither). A turned rectangle / ellipse / cloud is drawn upright and turned again by its angle.
-function regenAP(doc, i, dict, st = readObjStyle(dict), map = p => p, nb = null){
+function regenAP(doc, i, dict, st = readObjStyle(dict), map = p => p, nb = null, prev = null){   // prev: the style before a restyle
   const ctx = doc.context, sub = subOf(dict), rot = S.pages[i].rot, turned = ROT_BOX.has(sub) && boxTurn(dict);
   if (sub === 'Highlight' || sub === 'Underline' || sub === 'StrikeOut') {
     const pts = flatPts(i, numArr(dict.lookup(N_('QuadPoints'), PDFArray))).map(map), quads = [];
@@ -6778,7 +6780,7 @@ function regenAP(doc, i, dict, st = readObjStyle(dict), map = p => p, nb = null)
     geom = geomLine(p0, p1, sty, arrow);
     dict.set(N_('L'), ctx.obj(toPdfPts(i, [p0, p1])));
   } else if (sub === 'Square' || sub === 'Circle') {
-    geom = shapeGeom(dict, st, nb || vRect(i, turned ? turned.baseRect : numArr(dict.lookup(N_('Rect'), PDFArray))));
+    geom = shapeGeom(dict, st, nb || vRect(i, turned ? turned.baseRect : numArr(dict.lookup(N_('Rect'), PDFArray))), nb ? null : prev);
   } else if (sub === 'Polygon' || sub === 'PolyLine') {
     const pts = flatPts(i, numArr(dict.lookup(N_('Vertices'), PDFArray))).map(map);
     geom = geomPoly(pts, st, sub === 'Polygon');
@@ -6799,7 +6801,7 @@ async function restyleAnnot(i, id, patch){
   return mutate('已變更樣式', doc => {
     const ref = findAnnotRef(doc, i, id); if (!ref) { toast('找不到此註解', 'err'); return false; }
     const ctx = doc.context, dict = ctx.lookup(ref, PDFDict), kind = objKind(dict); if (!kind) return false;
-    const st = {...readObjStyle(dict), ...patch};
+    const prev = readObjStyle(dict), st = {...prev, ...patch};
     if (kind === 'fill' && 'color' in patch) st.fill = st.color;   // a fill outline is one colour
     dict.set(N_('C'), ctx.obj(hexColor(st.color)));
     if (st.fill) dict.set(N_('IC'), ctx.obj(hexColor(st.fill))); else dict.delete(N_('IC'));
@@ -6811,7 +6813,7 @@ async function restyleAnnot(i, id, patch){
     }
     if (REGEN.has(subOf(dict))) dict.set(N_('BS'), ctx.obj(bsDict(st)));
     dict.set(N_('M'), nowStr());
-    if (!regenAP(doc, i, dict, st)) return false;
+    if (!regenAP(doc, i, dict, st, p => p, null, prev)) return false;
   });
 }
 // changes are applied one after another, to the object that was selected when the change was made; it stays selected
@@ -6820,6 +6822,8 @@ function restyleSelected(patch, ob = OBJBAR){
   if (!ob) return restyleChain;
   return (restyleChain = restyleChain.then(async () => {
     const {i, id} = ob;
+    // only the object still on screen in this document (not one put on a locked / hidden layer, or another tab's)
+    if (activeDoc() !== ob.doc || !(await getAnns(i)).some(x => x.id === id)) { paintObjBar(); return; }
     if (AS && AS.a.id === id) holdSelection();
     const ok = await restyleAnnot(i, id, patch);
     if (!ok) clearHolds(i);
@@ -6943,8 +6947,17 @@ function setTurn(doc, dict, base, baseRect, deg){
   dict.set(N_('PDFE_Rot'), ctx.obj(+deg.toFixed(3))); dict.set(N_('PDFE_Base'), base); dict.set(N_('PDFE_BaseRect'), ctx.obj(baseRect));
 }
 // our own rectangles / ellipses / clouds drawn upright in box b (b includes the line width, like their /Rect)
-function shapeGeom(dict, st, b){
-  const sub = subOf(dict), cloud = !!dict.lookupMaybe(N_('BE'), PDFDict), pad = st.width + (cloud ? Math.max(9, st.width * 6) * .62 : 0);
+const padOf = (dict, st) => st.width + (dict.lookupMaybe(N_('BE'), PDFDict) ? Math.max(9, st.width * 6) * .62 : 0);   // frame around the drawn box
+// the box a frame b was drawn from with style st: geomBox draws a little outside the box it is given (a cloud's bumps
+// by a bit more than padOf says), so a first guess is moved by how far its own frame misses b
+function innerBox(dict, st, b){
+  const sub = subOf(dict), shape = sub === 'Circle' ? 'ellipse' : dict.lookupMaybe(N_('BE'), PDFDict) ? 'cloud' : 'rect', p = padOf(dict, st);
+  const guess = {x:b.x + p, y:b.y + p, w:Math.max(2, b.w - 2 * p), h:Math.max(2, b.h - 2 * p)}, g = geomBox(guess, st, shape).b;
+  return {x:guess.x + b.x - g.x, y:guess.y + b.y - g.y, w:Math.max(2, guess.w + b.w - g.w), h:Math.max(2, guess.h + b.h - g.h)};
+}
+function shapeGeom(dict, st, b, prev = null){   // prev: the style b was drawn with (restyling keeps the drawn box)
+  const sub = subOf(dict), cloud = !!dict.lookupMaybe(N_('BE'), PDFDict), pad = padOf(dict, st);
+  if (prev) return geomBox(innerBox(dict, prev, b), st, sub === 'Circle' ? 'ellipse' : cloud ? 'cloud' : 'rect');
   return geomBox({x:b.x + pad, y:b.y + pad, w:Math.max(2, b.w - 2 * pad), h:Math.max(2, b.h - 2 * pad)}, st, sub === 'Circle' ? 'ellipse' : cloud ? 'cloud' : 'rect');
 }
 // what the selection needs: the upright box and the angle
@@ -9158,6 +9171,12 @@ paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {
   people:() => ({names:PEOPLE ? [...PEOPLE.names] : [], def:PEOPLE ? PEOPLE.def : '', author:AUTHOR}),
   settingsSnapshot, parseSettingsFile, presets:k => PRESETS[k],
+  apText:async (i, id) => {   // (tests) the drawing an object shows: its upright one when turned, else its normal appearance
+    const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); if (!ref) return null;
+    const d = doc.context.lookup(ref, PDFDict), t = boxTurn(d), ap = d.lookupMaybe(N_('AP'), PDFDict), n = t ? t.base : ap && ap.get(N_('N'));
+    const st = n && doc.context.lookup(n); if (!st) return null;
+    try { return new TextDecoder().decode(st.contents && !st.dict.get(N_('Filter')) ? st.contents : PDFLib.decodePDFRawStream(st).decode()); } catch (_) { return null; }
+  },
   annStyle:async (i, id) => { const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); if (!ref) return null; const d = doc.context.lookup(ref, PDFDict), t = boxTurn(d);
     return {kind:objKind(d), ...readObjStyle(d), deg:t ? t.deg : 0}; },
   clip:() => ({last:LAST_CLIP, note:NOTE_CLIP ? {contents:NOTE_CLIP.contents, author:NOTE_CLIP.author} : null}),
