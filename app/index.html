@@ -5311,14 +5311,36 @@ async function loadImageFile(file){
   }
   return {bytes, kind, w, h, name:file.name, url};
 }
+// ask for a picture file and read it (null: none chosen or not readable, with a message)
+function pickImage(){
+  return new Promise(res => {
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/png,image/jpeg,image/webp,image/gif,image/bmp,image/svg+xml,.png,.jpg,.jpeg,.webp,.gif,.bmp,.svg';
+    inp.onchange = async () => {
+      const f = inp.files[0]; if (!f) return res(null);
+      try { res(await loadImageFile(f)); } catch (e) { toast(e.message || '無法讀取圖片', 'err'); res(null); }
+    };
+    inp.oncancel = () => res(null);
+    inp.click();
+  });
+}
 async function chooseImage(){
-  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/png,image/jpeg,image/webp,image/gif,image/bmp,image/svg+xml,.png,.jpg,.jpeg,.webp,.gif,.bmp,.svg';
-  inp.onchange = async () => {
-    const f = inp.files[0]; if (!f) return;
-    try { PENDING_IMG = await loadImageFile(f); setTool('image'); toast('在頁面上點一下放置圖片，或拖曳決定大小'); }
-    catch (e) { toast(e.message || '無法讀取圖片', 'err'); }
-  };
-  inp.click();
+  const img = await pickImage(); if (!img) return;
+  PENDING_IMG = img; setTool('image'); toast('在頁面上點一下放置圖片，或拖曳決定大小');
+}
+// a picture's appearance: img (loadImageFile) filling box b
+async function pictureAP(doc, img, b, rot){
+  const emb = img.kind === 'jpg' ? await doc.embedJpg(img.bytes) : await doc.embedPng(img.bytes);
+  return formAP(doc, `q ${b.w.toFixed(3)} 0 0 ${b.h.toFixed(3)} 0 0 cm /Im0 Do Q`, b.w, b.h, rot, {XObject:{Im0:emb.ref}});
+}
+// a selected picture replaced by img: as large as fits in its frame without stretching, centred; angle and opacity kept
+async function replaceImage(i, id, img){
+  return mutate('已更換圖片', async doc => {
+    const ref = findAnnotRef(doc, i, id); if (!ref) { toast('找不到此註解', 'err'); return false; }
+    const dict = doc.context.lookup(ref, PDFDict), ob = uprightBox(i, dict), k = Math.min(ob.w / img.w, ob.h / img.h);
+    const w = img.w * k, h = img.h * k, b = {x:ob.x + (ob.w - w) / 2, y:ob.y + (ob.h - h) / 2, w, h}, g = visToPdf(i, b);
+    setUpright(doc, dict, fadeAP(doc, await pictureAP(doc, img, b, g.rot), readAnnStyle(dict).opacity), g.rect);
+    dict.set(N_('Contents'), PDFHexString.fromText(img.name || '圖片')); dict.set(N_('M'), nowStr());
+  });
 }
 function defaultImgSize(pg, img){
   let w = img.w * .75, h = img.h * .75;   // 96 dpi pixels → points
@@ -5330,9 +5352,7 @@ async function insertImage(i, box, img){
   const b = {x:clamp(box.cx != null ? box.cx - w / 2 : box.x, 0, Math.max(0, pg.w - w)), y:clamp(box.cy != null ? box.cy - h / 2 : box.y, 0, Math.max(0, pg.h - h)), w, h};
   let newId = null;
   const ok = await mutate('已插入圖片', async doc => {
-    const g = visToPdf(i, b);
-    const emb = img.kind === 'jpg' ? await doc.embedJpg(img.bytes) : await doc.embedPng(img.bytes);
-    const ap = formAP(doc, `q ${b.w.toFixed(3)} 0 0 ${b.h.toFixed(3)} 0 0 cm /Im0 Do Q`, b.w, b.h, g.rot, {XObject:{Im0:emb.ref}});
+    const g = visToPdf(i, b), ap = await pictureAP(doc, img, b, g.rot);
     const ref = addAnnot(doc, i, {Type:'Annot', Subtype:'Stamp', Rect:g.rect, Name:'Image', Contents:PDFHexString.fromText(img.name || '圖片'),
       T:PDFHexString.fromText(AUTHOR), M:nowStr(), CreationDate:nowStr(), Subj:PDFHexString.fromText('圖片'), F:4, PDFE:true, AP:{N:ap}});
     newId = ref.objectNumber + 'R';
@@ -5980,12 +6000,13 @@ const STYLES = (() => {
 })();
 const saveStyles = () => { try { localStorage.setItem(STYLE_KEY, JSON.stringify(STYLES)); } catch (_) {} };
 
+const opacitySel = v => `<label class="sb-l">透明度<select data-s="opacity">${[1, .85, .7, .5, .35].map(o => `<option value="${o}"${+v === o ? ' selected' : ''}>${Math.round(o * 100)}%</option>`).join('')}</select></label>`;
 function styleBar(t, st = STYLES[t] || {}, obj = false){   // obj: the bar of a selected object (styleOf it), not of the tool
   const def = DRAW_TOOLS[t], k = def.kind;
   const sw = (key, allowNone) => `<button class="cpick${st[key] ? '' : ' none'}" data-cp="${key}" data-none="${allowNone ? 1 : ''}" title="選擇顏色" style="--c:${st[key] || 'transparent'}"><i></i>▾</button>`;
   const presets = (PRESETS[k] || []).map((p, n) => `<button class="pchip" data-p="${n}" title="${p.n}"><i style="${k === 'text' || k === 'fill' ? `background:${p.color};box-shadow:0 0 0 1px rgba(0,0,0,.18)` : `border:${Math.min(3, p.width || 1) + 1}px ${p.dash ? 'dashed' : 'solid'} ${p.color};background:${p.fill || 'transparent'};opacity:${p.opacity || 1};box-shadow:0 0 0 1px rgba(0,0,0,.15)`}"></i>${p.n}</button>`).join('');
   const widthSel = `<label class="sb-l">粗細<select data-s="width">${[0.5, 0.8, 1, 1.2, 1.5, 2, 3, 4, 6, 8, 10, 14].map(v => `<option value="${v}"${+st.width === v ? ' selected' : ''}>${v} pt</option>`).join('')}</select></label>`;
-  const opSel = `<label class="sb-l">透明度<select data-s="opacity">${[1, .85, .7, .5, .35].map(v => `<option value="${v}"${+st.opacity === v ? ' selected' : ''}>${Math.round(v * 100)}%</option>`).join('')}</select></label>`;
+  const opSel = opacitySel(st.opacity);
   const dash = `<label class="sb-l"><input type="checkbox" data-s="dash"${st.dash ? ' checked' : ''}>虛線</label>`;
   let h = '';
   if (k === 'text') h = `<span class="sb-g">${presets}</span>${sw('color')}${opSel}`;
@@ -6349,8 +6370,9 @@ function drawStamp(spec, K = 4, when = new Date()){
   return {canvas:c, wPt, hPt};
 }
 async function ensureStampFont(){ try { await document.fonts.load(`900 20px ${STAMP_FONT}`, '核准機密已收件收文'); } catch (_) {} }
-async function openStampPicker(){
+async function openStampPicker({spec = null, pickOnly = false} = {}){   // pickOnly: return the choice, the tool's stamp unchanged
   await ensureStampFont();
+  const init = spec || STAMP_SEL;
   const body = document.createElement('div');
   const tabs = [['standard', '標準戳記'], ['dynamic', '動態戳記（含姓名與日期）'], ['custom', '自訂戳記']];
   body.innerHTML = `<div class="st-tabs">${tabs.map(([k, n]) => `<button data-tab="${k}">${n}</button>`).join('')}</div><div class="st-grid" id="stGrid"></div>
@@ -6360,10 +6382,11 @@ async function openStampPicker(){
         <div class="field"><label>樣式</label><select id="scK" class="ex-in"><option value="box">方框</option><option value="dyn">方框＋姓名日期</option><option value="round">圓形日期章</option></select></div>
         <div class="field"><label>姓名</label><input type="text" id="scW" class="ex-in" style="width:120px"></div></div>
       <div class="st-prev" id="scPrev"></div></div>`;
-  let tab = STAMPS.dynamic.some(s => s.t === STAMP_SEL.t && s.kind === STAMP_SEL.kind) ? 'dynamic' : STAMP_SEL.custom ? 'custom' : 'standard', sel = STAMP_SEL;
+  let tab = STAMPS.dynamic.some(s => s.t === init.t && s.kind === init.kind) ? 'dynamic' : init.custom ? 'custom' : 'standard', sel = init;
   const $b = q => body.querySelector(q);
-  $b('#scW').value = AUTHOR;
-  let scColor = STAMP_SEL.custom && STAMP_SEL.c ? (STAMP_COLORS[STAMP_SEL.c] || STAMP_SEL.c) : STAMP_COLORS.crimson;
+  $b('#scW').value = init.custom && init.who || AUTHOR;
+  if (init.custom) { $b('#scT').value = init.t || '戳記'; $b('#scK').value = init.kind || 'box'; }
+  let scColor = init.custom && init.c ? (STAMP_COLORS[init.c] || init.c) : STAMP_COLORS.crimson;
   const custom = () => ({t:$b('#scT').value.trim() || '戳記', c:scColor, kind:$b('#scK').value, who:$b('#scW').value.trim() || AUTHOR, custom:true});
   const draw = () => {
     body.querySelectorAll('.st-tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
@@ -6386,6 +6409,7 @@ async function openStampPicker(){
   draw();
   const ok = await openModal({title:'選擇戳記', body, width:Math.min(760, innerWidth - 40), buttons:[{label:'取消', value:false}, {label:'使用此戳記', primary:true, handler:() => true}]});
   if (!ok) return false;
+  if (pickOnly) return sel;
   STAMP_SEL = sel; try { localStorage.setItem('pdfeditor.stamp.v1', JSON.stringify(sel)); } catch (_) {}
   if (S.tool !== 'stamp') setTool('stamp'); else setTool('stamp');
   return true;
@@ -6401,7 +6425,29 @@ async function placeStamp(i, box){
   await mutate(`已加入戳記「${spec.t}」`, async doc => {
     const g = visToPdf(i, b), ap = await imageAP(doc, png, b.w, b.h, g.rot);
     addAnnot(doc, i, {Type:'Annot', Subtype:'Stamp', Rect:g.rect, Name:STAMP_NAMES[spec.t] || 'Draft', Contents:PDFHexString.fromText(text),
-      T:PDFHexString.fromText(AUTHOR), M:nowStr(), CreationDate:nowStr(), Subj:PDFHexString.fromText('戳記'), F:4, AP:{N:ap}});
+      T:PDFHexString.fromText(AUTHOR), M:nowStr(), CreationDate:nowStr(), Subj:PDFHexString.fromText('戳記'), F:4, AP:{N:ap},
+      PDFE:true, PDFE_Stamp:PDFHexString.fromText(JSON.stringify({...spec, who:spec.who || AUTHOR, when:when.toISOString()}))});
+  });
+}
+// the settings a stamp was made with (PDFE_Stamp: {t, c, kind, who, custom?, when}); stamps from before v1.0.34 have none
+const stampSpec = dict => { try { const v = dict.lookupMaybe(N_('PDFE_Stamp'), PDFHexString, PDFString); return v ? JSON.parse(v.decodeText()) : null; } catch (_) { return null; } };
+// a selected stamp replaced by the stamp spec: same centre and zoom (unknown for an old stamp: its natural size), angle and
+// opacity kept; stamped now, by the current user
+async function replaceStamp(i, id, spec){
+  await ensureStampFont();
+  const when = new Date(), sp = {...(spec.custom ? spec : {t:spec.t, c:spec.c, kind:spec.kind}), when:when.toISOString()};
+  sp.who = spec.custom && spec.who || AUTHOR;
+  const {canvas, wPt, hPt} = drawStamp(sp, 5, when), png = new Uint8Array(await (await blobOf(canvas, 'image/png')).arrayBuffer());
+  return mutate(`已更換戳記「${sp.t}」`, async doc => {
+    const ref = findAnnotRef(doc, i, id); if (!ref) { toast('找不到此註解', 'err'); return false; }
+    const ctx = doc.context, dict = ctx.lookup(ref, PDFDict), old = stampSpec(dict), ob = uprightBox(i, dict);
+    const k = old ? ob.w / drawStamp(old, 1).wPt : 1;
+    const b = {x:ob.x + ob.w / 2 - wPt * k / 2, y:ob.y + ob.h / 2 - hPt * k / 2, w:wPt * k, h:hPt * k}, g = visToPdf(i, b);
+    setUpright(doc, dict, fadeAP(doc, await imageAP(doc, png, b.w, b.h, g.rot), readAnnStyle(dict).opacity), g.rect);
+    dict.set(N_('Name'), N_(STAMP_NAMES[sp.t] || 'Draft'));
+    dict.set(N_('Contents'), PDFHexString.fromText(sp.kind === 'box' ? sp.t : `${sp.t} ${sp.who} ${zhDateTime(when)}`));
+    dict.set(N_('T'), PDFHexString.fromText(AUTHOR)); dict.set(N_('M'), nowStr());
+    dict.set(N_('PDFE'), ctx.obj(true)); dict.set(N_('PDFE_Stamp'), PDFHexString.fromText(JSON.stringify(sp)));
   });
 }
 
@@ -6656,8 +6702,10 @@ function selectAnnot(i, a){
    its own values, in the bar above the pages (#hint.objbar) */
 const subjOf = dict => { const s = dict.lookup(N_('Subj')); return s && s.decodeText ? s.decodeText() : ''; };
 function objKind(dict){
+  if (subOf(dict) === 'Stamp' && subjOf(dict) === '戳記') return 'stamp';   // ours, also from before stamps carried PDFE
   if (!dict.get(N_('PDFE'))) return null;   // another program's object: move and delete only
   const sub = subOf(dict), subj = subjOf(dict);
+  if (sub === 'Stamp') return subj === '圖片' ? 'image' : null;
   const cloud = !!dict.lookupMaybe(N_('BE'), PDFDict);
   if (sub === 'FreeText') return readRT(dict) ? 'textbox' : null;
   if (sub === 'Square' && subj === '填色') return 'fill';
@@ -6705,6 +6753,11 @@ async function paintObjBar(){
 // the bar for one kind of object: {name, ic (icon), html, st}
 function objBarHTML(kind, dict){
   if (kind === 'textbox') { const st = tbObjStyle(readRT(dict)); return {name:subjOf(dict) === '修改的文字' ? '修改的文字' : '文字方塊', ic:'text', html:textBarHTML(st, true), st}; }
+  if (kind === 'stamp') {
+    const spec = stampSpec(dict), op = readAnnStyle(dict).opacity;
+    return {name:'戳記', ic:'stamp', st:{spec}, html:`<button class="pchip" data-o="stamp">更換戳記…</button>${spec ? `<span class="sb-h">顏色</span><button class="cpick" data-cp="color" title="選擇顏色" style="--c:${STAMP_COLORS[spec.c] || spec.c}"><i></i>▾</button>` : ''}${opacitySel(op)}${spec ? '' : '<span class="sb-tip">舊版蓋的戳記無法改顏色，可以更換戳記</span>'}`};
+  }
+  if (kind === 'image') return {name:'圖片', ic:'insImg', st:null, html:`<button class="pchip" data-o="image">更換圖片…</button>${opacitySel(readAnnStyle(dict).opacity)}`};
   const def = DRAW_TOOLS[kind];
   return {name:subjOf(dict) === '區域螢光筆' ? '區域螢光筆' : def.label.replace('工具', ''), ic:def.ic, html:styleBar(kind, readObjStyle(dict), true), st:null};
 }
@@ -6834,6 +6887,7 @@ async function restyleAnnot(i, id, patch){
     const ref = findAnnotRef(doc, i, id); if (!ref) { toast('找不到此註解', 'err'); return false; }
     const ctx = doc.context, dict = ctx.lookup(ref, PDFDict), kind = objKind(dict); if (!kind) return false;
     if (kind === 'textbox') return restyleTextBox(doc, i, dict, patch);
+    if (kind === 'stamp' || kind === 'image') return restyleStamp(doc, i, dict, kind, patch);
     const prev = readObjStyle(dict), st = {...prev, ...patch};
     if (kind === 'fill' && 'color' in patch) st.fill = st.color;   // a fill outline is one colour
     dict.set(N_('C'), ctx.obj(hexColor(st.color)));
@@ -6849,19 +6903,64 @@ async function restyleAnnot(i, id, patch){
     if (!regenAP(doc, i, dict, st, p => p, null, prev)) return false;
   });
 }
+// a box object's upright drawing (a turned one keeps it as PDFE_Base) and its upright box (page view points)
+function uprightAP(dict){ const t = boxTurn(dict); if (t) return t.base; const ap = dict.lookupMaybe(N_('AP'), PDFDict), n = ap && ap.get(N_('N')); return n instanceof PDFRef ? n : null; }
+function uprightBox(i, dict){ const t = boxTurn(dict); return vRect(i, t ? t.baseRect : numArr(dict.lookup(N_('Rect'), PDFArray))); }
+// show the upright drawing ap (filling rect, PDF; default: where it is), turned again by the object's angle
+function setUpright(doc, dict, ap, rect = null){
+  const t = boxTurn(dict);
+  if (t) { setTurn(doc, dict, ap, rect || t.baseRect, t.deg); return; }
+  if (rect) dict.set(N_('Rect'), doc.context.obj(rect));
+  dict.set(N_('AP'), doc.context.obj({N:ap}));
+}
+// opacity of stamps and pictures: one layer round the drawing (PDFE_Fade names the drawing inside); a new opacity
+// replaces the layer, 100% takes it off
+function innerAP(doc, ref){ const s = ref && doc.context.lookup(ref), f = s && s.dict && s.dict.get(N_('PDFE_Fade')); return f instanceof PDFRef ? f : ref; }
+function fadeAP(doc, ref, op){
+  ref = innerAP(doc, ref);
+  if (!ref || !(op < 1)) return ref;
+  return doc.context.register(doc.context.stream('q /GS0 gs /B Do Q', {Type:'XObject', Subtype:'Form', BBox:formFrame(doc, ref) || [0, 0, 1, 1],
+    Resources:{ExtGState:{GS0:{Type:'ExtGState', CA:op, ca:op}}, XObject:{B:ref}}, PDFE_Fade:ref}));
+}
+// a stamp or picture restyled: opacity (CA and the layer), a stamp's colour (drawn again with its own date and name)
+async function restyleStamp(doc, i, dict, kind, patch){
+  const ctx = doc.context, op = 'opacity' in patch ? +patch.opacity : readAnnStyle(dict).opacity;
+  let ap = uprightAP(dict); if (!ap) return false;
+  if (kind === 'stamp' && 'color' in patch) {
+    const spec = stampSpec(dict); if (!spec || !patch.color) return false;
+    const sp = {...spec, c:patch.color}, when = new Date(spec.when), b = uprightBox(i, dict);
+    await ensureStampFont();
+    const {canvas} = drawStamp(sp, 5, isNaN(when) ? new Date() : when), png = new Uint8Array(await (await blobOf(canvas, 'image/png')).arrayBuffer());
+    ap = await imageAP(doc, png, b.w, b.h, visToPdf(i, b).rot);
+    dict.set(N_('PDFE_Stamp'), PDFHexString.fromText(JSON.stringify(sp)));
+  }
+  if (op < 1) dict.set(N_('CA'), ctx.obj(op)); else dict.delete(N_('CA'));
+  setUpright(doc, dict, fadeAP(doc, ap, op));
+  dict.set(N_('M'), nowStr());
+}
 // changes are applied one after another, to the object that was selected when the change was made; it stays selected
 let restyleChain = Promise.resolve();
-function restyleSelected(patch, ob = OBJBAR){
+function objChange(ob, fn){   // fn(i, id): the change (a mutate); false when nothing changed
   if (!ob) return restyleChain;
   return (restyleChain = restyleChain.then(async () => {
     const {i, id} = ob;
     // only the object still on screen in this document (not one put on a locked / hidden layer, or another tab's)
     if (activeDoc() !== ob.doc || !(await getAnns(i)).some(x => x.id === id)) { paintObjBar(); return; }
     if (AS && AS.a.id === id) holdSelection();
-    const ok = await restyleAnnot(i, id, patch);
+    const ok = await fn(i, id);
     if (!ok) clearHolds(i);
     if (S.tool === 'select' && S.els[i]) { const a2 = (await getAnns(i)).find(x => x.id === id); if (a2) selectAnnot(i, a2); }
   }).catch(err => console.error(err)));
+}
+const restyleSelected = (patch, ob = OBJBAR) => objChange(ob, (i, id) => restyleAnnot(i, id, patch));
+// 更換戳記… / 更換圖片… for the selected stamp / picture
+async function changeStampOf(ob){
+  const spec = await openStampPicker({spec:ob.st && ob.st.spec || STAMP_SEL, pickOnly:true});
+  if (spec) objChange(ob, (i, id) => replaceStamp(i, id, spec));
+}
+async function changeImageOf(ob){
+  const img = await pickImage();
+  if (img) objChange(ob, (i, id) => replaceImage(i, id, img));
 }
 $('#hint').addEventListener('click', e => {
   if (!OBJBAR || !$('#hint').classList.contains('objbar')) return;
@@ -6874,6 +6973,8 @@ $('#hint').addEventListener('click', e => {
     if (c) { const key = c.dataset.tbc; openColorPicker({anchor:c, value:ob.st[key], none:key !== 'color', title:{color:'文字顏色', bg:'文字底色', boxBg:'方塊背景'}[key], onPick:v => restyleSelected({[key]:v}, ob)}); }
     return;
   }
+  if (e.target.closest('[data-o="stamp"]')) { changeStampOf(ob); return; }
+  if (e.target.closest('[data-o="image"]')) { changeImageOf(ob); return; }
   const cp = e.target.closest('.cpick');
   if (cp) { const key = cp.dataset.cp; openColorPicker({anchor:cp, value:cp.style.getPropertyValue('--c').trim(), none:!!cp.dataset.none, title:key === 'fill' ? '填色顏色' : '顏色', onPick:v => restyleSelected({[key]:v}, ob)}); return; }
   const p = e.target.closest('[data-p]');
@@ -9220,7 +9321,18 @@ window.__pdfapp = {
     try { return new TextDecoder().decode(st.contents && !st.dict.get(N_('Filter')) ? st.contents : PDFLib.decodePDFRawStream(st).decode()); } catch (_) { return null; }
   },
   annStyle:async (i, id) => { const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); if (!ref) return null; const d = doc.context.lookup(ref, PDFDict), t = boxTurn(d);
-    return {kind:objKind(d), ...readObjStyle(d), deg:t ? t.deg : 0, rt:readRT(d)}; },
+    return {kind:objKind(d), ...readObjStyle(d), deg:t ? t.deg : 0, rt:readRT(d), spec:stampSpec(d)}; },
+  annHas:async (i, id, k) => { const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); return !!ref && !!doc.context.lookup(ref, PDFDict).get(N_(k)); },
+  apChain:async (i, id) => {   // (tests) an upright drawing and the drawings inside it (/B), outermost first
+    const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); if (!ref) return null;
+    const out = []; let n = uprightAP(doc.context.lookup(ref, PDFDict));
+    for (let k = 0; n && k < 6; k++) {
+      const st = doc.context.lookup(n), res = st.dict.lookupMaybe(N_('Resources'), PDFDict), xo = res && res.lookupMaybe(N_('XObject'), PDFDict);
+      try { out.push(new TextDecoder().decode(st.contents && !st.dict.get(N_('Filter')) ? st.contents : PDFLib.decodePDFRawStream(st).decode())); } catch (_) { out.push(null); }
+      n = xo && xo.get(N_('B'));
+    }
+    return out;
+  },
   clip:() => ({last:LAST_CLIP, note:NOTE_CLIP ? {contents:NOTE_CLIP.contents, author:NOTE_CLIP.author} : null}),
   changelog:url => loadChangelog(url), notesHTML, whatsNewList, showWhatsNew, checkWhatsNew, updState:st => { UPD.state = st; renderUpdate(); },
   fontIdState:() => { const p = OCR.panel; if (!p) return null;

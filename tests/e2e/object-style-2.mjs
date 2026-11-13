@@ -12,8 +12,8 @@ const check = (name, ok, detail = '') => { console.log(`${ok ? '✔' : '✘'} ${
 const doc = await PDFDocument.create(), pg = doc.addPage([595, 842]);
 pg.drawRectangle({x:330, y:60, width:200, height:140, borderColor:rgb(0, 0, 0), borderWidth:2});
 const oldAP = doc.context.register(doc.context.stream('q 0.8 0.1 0.1 RG 3 w 2 2 96 36 re S Q', {Type:'XObject', Subtype:'Form', BBox:[0, 0, 100, 40]}));
-pg.node.set(PDFName.of('Annots'), doc.context.obj([doc.context.obj({Type:'Annot', Subtype:'Stamp', Rect:[60, 60, 160, 100], Name:'Approved', Contents:PDFHexString.fromText('核准'),
-  Subj:PDFHexString.fromText('戳記'), T:PDFHexString.fromText('old'), F:4, AP:{N:oldAP}})]));
+pg.node.set(PDFName.of('Annots'), doc.context.obj([doc.context.register(doc.context.obj({Type:'Annot', Subtype:'Stamp', Rect:[60, 60, 160, 100], Name:'Approved', Contents:PDFHexString.fromText('核准'),
+  Subj:PDFHexString.fromText('戳記'), T:PDFHexString.fromText('old'), F:4, AP:{N:oldAP}}))]));
 const PDF = path.join(TMP, 'os2.pdf'); fs.writeFileSync(PDF, await doc.save());
 
 const { app } = await launchPath(PDF);
@@ -89,6 +89,104 @@ const s20 = runs(await style(tb2.id)).map(r => r.size);
 await tbc('color', '#1c64d9');
 const st2 = await style(tb2.id);
 check('runs of different sizes: a new colour keeps their sizes', s20.length === 2 && s20[0] !== s20[1] && JSON.stringify(runs(st2).map(r => r.size)) === JSON.stringify(s20) && runs(st2).every(r => r.color === '#1c64d9'), {s20, runs:runs(st2)});
+
+// ---- part 2: stamps and pictures -------------------------------------------------------------------------------------
+const cpk = async (key, v) => { await win.click(`#hint.objbar .cpick[data-cp="${key}"]`); await win.waitForTimeout(300); await win.click(`#cpMenu [data-v="${v}"]`); await win.waitForTimeout(200); if (await A(() => document.querySelector('#cpMenu').style.display === 'block')) await win.click('#cpMenu [data-cpx="ok"]'); await settle(); };
+const setSel = async (key, v) => { await win.selectOption(`#hint.objbar select[data-s="${key}"]`, String(v)); await settle(); };
+const has = q => A(q => !!document.querySelector(q), q);
+const chain = id => A(id => window.__pdfapp.apChain(0, id), id);
+const boxOf = async id => { const a = (await anns(0)).find(x => x.id === id); return a && {x:a.x, y:a.y, w:a.w, h:a.h, cx:a.x + a.w / 2, cy:a.y + a.h / 2, contents:a.contents}; };
+const turn30 = async () => {
+  const rh = await win.locator('.asel .rh').boundingBox({timeout:8000}), sb = await win.locator('.asel').boundingBox();
+  const c0 = {x:sb.x + sb.width / 2, y:sb.y + sb.height / 2}, h0 = {x:rh.x + rh.width / 2, y:rh.y + rh.height / 2}, R = Math.hypot(h0.x - c0.x, h0.y - c0.y), a0 = Math.atan2(h0.y - c0.y, h0.x - c0.x);
+  await win.mouse.move(h0.x, h0.y); await win.mouse.down();
+  for (let k = 1; k <= 10; k++) { const ang = a0 + 30 * Math.PI / 180 * k / 10; await win.mouse.move(c0.x + R * Math.cos(ang), c0.y + R * Math.sin(ang)); }
+  await win.mouse.up(); await win.waitForTimeout(2200);
+};
+await win.keyboard.press('Escape');
+const STAMP0 = JSON.stringify({t:'核准', c:'green', kind:'box'});
+await A(v => localStorage.setItem('pdfeditor.stamp.v1', v), STAMP0);
+const stamps0 = (await anns(0, 'Stamp')).map(a => a.id);
+await tool('stamp'); await click(await see(0, 200, 420)); await settle();
+let sp = (await anns(0, 'Stamp')).find(a => !stamps0.includes(a.id));
+await pick(sp);
+let ss = sp && await style(sp.id);
+check('a stamp selected: 已選取：戳記 with 更換戳記, colour, opacity; its settings stored', (await title() || '').includes('已選取：戳記') && await has('#hint.objbar [data-o="stamp"]') && await has('#hint.objbar .cpick[data-cp="color"]') && await has('#hint.objbar select[data-s="opacity"]')
+  && ss?.spec?.t === '核准' && !isNaN(Date.parse(ss?.spec?.when)), {title:await title(), ss});
+const sb0 = await boxOf(sp.id), when0 = ss?.spec?.when;
+await cpk('color', '#1c64d9');
+ss = await style(sp.id); let sb1 = await boxOf(sp.id);
+check('戳記 顏色: drawn again in the new colour, same size and time, still selected', ss?.spec?.c === '#1c64d9' && ss?.spec?.when === when0 && near(sb1.w, sb0.w) && near(sb1.h, sb0.h) && near(sb1.x, sb0.x) && (await sel())?.id === sp.id, {spec:ss?.spec, sb0, sb1});
+await setSel('opacity', .5);
+ss = await style(sp.id); let ch = await chain(sp.id);
+check('透明度 50%: on the stamp, one layer over its drawing', ss?.opacity === .5 && ch?.length === 2 && ch[0].includes('/GS0 gs') && ch[1].includes('/Im0 Do'), {op:ss?.opacity, ch});
+await setSel('opacity', .7);
+ss = await style(sp.id); ch = await chain(sp.id);
+check('透明度 70%: still one layer (the old one replaced)', ss?.opacity === .7 && ch?.length === 2 && ch[1].includes('/Im0 Do'), {op:ss?.opacity, ch});
+await setSel('opacity', 1);
+ss = await style(sp.id); ch = await chain(sp.id);
+check('透明度 100%: the layer gone, no CA', ss?.opacity === 1 && ch?.length === 1 && ch[0].includes('/Im0 Do') && !(await A(id => window.__pdfapp.annHas(0, id, 'CA'), sp.id)), {op:ss?.opacity, ch});
+await win.click('#hint.objbar [data-o="stamp"]'); await win.waitForTimeout(800);
+const mt = await A(() => document.querySelector('#mask').classList.contains('show') ? document.querySelector('#modal .mh').textContent : null);
+await win.click('#stGrid .st-item:nth-child(2)'); await win.waitForTimeout(200);
+await win.click('#modal .mf button:has-text("使用此戳記")'); await settle();
+ss = await style(sp.id); sb1 = await boxOf(sp.id);
+check('更換戳記: the picker, then 不核准 in its place (same centre and height), the tool\'s stamp unchanged', mt === '選擇戳記' && ss?.spec?.t === '不核准' && near(sb1.cx, sb0.cx, 1) && near(sb1.cy, sb0.cy, 1) && near(sb1.h, sb0.h)
+  && (await A(() => localStorage.getItem('pdfeditor.stamp.v1'))) === STAMP0 && (await sel())?.id === sp.id, {mt, spec:ss?.spec, sb0, sb1});
+await turn30();
+const d0 = (await style(sp.id))?.deg;
+if ((await sel())?.id !== sp.id) await pick(await boxOf(sp.id));
+await cpk('color', '#2b8a3e');
+const ds1 = await style(sp.id);
+await win.click('#hint.objbar [data-o="stamp"]'); await win.waitForTimeout(800);
+await win.click('#stGrid .st-item:nth-child(3)'); await win.waitForTimeout(200);
+await win.click('#modal .mf button:has-text("使用此戳記")'); await settle();
+const ds2 = await style(sp.id);
+check('a turned stamp: a new colour and a new stamp keep its angle', Math.abs((d0 || 0) - 30) < 3 && ds1?.spec?.c === '#2b8a3e' && Math.abs(ds1.deg - d0) < .5 && ds2?.spec?.t === '已審閱' && Math.abs(ds2.deg - d0) < .5, {d0, d1:ds1?.deg, d2:ds2?.deg, t:ds2?.spec?.t});
+await win.keyboard.press('Escape');
+const old = (await anns(0, 'Stamp')).find(a => a.contents === '核准' && a.y > 700);
+await pick(old);
+check('a stamp from an older version: 更換戳記 and opacity, no colour (with a note why)', (await title() || '').includes('已選取：戳記') && await has('#hint.objbar [data-o="stamp"]') && !(await has('#hint.objbar .cpick[data-cp="color"]'))
+  && (await A(() => document.querySelector('#hint.objbar').textContent)).includes('舊版蓋的戳記無法改顏色'), {old, title:await title()});
+// pictures: a wide one inserted, then replaced by a tall one
+const png = (w, h, c) => A(([w, h, c]) => { const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const g = cv.getContext('2d'); g.fillStyle = c; g.fillRect(0, 0, w, h); return cv.toDataURL('image/png').split(',')[1]; }, [w, h, c]);
+const WIDE = path.join(TMP, 'wide.png'), TALL = path.join(TMP, 'tall.png');
+fs.writeFileSync(WIDE, Buffer.from(await png(200, 100, '#e03131'), 'base64')); fs.writeFileSync(TALL, Buffer.from(await png(100, 200, '#1c64d9'), 'base64'));
+await win.keyboard.press('Escape');
+const [fc1] = await Promise.all([win.waitForEvent('filechooser', {timeout:8000}), A(() => window.__pdfapp.setTool('image'))]);
+await fc1.setFiles(WIDE); await win.waitForTimeout(800);
+await click(await see(0, 150, 560)); await settle();
+let im = (await anns(0, 'Stamp')).find(a => a.contents === 'wide.png');
+if ((await sel())?.id !== im?.id && im) await pick(im);
+check('a picture selected: 已選取：圖片 with 更換圖片 and opacity', !!im && (await title() || '').includes('已選取：圖片') && await has('#hint.objbar [data-o="image"]') && await has('#hint.objbar select[data-s="opacity"]'), {im, title:await title()});
+await setSel('opacity', .5);
+const ib0 = await boxOf(im.id);
+const [fc2] = await Promise.all([win.waitForEvent('filechooser', {timeout:8000}), win.click('#hint.objbar [data-o="image"]')]);
+await fc2.setFiles(TALL); await win.waitForTimeout(600); await settle();
+const ib1 = await boxOf(im.id), is1 = await style(im.id); ch = await chain(im.id);
+check('更換圖片: the new picture in the old frame, centred, not stretched; still 50%', ib1?.contents === 'tall.png' && ib1.x >= ib0.x - .5 && ib1.y >= ib0.y - .5 && ib1.x + ib1.w <= ib0.x + ib0.w + .5 && ib1.y + ib1.h <= ib0.y + ib0.h + .5
+  && near(ib1.cx, ib0.cx, 1) && near(ib1.cy, ib0.cy, 1) && Math.abs(ib1.w / ib1.h - .5) < .02 && is1?.opacity === .5 && ch?.length === 2 && (await sel())?.id === im.id, {ib0, ib1, op:is1?.opacity, ch});
+
+// ---- part 3: an area fill (點選區塊) -----------------------------------------------------------------------------------
+await win.keyboard.press('Escape');
+const px = async (x, y) => { await see(0, x, y); await win.waitForTimeout(600); return A(([x, y]) => { const S = window.__pdfapp.S, c = S.els[0].querySelector('canvas.pc'), k = c.width / S.pages[0].w;
+  const d = c.getContext('2d').getImageData(Math.round(x * k), Math.round(y * k), 1, 1).data; return [d[0], d[1], d[2]]; }, [x, y]); };
+const close = (c, hex, d = 24) => !!c && [1, 3, 5].every((o, k) => Math.abs(c[k] - parseInt(hex.slice(o, o + 2), 16)) <= d);
+await tool('fill'); await click(await see(0, 430, 712)); await win.waitForTimeout(2500);
+const fl = (await anns(0, 'Stamp')).find(a => a.contents === '填色區塊');
+if (fl) await pick(fl);
+const fb = await A(() => { const h = document.querySelector('#hint.objbar'); return h && {title:h.querySelector('.sb-t').textContent, color:!!h.querySelector('.cpick[data-cp="color"]'), width:!!h.querySelector('select[data-s="width"]'), op:!!h.querySelector('select[data-s="opacity"]')}; });
+check('an area fill selected: 已選取：填色 with colour and opacity', !!fl && !!fb && fb.title.includes('已選取：填色') && fb.color && fb.op && !fb.width, {fl, fb});
+const pc0 = await px(430, 712);
+await cpk('color', '#8ce99a');
+const fs1 = fl && await style(fl.id), pc1 = await px(430, 712);
+check('填色 顏色: the same area in the new colour', fs1?.color === '#8ce99a' && close(pc1, '#8ce99a') && !close(pc0, '#8ce99a') && (await sel())?.id === fl?.id, {fs1:fs1 && {color:fs1.color, op:fs1.opacity}, pc0, pc1});
+await setSel('opacity', .5);
+const fs2 = fl && await style(fl.id), pc2 = await px(430, 712);
+check('填色 透明度 50%: on the fill, paler on the page', fs2?.opacity === .5 && close(pc2, '#c6f4cd', 14), {op:fs2?.opacity, pc2});
+await cpk('color', '#1c64d9');
+const fs3 = fl && await style(fl.id), pc3 = await px(430, 712);
+check('填色: a new colour keeps 50%', fs3?.opacity === .5 && close(pc3, '#8eb2ec', 14), {op:fs3?.opacity, pc3});
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
