@@ -8948,8 +8948,15 @@ function stackPlace(doc, i, id, how){
   const moving = [me, ...list.filter(r => r !== me && unitOf(r) === id)], rest = list.filter(r => !moving.includes(r));
   const peers = rest.filter(r => { const d = dictOf(r); return d && unitOf(r) === refId(r) && layerable(d) && layerOf(d) === mine; });
   const k0 = list.indexOf(me), below = peers.filter(r => list.indexOf(r) < k0), above = peers.filter(r => list.indexOf(r) > k0);
-  // where an object's entries start, or end, among the rest
-  const span = (r, end) => { const ks = rest.map((x, k) => unitOf(x) === refId(r) ? k : -1).filter(k => k >= 0); return end ? Math.max(...ks) + 1 : Math.min(...ks); };
+  // right above or under the object r itself among the rest (with its note window when that lies right beside it; a window
+  // elsewhere in the list does not make the step longer)
+  const winOf = (x, r) => x !== r && unitOf(x) === refId(r);
+  const span = (r, end) => {
+    let k = rest.indexOf(r);
+    if (end) { while (k + 1 < rest.length && winOf(rest[k + 1], r)) k++; return k + 1; }
+    while (k > 0 && winOf(rest[k - 1], r)) k--;
+    return k;
+  };
   let at;
   if (rel) at = span(rel, how.above);
   else if (how === 'front' || how === 'forward') { if (!above.length) return 'top'; at = span(how === 'front' ? above[above.length - 1] : above[0], true); }
@@ -8966,7 +8973,14 @@ const Z_HOW = {'z-front':'front', 'z-up':'forward', 'z-down':'backward', 'z-back
 const Z_BTNS = [['z-front', '移到最上層', 'zTop', 'Ctrl+Shift+]'], ['z-up', '上移一層', 'zUp', 'Ctrl+]'], ['z-down', '下移一層', 'zDown', 'Ctrl+['], ['z-back', '移到最下層', 'zBot', 'Ctrl+Shift+[']];
 const zButtons = () => Z_BTNS.map(([k, t, ic, kb]) => `<button class="z" data-x="${k}" title="${t}（${kb}）">${icon(ic)}</button>`).join('');
 // one change (one undo step); at the top or the bottom already: a message and no change. A selected object stays selected.
+// While one is on its way, another (a key held down, a second click) is let go: each step starts from the last one.
+let STACKING = false;
 async function stackObj(i, id, how, label){
+  if (STACKING) return false;
+  STACKING = true;
+  try { return await stackObjNow(i, id, how, label); } finally { STACKING = false; }
+}
+async function stackObjNow(i, id, how, label){
   const lm = await layerModel(), o = lm.byId.get(id); if (!o || o.i !== i) return false;
   const lyr = x => x && x.layer ? lm.layers.find(l => l.id === x.layer) : null, l = lyr(o);
   const t = how && typeof how === 'object' ? lm.byId.get(how.rel) : null;

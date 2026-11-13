@@ -10,9 +10,10 @@ let failed = 0;
 const check = (name, ok, detail = '') => { console.log(`${ok ? '✔' : '✘'} ${name}${detail !== '' ? '  ' + (typeof detail === 'string' ? detail : JSON.stringify(detail)) : ''}`); if (!ok) { failed++; process.exitCode = 1; } };
 
 // page 1: a red square A, a link, a blue square B over part of A, then a sticky note C whose window sits before it;
-// page 2: a green square D and, in the page itself, a black outline (an area for the fill tool)
+// page 2: a green square D and, in the page itself, a black outline (an area for the fill tool);
+// page 3 (as some programs write it): note windows apart from their notes — [P3, N1, N2, N3, P1, P2, S]
 const doc = await PDFDocument.create(), ctx = doc.context, N = n => PDFName.of(n);
-const p1 = doc.addPage([595, 842]), p2 = doc.addPage([595, 842]);
+const p1 = doc.addPage([595, 842]), p2 = doc.addPage([595, 842]), p3 = doc.addPage([595, 842]);
 const ap = rgb => ctx.register(ctx.stream(`${rgb} rg 0 0 150 150 re f`, {Type:'XObject', Subtype:'Form', BBox:[0, 0, 150, 150]}));
 const sq = (rect, rgb, c) => ctx.register(ctx.obj({Type:'Annot', Subtype:'Square', Rect:rect, C:c, IC:c, F:4, AP:{N:ap(rgb)}}));
 const rA = sq([100, 600, 250, 750], '1 0 0', [1, 0, 0]);
@@ -23,6 +24,9 @@ ctx.assign(rC, ctx.obj({Type:'Annot', Subtype:'Text', Rect:[400, 700, 424, 724],
 p1.node.set(N('Annots'), ctx.obj([rA, rL, rB, rPc, rC]));
 p2.node.set(N('Annots'), ctx.obj([sq([100, 600, 250, 750], '0 0.6 0', [0, .6, 0])]));
 p2.node.set(N('Contents'), ctx.register(ctx.stream('0 0 0 RG 3 w 300 200 200 150 re S\n')));
+const notes = [300, 350, 400].map(() => ctx.nextRef()), wins = notes.map((n, k) => ctx.register(ctx.obj({Type:'Annot', Subtype:'Popup', Rect:[300, 500 - k * 60, 450, 550 - k * 60], Parent:n, Open:false})));
+notes.forEach((n, k) => ctx.assign(n, ctx.obj({Type:'Annot', Subtype:'Text', Rect:[300 + k * 50, 700, 324 + k * 50, 724], Contents:PDFString.of('n' + (k + 1)), T:PDFString.of('someone'), Popup:wins[k], F:4, Name:'Comment'})));
+p3.node.set(N('Annots'), ctx.obj([wins[2], ...notes, wins[0], wins[1], sq([100, 600, 200, 700], '1 0.5 0', [1, .5, 0])]));
 const PDF = path.join(TMP, 'stack.pdf'); fs.writeFileSync(PDF, await doc.save());
 
 const { app } = await launchPath(PDF);
@@ -120,8 +124,8 @@ const marked = () => Ev(() => [...document.querySelectorAll('#p-layers .ly-obj.s
 const row = id => win.locator(`#p-layers .ly-obj[data-oid="${id}"]`);
 await win.click('[data-act="layers"]'); await win.waitForTimeout(900);
 let pn = await panel();
-check('the panel lists the objects without opening anything: 第 1 頁, 第 2 頁; on page 1 the topmost first',
-  pn.length === 1 && pn[0].pages.map(p => p.h).join() === '第 1 頁,第 2 頁' && JSON.stringify(pn[0].pages[0].ids) === JSON.stringify(await front(0)), {pn, front:await front(0)});
+check('the panel lists the objects without opening anything: 第 1 頁, 第 2 頁, 第 3 頁; on page 1 the topmost first',
+  pn.length === 1 && pn[0].pages.map(p => p.h).join() === '第 1 頁,第 2 頁,第 3 頁' && JSON.stringify(pn[0].pages[0].ids) === JSON.stringify(await front(0)), {pn, front:await front(0)});
 await see(0, 200, 200);
 await tool('select');
 await win.mouse.click(...await P(0, 300, 300)); await win.waitForTimeout(900);
@@ -191,6 +195,25 @@ await tool('fill');
 await win.mouse.click(...await P(1, 330, 520)); await win.waitForTimeout(2500);
 const o4 = await order(1), F2 = o4.filter(o => o.sub === 'Stamp').map(o => o.id), i4 = id => o4.findIndex(o => o.id === id);
 check('a fill done again: a new one in its place (圖層 1, under the square drawn after it)', !!F && F2.length === 1 && F2[0] !== F && (o4.find(o => o.id === F2[0]) || {}).oc === lys[1] && i4(F2[0]) < i4(G), {F, F2, o4});
+
+// ---- part 3 (final review): a neighbour whose note window lies apart is one step; a key held or pressed twice is one change -
+const stackOrder = async i => (await order(i)).filter(o => o.sub !== 'Popup').map(o => o.id);
+const [N1, N2, N3, S3] = await stackOrder(2);
+await Ev(([n]) => window.__pdfapp.stackObj(2, n, 'forward'), [N1]); await win.waitForTimeout(1800);
+const s1 = await stackOrder(2);
+await Ev(([n]) => window.__pdfapp.stackObj(2, n, 'backward'), [S3]); await win.waitForTimeout(1800);
+const s2 = await stackOrder(2), o2 = await order(2);
+check('a note one step up past a note whose window lies at the end: one step, not past the next one too', JSON.stringify(s1) === JSON.stringify([N2, N1, N3, S3]), {s1, want:[N2, N1, N3, S3]});
+check('one step down past a note whose window lies at the start: one step, not to the bottom; each window still there once',
+  JSON.stringify(s2) === JSON.stringify([N2, N1, S3, N3]) && o2.filter(o => o.sub === 'Popup').length === 3, {s2, o2});
+await see(2, 150, 190);
+await tool('select');
+await win.mouse.click(...await P(2, 150, 190)); await win.waitForTimeout(900);
+u0 = await undos();
+await Ev(() => { const k = {key:'[', code:'BracketLeft', ctrlKey:true, bubbles:true}; window.dispatchEvent(new KeyboardEvent('keydown', k)); window.dispatchEvent(new KeyboardEvent('keydown', k)); });
+await win.waitForTimeout(2500);
+const s3 = await stackOrder(2);
+check('Ctrl+[ twice at once (a key held down): one change, one undo step', (await selId()) === S3 && JSON.stringify(s3) === JSON.stringify([N2, S3, N1, N3]) && (await undos()) === u0 + 1, {s3, undos:(await undos()) - u0});
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
