@@ -266,6 +266,16 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 @keyframes np{0%,70%{outline-color:var(--seal)}100%{outline-color:transparent}}
 .thumb.newpage .tc{outline:3px solid var(--seal);outline-offset:2px}
 .ex-grid{display:grid;grid-template-columns:minmax(300px,1fr) minmax(380px,1.15fr);gap:20px}
+.findbar{position:absolute;top:8px;right:24px;z-index:30;background:var(--surface);border:1px solid var(--line2);border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.18);padding:6px 8px;display:flex;flex-direction:column;gap:6px}
+.findbar[hidden]{display:none}
+.fb-row{display:flex;align-items:center;gap:3px}
+.findbar input[type=text]{width:210px;font:inherit;font-size:13px;border:1px solid var(--line2);border-radius:6px;padding:5px 8px;background:var(--surface);color:var(--ink)}
+.fb-n{min-width:74px;font-size:12px;color:var(--ink2);text-align:center;white-space:nowrap}
+.findbar button{border:0;background:none;border-radius:5px;padding:4px 7px;cursor:pointer;color:var(--ink2);font:inherit;font-size:12px;white-space:nowrap}
+.findbar button:hover{background:#fff3bf;color:#1f2328}
+.findbar .fb-o.on{background:rgba(28,100,217,.14);color:#1c64d9}
+.fhit{position:absolute;background:rgba(255,212,59,.45);mix-blend-mode:multiply;pointer-events:none;border-radius:1px;z-index:2}
+.fhit.cur{background:rgba(255,140,0,.55);outline:2px solid #f08c00}
 .pr-grid{display:grid;grid-template-columns:minmax(320px,1.15fr) minmax(330px,1fr);gap:20px}
 .pr-prev{height:min(60vh,600px);display:flex;align-items:center;justify-content:center;background:var(--desk);border-radius:8px;overflow:hidden}
 .pr-prev canvas{box-shadow:0 2px 12px rgba(0,0,0,.28);background:#fff}
@@ -983,6 +993,12 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
     <div class="panel" id="p-layers"></div>
   </aside>
   <div class="vwrap" id="vwrap"><canvas class="ruler h" id="rulerH"></canvas><canvas class="ruler v" id="rulerV"></canvas><div class="rcorner"></div>
+  <div class="findbar" id="findBar" hidden>
+    <div class="fb-row"><input type="text" id="findQ" placeholder="尋找" spellcheck="false" autocomplete="off"><span class="fb-n" id="findN"></span>
+      <button data-fa="prev" title="上一筆（Shift+Enter）">▲</button><button data-fa="next" title="下一筆（Enter）">▼</button>
+      <button class="fb-o" data-fo="case" title="區分大小寫">Aa</button><button class="fb-o" data-fo="word" title="全字相符（英文、數字）">全字</button><button class="fb-o" data-fo="width" title="全形、半形視為相同">全＝半</button>
+      <button data-fa="close" title="關閉（Esc）">✕</button></div>
+  </div>
   <div class="viewer" id="viewer" tabindex="0">
     <div class="pages" id="pages"></div>
     <div class="welcome" id="welcome">
@@ -1423,6 +1439,7 @@ function mountDoc({scroll = 'current', anchorOffset = 0, scrollTop = 0, scrollLe
   else scrollToPage(S.current);
   updateUI(); scheduleRender(0);
   buildThumbs(reuse ? reuse.map : null, reuse && reuse.pre); refreshPanels(); applyViewAids();
+  if (FIND.open) scheduleFind();
 }
 
 async function openFile(file, handle = null){
@@ -1679,6 +1696,7 @@ async function ensureOverlay(i){
     d.dataset.k = k;   // click selects the image; dragging from it starts a new selection (handled in startExtractDraw)
     ovl.appendChild(d);
   });
+  if (FIND.open) paintFindPage(i);
 }
 
 const tip = $('#tip');
@@ -1986,6 +2004,8 @@ window.addEventListener('keydown', e => {
   if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); actions.save(); return; }
   if (mod && !e.shiftKey && e.code === 'KeyP') { e.preventDefault(); actions.print(); return; }
   if (isTyping(e)) return;
+  if (mod && !e.shiftKey && e.code === 'KeyF') { e.preventDefault(); openFind(); return; }
+  if (e.key === 'F3' && FIND.open) { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1); return; }
   if (e.code === 'Space') {
     e.preventDefault();
     if (!S.spaceDown) { S.spaceDown = true; viewer.classList.add('pan-ready'); }
@@ -2021,6 +2041,7 @@ window.addEventListener('keydown', e => {
   if (POLY && e.key === 'Backspace') { e.preventDefault(); POLY.pts.pop(); POLY.svg.innerHTML = previewMarkup(S.tool, {pts:POLY.pts}); if (!POLY.pts.length) cancelPoly(); return; }
   if (XS && e.key === 'Enter') { e.preventDefault(); confirmXSel(); return; }
   if (XS && e.key === 'Escape') { e.preventDefault(); cancelXSel(); return; }
+  if (e.key === 'Escape' && FIND.open) { closeFind(); return; }
   if (e.key === 'Escape') { hideCtx(); setTool('select'); return; }
   if (mod && !e.shiftKey && e.key.toLowerCase() === 'r') { e.preventDefault(); VIEW.rulers = !VIEW.rulers; saveView_(); applyViewAids(); return; }
   if (runKeyBinding(e)) return;   // user-configurable page / tab navigation (按鍵設定)
@@ -9754,6 +9775,142 @@ async function runPrint({dialog}){
 }
 
 /* ====================================================================
+   尋找與取代. A page's text is split into the lines 修改原文 edits (pageTextItems → lineOf → joinRowPieces), each
+   character knowing its piece; a query is looked for in each line (not across lines), with 區分大小寫 / 全字相符 /
+   全形＝半形. Every match is marked on its page (.fhit), the current one (.fhit.cur) is scrolled into view.
+   ==================================================================== */
+const FIND_KEY = 'pdfeditor.find.v1';
+const FIND = {open:false, q:'', opts:{case:false, word:false, width:true, scans:false}, hits:[], cur:-1, seq:0, lines:new Map(), timer:0, done:''};
+const findKey = () => FIND.q + '|' + JSON.stringify(FIND.opts) + '|' + S.version;   // what the hits were found for
+try { const o = JSON.parse(localStorage.getItem(FIND_KEY)); if (o && typeof o === 'object') Object.keys(FIND.opts).forEach(k => { if (typeof o[k] === 'boolean') FIND.opts[k] = o[k]; }); } catch (_) {}
+const saveFindOpts = () => { try { localStorage.setItem(FIND_KEY, JSON.stringify(FIND.opts)); } catch (_) {} };
+// a page's lines, top to bottom: {items, text, at:[{item, from, to}]} (at: where each piece's characters are in text)
+function findLines(i){
+  const key = S.version + ':' + i; if (FIND.lines.has(key)) return FIND.lines.get(key);
+  if (FIND.lines.size > 400) FIND.lines.clear();
+  const p = pageTextItems(i).then(items => {
+    const done = new Set(), out = [];
+    for (const it of items) {
+      if (done.has(it)) continue;
+      const line = lineOf(items, it); line.forEach(t => done.add(t));
+      let text = ''; const at = joinRowPieces(line).map((pc, k) => { const a = {item:line[k], from:text.length, to:text.length + line[k].str.length}; text += pc.text; return a; });
+      out.push({items:line, text, at, top:Math.min(...line.map(t => t.v.y)), left:Math.min(...line.map(t => t.v.x)), fs:line[0].fs});
+    }
+    return out.sort((a, b) => Math.abs(a.top - b.top) > Math.min(a.fs, b.fs) / 2 ? a.top - b.top : a.left - b.left);
+  }).catch(() => []);
+  FIND.lines.set(key, p); return p;
+}
+// the text as compared, the same length as the original: full-width letters as half-width (全形＝半形), lower case
+function normFind(t, o){
+  if (o.width) t = t.replace(/[！-～]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/　/g, ' ');
+  return o.case ? t : t.replace(/\p{Lu}/gu, c => { const l = c.toLowerCase(); return l.length === c.length ? l : c; });
+}
+const wordCh = c => !!c && /[\p{L}\p{N}_]/u.test(c) && !CJK_RE.test(c);
+// how far into a piece of text character c starts, as a share of the piece: by the characters' widths in a sans-serif face
+// (close to most fonts' proportions; Chinese characters all one em), not by counting characters
+const FIND_MEASURE = document.createElement('canvas').getContext('2d');
+function textFrac(str, c){
+  if (c <= 0) return 0; if (c >= str.length) return 1;
+  FIND_MEASURE.font = '100px sans-serif';
+  const all = FIND_MEASURE.measureText(str).width; if (!(all > 0)) return c / str.length;
+  return FIND_MEASURE.measureText(str.slice(0, c)).width / all;
+}
+// part of a piece of text (characters c0..c1 of it) as a box on the page, along the way it reads
+function pieceBox(it, c0, c1){
+  const f0 = it.vert ? c0 / Math.max(1, it.str.length) : textFrac(it.str, c0), f1 = it.vert ? c1 / Math.max(1, it.str.length) : textFrac(it.str, c1), v = it.v, dir = it.vert ? (it.rot + 90) % 360 : it.rot;
+  if (dir === 0) return {x:v.x + v.w * f0, y:v.y, w:v.w * (f1 - f0), h:v.h};
+  if (dir === 180) return {x:v.x + v.w * (1 - f1), y:v.y, w:v.w * (f1 - f0), h:v.h};
+  if (dir === 90) return {x:v.x, y:v.y + v.h * f0, w:v.w, h:v.h * (f1 - f0)};
+  return {x:v.x, y:v.y + v.h * (1 - f1), w:v.w, h:v.h * (f1 - f0)};
+}
+function hitBoxes(ln, s, e){
+  if (ln.boxes) return ln.boxes.slice(s, e).filter(Boolean);   // a line read by OCR: a box for each character
+  return ln.at.filter(a => a.to > s && a.from < e).map(a => pieceBox(a.item, Math.max(s, a.from) - a.from, Math.min(e, a.to) - a.from));
+}
+async function searchDoc(){
+  const seq = ++FIND.seq, o = {...FIND.opts}, q = FIND.q, before = FIND.hits[FIND.cur];
+  if (!S.pdf || !q) { FIND.hits = []; FIND.cur = -1; FIND.done = ''; paintFind(); return; }
+  setFindLabel('搜尋中…');
+  const nq = normFind(q, o), hits = [];
+  for (let i = 0; i < S.pages.length; i++) {
+    const lines = await findLines(i); if (seq !== FIND.seq) return;
+    lines.forEach((ln, li) => {
+      const t = normFind(ln.text, o);
+      for (let k = t.indexOf(nq); k >= 0; k = t.indexOf(nq, k + Math.max(1, nq.length))) {
+        if (o.word && (wordCh(ln.text[k - 1]) || wordCh(ln.text[k + nq.length]))) continue;
+        hits.push({i, li, s:k, e:k + nq.length, ocr:!!ln.ocr, boxes:hitBoxes(ln, k, k + nq.length), ctx:ln.text, line:ln});
+      }
+    });
+  }
+  FIND.hits = hits; FIND.done = q + '|' + JSON.stringify(o) + '|' + S.version;
+  // the same match as before when it is still there, else the first one from the current page on
+  const same = before && hits.findIndex(h => h.i === before.i && h.li === before.li && h.s === before.s);
+  FIND.cur = !hits.length ? -1 : same >= 0 ? same : Math.max(0, hits.findIndex(h => h.i >= S.current));
+  paintFind();
+  if (FIND.cur >= 0 && !(same >= 0)) showHit(FIND.cur);
+}
+function scheduleFind(ms = 150){ clearTimeout(FIND.timer); FIND.timer = setTimeout(searchDoc, ms); }
+function setFindLabel(t){ const n = $('#findN'); if (n) n.textContent = t; }
+function paintFind(){
+  $$('.fhit').forEach(d => d.remove());
+  if (FIND.open) S.els.forEach((_, i) => paintFindPage(i));
+  setFindLabel(!FIND.q ? '' : FIND.hits.length ? `第 ${FIND.cur + 1}／${FIND.hits.length} 筆` : '沒有找到');
+}
+function paintFindPage(i){
+  const el = S.els[i], ovl = el && el.querySelector('.ovl'), pg = S.pages[i]; if (!ovl || !pg) return;
+  ovl.querySelectorAll('.fhit').forEach(d => d.remove());
+  FIND.hits.forEach((h, k) => { if (h.i !== i) return; h.boxes.forEach(b => {
+    const d = document.createElement('div'); d.className = 'fhit' + (k === FIND.cur ? ' cur' : '');
+    Object.assign(d.style, {left:b.x / pg.w * 100 + '%', top:b.y / pg.h * 100 + '%', width:b.w / pg.w * 100 + '%', height:b.h / pg.h * 100 + '%'});
+    ovl.appendChild(d);
+  }); });
+}
+// the current match in view (its page shown first in one-page views)
+function showHit(k){
+  const h = FIND.hits[k]; if (!h || !S.els[h.i]) return;
+  const el = S.els[h.i]; if (!el.isConnected || el.style.display === 'none') scrollToPage(h.i);
+  requestAnimationFrame(() => {
+    const b = h.boxes[0] || {x:0, y:0, w:0, h:0}, r = el.getBoundingClientRect(), vr = viewer.getBoundingClientRect();
+    const y = r.top + b.y * S.scale - vr.top, x = r.left + b.x * S.scale - vr.left;
+    if (y < 40 || y + b.h * S.scale > vr.height - 40) viewer.scrollTop += y - vr.height / 3;
+    if (x < 20 || x + b.w * S.scale > vr.width - 20) viewer.scrollLeft += x - vr.width / 3;
+  });
+}
+function stepFind(d){
+  if (!FIND.hits.length) return;
+  FIND.cur = (FIND.cur + d + FIND.hits.length) % FIND.hits.length;
+  paintFind(); showHit(FIND.cur);
+}
+function openFind(){
+  if (!S.pdf) return;
+  const bar = $('#findBar'), q = $('#findQ'); FIND.open = true; bar.hidden = false;
+  bar.querySelectorAll('[data-fo]').forEach(b => b.classList.toggle('on', !!FIND.opts[b.dataset.fo]));
+  q.focus(); q.select();
+  if (FIND.q) searchDoc();
+}
+function closeFind(){
+  FIND.open = false; FIND.seq++; clearTimeout(FIND.timer); $('#findBar').hidden = true; $$('.fhit').forEach(d => d.remove());
+  viewer.focus({preventScroll:true});
+}
+(() => {
+  const bar = $('#findBar'), q = $('#findQ');
+  q.addEventListener('input', () => { FIND.q = q.value; scheduleFind(250); });
+  q.addEventListener('keydown', e => {
+    e.stopPropagation();   // the app's own keys stay out of the box
+    if (e.key === 'Enter') { e.preventDefault(); clearTimeout(FIND.timer); FIND.q = q.value; if (FIND.done !== findKey()) searchDoc(); else stepFind(e.shiftKey ? -1 : 1); }
+    if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
+    if (e.key === 'F3') { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1); }
+  });
+  bar.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.fa === 'next') stepFind(1);
+    if (b.dataset.fa === 'prev') stepFind(-1);
+    if (b.dataset.fa === 'close') closeFind();
+    if (b.dataset.fo) { const k = b.dataset.fo; FIND.opts[k] = !FIND.opts[k]; b.classList.toggle('on', FIND.opts[k]); saveFindOpts(); searchDoc(); }
+  });
+})();
+
+/* ====================================================================
    Sample document
    ==================================================================== */
 async function makeSample(){
@@ -9903,7 +10060,7 @@ function keyFromEvent(e){
 const RESERVED = [K('KeyO', 'O', {ctrl:1}), K('KeyS', 'S', {ctrl:1}), K('KeyZ', 'Z', {ctrl:1}), K('KeyY', 'Y', {ctrl:1}), K('KeyZ', 'Z', {ctrl:1, shift:1}),
   K('KeyC', 'C', {ctrl:1}), K('KeyX', 'X', {ctrl:1}), K('KeyV', 'V', {ctrl:1}), K('KeyW', 'W', {ctrl:1}), K('KeyA', 'A', {ctrl:1}), K('KeyP', 'P', {ctrl:1}),
   K('Tab', 'Tab', {ctrl:1}), K('Tab', 'Tab', {ctrl:1, shift:1}), K('Digit0', '0', {ctrl:1}), K('Equal', '=', {ctrl:1}), K('Minus', '-', {ctrl:1}),
-  K('Space', '空白鍵'), K('Escape', 'Esc'), K('Delete', 'Delete'), K('KeyR', 'R', {ctrl:1}), K('Enter', 'Enter'),
+  K('Space', '空白鍵'), K('Escape', 'Esc'), K('Delete', 'Delete'), K('KeyR', 'R', {ctrl:1}), K('Enter', 'Enter'), K('KeyF', 'F', {ctrl:1}), K('F3', 'F3'), K('F3', 'F3', {shift:1}),
   K('BracketRight', ']', {ctrl:1}), K('BracketRight', ']', {ctrl:1, shift:1}), K('BracketLeft', '[', {ctrl:1}), K('BracketLeft', '[', {ctrl:1, shift:1})];
 const isReserved = b => b.type === 'key' && RESERVED.some(r => sameBind(r, b));
 function findBinding(b){ for (const a of BIND_ACTIONS) if ((BINDS[a.id] || []).some(x => sameBind(x, b))) return a; return null; }
@@ -10338,6 +10495,8 @@ window.__pdfapp = {
   },
   imageBoxes:i => detectImages(i),
   multi:() => MS ? {i:MS.i, ids:MS.items.map(a => a.id)} : null,
+  switchTab,
+  find:() => ({open:FIND.open, q:FIND.q, n:FIND.hits.length, cur:FIND.cur, hits:FIND.hits.map(h => ({i:h.i, ocr:!!h.ocr, text:h.ctx}))}),
   parseRange, printPlan, printPlanNow:() => PR && PR.plan,
   printState:() => PR && PR.plan ? {open:true, sides:PR.plan.sides.length, sheets:PR.plan.sheets, pos:PR.cur, paper:PR.plan.paper, duplex:PR.plan.duplex, error:PR.err,
     items:(PR.plan.sides[PR.cur] || {items:[]}).items, label:(PR.plan.sides[PR.cur] || {}).label || ''} : {open:false},
