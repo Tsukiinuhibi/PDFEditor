@@ -10154,8 +10154,15 @@ function urlWhy(r){
   if (r.why === 'bad') return '網址要以 http:// 或 https:// 開頭';
   return '無法連線：' + (r.msg || '');
 }
+let URLOPEN = false;   // the window is up or coming up
 async function openUrlDialog(pre = '', {auto = false} = {}){
   if (!DESK || !DESK.url) { toast('這個版本不能從網址開啟', 'err'); return; }
+  // another window open (a download under way, printing, settings…): a dropped link or a second call is let go
+  if (URLOPEN || $('#mask').classList.contains('show')) { if (auto) toast('請先關掉目前的視窗，再拖入連結', 'err'); return; }
+  URLOPEN = true;
+  try { await urlDialog(pre, auto); } finally { URLOPEN = false; }
+}
+async function urlDialog(pre, auto){
   if (!pre) { try { const c = String(await DESK.clipboardText() || '').trim(); if (URL_OK(c) && !/\s/.test(c)) pre = c; } catch (_) {} }
   const body = document.createElement('div'); body.style.width = 'min(520px, 80vw)';
   body.innerHTML = `<div class="field"><label>PDF 的網址</label><input type="text" id="urlIn" placeholder="https://example.com/檔案.pdf" spellcheck="false" autocomplete="off"></div>

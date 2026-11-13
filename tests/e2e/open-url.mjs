@@ -19,7 +19,13 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, {'Content-Type':'application/octet-stream', 'Content-Disposition':`attachment; filename="report.pdf"; filename*=UTF-8''${encodeURIComponent('報告.pdf')}`});
     res.write(PDF.subarray(0, 1000)); setTimeout(() => res.end(PDF.subarray(1000)), 200); return;
   }
+  if (u === '/raw') {   // the name as raw UTF-8 bytes in filename="…" (Node writes a header string's characters as single bytes)
+    res.writeHead(200, {'Content-Type':'application/pdf', 'Content-Disposition':Buffer.from('attachment; filename="報告.pdf"').toString('latin1')}); res.end(PDF); return;
+  }
+  if (u === '/bad') { res.writeHead(200, {'Content-Type':'application/pdf', 'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent('a/b?c*.pdf')}`}); res.end(PDF); return; }
+  if (u === '/files/' + encodeURIComponent('報告2.pdf')) { res.writeHead(200, {'Content-Type':'application/pdf'}); res.end(PDF); return; }
   if (u === '/page.pdf') { res.writeHead(200, {'Content-Type':'text/html'}); res.end('<!doctype html><html><body>Please sign in</body></html>'); return; }
+  if (u === '/huge.pdf') { slow.add(res); res.writeHead(200, {'Content-Type':'application/pdf', 'Content-Length':600 * 1024 * 1024}); res.write(PDF.subarray(0, 1024)); req.on('close', () => slow.delete(res)); return; }
   if (u === '/slow.pdf') { slow.add(res); res.writeHead(200, {'Content-Type':'application/pdf', 'Content-Length':PDF.length * 50}); res.write(PDF.subarray(0, 4096)); req.on('close', () => slow.delete(res)); return; }
   res.writeHead(404, {'Content-Type':'text/plain'}); res.end('not here');
 });
@@ -81,6 +87,29 @@ await drop(`${BASE}/page.pdf`); await win.waitForTimeout(3000);
 d = await dlg();
 check('a link to a web page: the window says it is not a PDF, nothing opened', d.open && d.err.includes('不是 PDF 檔') && (await tabs()).length === 5, d);
 await win.click('#urlCancel'); await win.waitForTimeout(400);
+
+// ---- part 3 (final review): file names; a link dropped while a download runs or over another window -----------------------
+for (const u of ['/raw', '/bad', '/files/' + encodeURIComponent('報告2.pdf')]) { await win.keyboard.press('Control+Shift+O'); await win.waitForTimeout(600); await fill(BASE + u); await go(); }
+t = await tabs();
+check('names: raw UTF-8 filename="報告.pdf" → 報告.pdf; a/b?c*.pdf → b_c_.pdf; %E5… in the address → 報告2.pdf', JSON.stringify(t.slice(-3)) === JSON.stringify(['報告.pdf', 'b_c_.pdf', '報告2.pdf']), t);
+const nTabs = t.length;
+await win.keyboard.press('Control+Shift+O'); await win.waitForTimeout(600);
+await fill(`${BASE}/huge.pdf`); await go(1500);
+const big = await dlg();
+check('a file over 500 MB (by its Content-Length): 「檔案太大（超過 500 MB）」, nothing opened', big.open && big.err.includes('檔案太大') && (await tabs()).length === nTabs, big);
+await win.keyboard.press('Escape'); await win.waitForTimeout(500);
+await win.keyboard.press('Control+Shift+O'); await win.waitForTimeout(600);
+await fill(`${BASE}/slow.pdf`); await win.click('#urlGo'); await win.waitForTimeout(1200);
+await drop(`${BASE}/files/a.pdf`); await win.waitForTimeout(2500);
+const mid = await dlg();
+check('a link dropped while a download runs: left alone (the window still shows that download), nothing opened', mid.open && mid.val.endsWith('/slow.pdf') && mid.st.includes('下載中') && (await tabs()).length === nTabs, {mid, tabs:(await tabs()).length});
+await win.click('#urlCancel'); await win.waitForTimeout(1200); await win.click('#urlCancel'); await win.waitForTimeout(500);
+await Ev(() => { window.__pdfapp.actions.settings(); }); await win.waitForTimeout(800);   // (its promise ends when the window closes)
+const title0 = await Ev(() => document.querySelector('#modal .mh').textContent);
+await drop(`${BASE}/files/a.pdf`); await win.waitForTimeout(2500);
+const over = await Ev(() => ({title:document.querySelector('#modal .mh').textContent, shown:document.querySelector('#mask').classList.contains('show')}));
+check('a link dropped over another window (設定): that window stays, nothing downloaded or opened', over.shown && over.title === title0 && !title0.includes('從網址開啟') && (await tabs()).length === nTabs, {title0, over});
+await win.keyboard.press('Escape'); await win.waitForTimeout(500);
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 slow.forEach(r => r.destroy()); server.close();
