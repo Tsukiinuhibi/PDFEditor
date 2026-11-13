@@ -10375,24 +10375,26 @@ function linkLook(doc, t, i, box){
 // a copy of the chosen pages (0-based) with every visible annotation drawn into the page content (PDF 32000 12.5.5: the
 // appearance's box through its /Matrix, fitted onto /Rect) and no annotations left. Notes, links, pop-ups, hidden ones and
 // those on hidden layers stay out. Text boxes are not drawn (ours are pictures of their text): their text comes back per
-// page as {rect (PDF space), lines: [[runs]]} — ours from PDFE_RT, others' from /Contents. The document is not touched.
-// → {bytes, boxes: [[text box] per page]}
-async function flattenForExport(pages){
+// page as {rect (PDF space), lines: [[runs]]} — ours from PDFE_RT, others' from /Contents. With realText (for Word, which
+// reads text and not pictures), ours are written onto the page as real text instead (realTextBox), or drawn as their
+// picture when that cannot be done. The document is not touched. → {bytes, boxes: [[text box] per chosen page]}
+async function flattenForExport(pages, {realText = false} = {}){
   const doc = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false}), ctx = doc.context;
-  const keep = new Set(pages); for (let k = doc.getPageCount() - 1; k >= 0; k--) if (!keep.has(k)) doc.removePage(k);
+  const keep = [...new Set(pages)].sort((a, b) => a - b);
   const L = readLayers(doc), ids = new Set(L.map(l => l.id)), hid = new Set(L.filter(l => !l.visible).map(l => l.id));
   const num = v => v instanceof PDFNumber ? v.asNumber() : 0;
   const boxes = [];
-  doc.getPages().forEach((page, pi) => {
-    const tbs = []; boxes.push(tbs);
-    const annots = page.node.lookupMaybe(N_('Annots'), PDFArray); if (!annots) return;
+  for (const pi of keep) {   // (numbered as in the document: the real-text writer reads the page's geometry from S.pages)
+    const page = doc.getPage(pi), tbs = []; boxes.push(tbs);
+    const annots = page.node.lookupMaybe(N_('Annots'), PDFArray); if (!annots) continue;
     const ops = [], X = {};
     for (let k = 0; k < annots.size(); k++) {
       const d = annots.lookupMaybe(k, PDFDict); if (!d) continue;
       const sub = String(d.get(N_('Subtype')) || '').slice(1), F = num(d.get(N_('F')));
       if (['Text', 'Link', 'Popup'].includes(sub) || (F & 2) || (F & 32)) continue;
       const lay = ids.size ? ocOfDict(doc, d, ids) : null; if (lay && hid.has(lay)) continue;
-      if (sub === 'FreeText') {
+      if (sub === 'FreeText' && realText && await realTextBox(doc, pi, d)) continue;
+      if (sub === 'FreeText' && !realText) {
         const rc = d.lookupMaybe(N_('Rect'), PDFArray), rt = readRT(d); if (!rc) continue;
         let lines = rt && Array.isArray(rt.lines) ? rt.lines : null;
         if (!lines) {
@@ -10418,12 +10420,27 @@ async function flattenForExport(pages){
     }
     const {XObject} = page.node.normalizedEntries();
     page.node.delete(N_('Annots'));
-    if (!ops.length) return;
+    if (!ops.length) continue;
     Object.entries(X).forEach(([k, ref]) => XObject.set(N_(k), ref));
     page.node.wrapContentStreams(ctx.getPushGraphicsStateContentStream(), ctx.getPopGraphicsStateContentStream());
     page.node.addContentStream(ctx.register(ctx.stream(ops.join('\n'))));
-  });
+  }
+  const kept = new Set(keep); for (let k = doc.getPageCount() - 1; k >= 0; k--) if (!kept.has(k)) doc.removePage(k);
   return {bytes:await doc.save({useObjectStreams:false}), boxes};
+}
+// one of our text boxes (PDFE_RT) written onto page i of the copy as real text, as 修改原文 writes it; false when it cannot
+// be (turned or upright-vertical boxes, characters no font has, a font that will not embed): then its picture is drawn
+async function realTextBox(doc, i, d){
+  const rt = readRT(d), rc = d.lookupMaybe(N_('Rect'), PDFArray);
+  if (!rt || !Array.isArray(rt.lines) || rt.vert || !rc || boxTurn(d)) return false;
+  try {
+    let lines = await resolveRealFonts(rt.lines, {quiet:true}), chk = await realTextCheck(lines);
+    if (chk.missing.length) { lines = mergeRuns(await missingToDefault(lines)); chk = await realTextCheck(lines); }
+    if (chk.image) return false;
+    const r = S.pages[i].vp1.convertToViewportRectangle(numArr(rc));
+    await writePageText(doc, i, Math.min(r[0], r[2]), Math.min(r[1], r[3]), lines, rt.box || {}, {rot:0});
+    return true;
+  } catch (e) { console.warn(e); return false; }
 }
 
 const WD_CJK = /[⺀-鿿豈-﫿＀-￯　-〿]/;
@@ -10687,6 +10704,7 @@ async function openWordDialog(){
     const some = $b('#wdScope').value === 'range'; $b('#wdRange').style.display = some ? '' : 'none';
     const ok = !!chosen(); setErr(ok || !$b('#wdRange').value.trim() ? '' : `頁碼要在 1～${n} 之間，例如 1-3, 5`);
     const g = $('#wdGo'); if (g && !WORDJOB && !done) g.disabled = !ok;
+    if (!WORDJOB) $b('#wdOcr').disabled = $b('#wdHow').value === 'word';   // (Word reads scanned pages itself)
   };
   const run = async () => {
     if (done) { if (DESK && done.path) DESK.openPath(done.path); return null; }
@@ -10698,31 +10716,41 @@ async function openWordDialog(){
       where = await DESK.chooseSave(dir ? dir + (S.handle.path.includes('\\') ? '\\' : '/') + fn : fn, {avoid:orig ? [orig] : []});
       if (!where) return undefined;   // no place chosen: the window stays
     }
-    const job = WORDJOB = {cancel:false}, inputs = [...body.querySelectorAll('select,input')];
+    const job = WORDJOB = {cancel:false, word:null}, inputs = [...body.querySelectorAll('select,input')], byWord = $b('#wdHow').value === 'word' && hasWord;
     setErr(''); $('#wdGo').disabled = true; inputs.forEach(x => { x.disabled = true; });
     try {
       setSt('準備中…');
-      const flat = await flattenForExport(pages); if (job.cancel) throw new Error('cancel');
-      const out = await builtinDocx(flat, {job, ocr:$b('#wdOcr').checked, step:(k, m, note = '') => setSt(`轉換中：第 ${k}／${m} 頁${note}`)});
-      if (job.cancel) throw new Error('cancel');
+      const flat = await flattenForExport(pages, {realText:byWord}); if (job.cancel) throw new Error('cancel');
       const name = where ? where.split(/[\\/]/).pop() : fn;
-      if (DESK) await DESK.writeFile(where, new Uint8Array(await out.arrayBuffer()));   // (makeZip gives a Blob)
-      else if (!(await saveFile(fn, new Blob([out], {type:DOCX_MIME})))) throw new Error('cancel');
+      if (byWord) {   // Word converts the flattened copy in the background and writes the .docx itself
+        setSt('Word 轉換中…（Word 在背景執行，可能需要一點時間）');
+        const r = await DESK.word.convert(job.word = 'w' + Date.now().toString(36), flat.bytes, where);
+        if (!r || !r.ok) { if (job.cancel || (r && r.why === 'cancel')) throw new Error('cancel'); throw Object.assign(new Error(r && r.why === 'timeout' ? 'Word 超過 10 分鐘還沒有完成' : (r && r.msg) || '原因不明'), {word:true}); }
+      } else {
+        const out = await builtinDocx(flat, {job, ocr:$b('#wdOcr').checked, step:(k, m, note = '') => setSt(`轉換中：第 ${k}／${m} 頁${note}`)});
+        if (job.cancel) throw new Error('cancel');
+        if (DESK) await DESK.writeFile(where, new Uint8Array(await out.arrayBuffer()));   // (makeZip gives a Blob)
+        else if (!(await saveFile(fn, new Blob([out], {type:DOCX_MIME})))) throw new Error('cancel');
+      }
       done = {path:where, name}; setSt('已轉存成 Word：' + name); toast('已轉存成 Word：' + name);
       if (!DESK) return null;
       $('#wdGo').textContent = '開啟'; $('#wdGo').disabled = false; $('#wdCancel').textContent = '關閉';
       return undefined;
     } catch (e) {
-      inputs.forEach(x => { x.disabled = false; }); WORDJOB = null; check();   // (first: check() rewrites the error line)
-      setSt(e && e.message === 'cancel' ? '已取消' : ''); if (!(e && e.message === 'cancel')) setErr('轉存失敗：' + (e && e.message || e));
+      inputs.forEach(x => { x.disabled = false; }); WORDJOB = null;
+      if (e && e.word) $b('#wdHow').value = 'builtin';   // Word failed: the built-in converter is chosen for the next try
+      check();   // (first: check() rewrites the error line)
+      setSt(e && e.message === 'cancel' ? '已取消' : '');
+      if (e && e.word) setErr(`Word 轉換失敗：${e.message}。已改成程式內建轉換，再按一次〔轉存〕。`);
+      else if (!(e && e.message === 'cancel')) setErr('轉存失敗：' + (e && e.message || e));
       return undefined;
     } finally { WORDJOB = null; }
   };
   await openModal({title:'轉存成 Word', body, buttons:[
-    {label:'取消', id:'wdCancel', handler:() => { if (WORDJOB) { WORDJOB.cancel = true; return undefined; } return null; }},
+    {label:'取消', id:'wdCancel', handler:() => { if (WORDJOB) { WORDJOB.cancel = true; if (WORDJOB.word) DESK.word.cancel(WORDJOB.word); return undefined; } return null; }},
     {label:'轉存', id:'wdGo', primary:true, handler:run},
   ], onOpen:() => { $b('#wdHow').value = hasWord ? 'word' : 'builtin'; body.addEventListener('input', check); body.addEventListener('change', check); check(); }});
-  if (WORDJOB) WORDJOB.cancel = true;   // closed (Esc) during a conversion: it stops
+  if (WORDJOB) { WORDJOB.cancel = true; if (WORDJOB.word) DESK.word.cancel(WORDJOB.word); }   // closed (Esc) during a conversion: it stops
 }
 
 /* ====================================================================

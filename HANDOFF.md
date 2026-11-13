@@ -248,6 +248,16 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - Ctrl＋點（Mac 是 ⌘）：`pagesEl` 的 capture `pointerdown`，點在 `S.linkCache` 裡某個連結的框內（重疊時取面積最小的）→ `followLink`：頁面連結 `scrollToPage`；網址只開 http、https、mailto（主程式 `app:open-external` 也只放行這三種，其他提示「這個連結不能開啟」）。接下來那一次 click 會被吃掉，底下的物件不會反應。點在文字編輯區、輸入框、按鈕上不處理。
 - 測試 `links.mjs`：3 頁（第 2 頁 /Rotate 90；第 3 頁有別的程式做的命名目的地連結，壓在一個矩形上）：建立網址／頁面／郵件連結、頁碼超出範圍、旋轉頁的位置、細藍框畫得出來而且框內不變；`.lnk` 與提示、修改（換網址、改外觀）、刪除與復原、修改命名目的地的連結（外觀不動）、連結工具與選取工具下 Ctrl＋點（攔下主程式的 `shell.openExternal`）、選取工具下點到連結底下的矩形；審查後補的：網址含不成對的 `)`、中文電子郵件、別的程式用 `/BS` 畫的紅框（改目的地保留、改成不顯示框就拿掉）、連到別的檔案的連結（其他種類、保持原樣）、210 頁的文件每頁都看過之後 Ctrl＋點第 1 頁。
 
+### 3.9.15 轉存 Word（v1.0.42）
+- 入口：「輸出」分段按鈕 `ACTION_MENUS.output` 的〔轉存 Word〕（選單上顯示「轉存成可編輯的 Word 檔（.docx）…」），`openWordDialog()`。視窗：頁面（全部／指定範圍，`parseRange`）、轉換方式（`#wdHow`：用 Microsoft Word 轉換／程式內建轉換；`word:detect` 找不到 Word 時第一項停用）、掃描頁先做文字辨識（`#wdOcr`，只有內建轉換用）。〔轉存〕→ 先 `file:choose-save` 選位置（不能選原本的 PDF）→ 才轉換，進度在 `#wdSt`，〔取消〕在頁與頁之間停（Word 轉換時結束 PowerShell 和它開的 Word）；完成後按鈕變〔開啟〕（`app:open-path`）〔關閉〕。Word 失敗時自動改選內建轉換，再按一次〔轉存〕。
+- `flattenForExport(pages, {realText})`：在 `S.bytes` 的副本上，把看得見的註解依 PDF 規格 12.5.5（外觀的 BBox 經 /Matrix 對到 /Rect）畫進頁面內容（`/PDFEFlat<頁>_<序>`，頁面可能共用資源所以名字要不同），刪掉 /Annots；便利貼、連結、Popup、隱藏的（/F 2、32）、隱藏圖層上的不轉。**文字方塊在這個程式裡是「文字的圖片」**（/AP 是影像，文字在 `PDFE_RT`），所以不畫圖片：內建轉換時把文字交給轉換器（`boxes`，每頁一組 {rect, lines}；別的程式做的用 /Contents、/DA 的字級）；Word 轉換時（`realText`）用修改原文的 `writePageText` 寫成真正的文字（`realTextBox`；轉向、直書、字型裡沒有的字就退回畫圖片）。回傳 `{bytes, boxes}`；文件本身不動、不進復原。
+- 內建轉換（`builtinDocx` → 每頁 `wordSection`）：pdf.js 讀副本。`wordItems`（`getTextContent` 含標記內容，`PDFE_Hide` 裡的字不要；先 `getOperatorList` 讓 `commonObjs` 有字型名稱與粗斜體）→ `wordLines`（同一條基線、中間空很大就分開；字之間有空隙加空白，中文之間不加）→ `wordCut`（XY 切割的閱讀順序：先找跨整區的上下空隙，再找欄間空隙、左欄先；每行記住所在欄的左邊 `col`）→ `wordParagraphs`（字級、行距、左邊對齊、上一行寫滿、粗細相同才接成一段；行尾連字號接小寫字母就拿掉）→ 對齊（單行置中／靠右）、段前距（跟上一段的距離）、縮排（從所在欄的左邊算）、行距（atLeast 基線距離）。字型 `wordFonts(name)`：細明體、標楷體、正黑體、Times New Roman、Arial…，認不得就交給 Word 的預設（Calibri／新細明體）。
+- 圖片：`imageBoxesOf(ops, vt, W, H)`（從 `detectImages` 拆出來，兩邊共用）→ 把副本那一頁畫成 144 dpi（`wordRender`）裁切成 PNG（`wordCrop`），依位置插在段落之間，太大就縮到版面內。佔頁面 60% 以上的圖片：頁面沒有字 → 掃描頁，勾文字辨識就 `wordOcrLines`（跟尋找的掃描頁辨識一樣：300 dpi、留白邊、Tesseract `findWorker`），不勾就整頁一張圖；有字 → 已經做過辨識的掃描檔，底圖不放（不然字出現兩次）。
+- .docx：`docxBytes(sections)` 寫 OOXML（每頁一個分節，頁面大小與方向、邊界從內容位置算，夾在 18～72 pt），用 `makeZip`（現在可以 `deflate`，pako 1.0.11 改成直接相依）打包；`DOCX_MIME`。
+- Word 轉換（`main.js`）：`word:detect` 讀 `HKCR\Word.Application\CurVer`（15 以上才有 PDF 轉換）。`word:convert(id, pdf, out)`：副本寫到暫存資料夾，`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File convert.ps1`（`WORD_PS`），路徑用環境變數 `PDFE_IN`／`PDFE_OUT` 傳；腳本把 `HKCU\Software\Microsoft\Office\<版本>.0\Word\Options\DisableConvertPdfWarning` 暫時設成 1、轉完還原，`Documents.Open($in, $false, $true, $false)`、`SaveAs2($out, 16)`、`finally` 一定 `Quit`；成功印 `PDFE_OK`，失敗印 `PDFE_ERR:訊息`（UTF-8）。Word 寫到暫存資料夾，成功才複製到使用者選的位置，暫存資料夾最後刪掉。10 分鐘逾時；取消或逾時用 `killWord` 結束這次開的 Word（命令列有 Automation、開始時間在這次之後的 WINWORD.EXE）。
+- **真正的 Word 轉換還沒有在 Windows 實機上確認過**（開發環境是 Linux、沒有 Word，測試把 `word:*` 換成假的）。要確認：有 Word 的電腦上預設選 Word、轉換時不跳出 Word 視窗或詢問、中文路徑、取消後工作管理員裡沒有殘留的 WINWORD.EXE、Word 的「將 PDF 轉換成 Word」提示設定轉完後跟原本一樣。
+- 測試 `word.mjs`：第 1 部分（標題、英文段落、中文段落、拖進來的圖片、橫向頁、轉向頁上的文字方塊、文件不變）；第 2 部分（圖片位置、掃描頁辨識與不辨識、已有文字的掃描頁、字型對應、200 頁轉換中取消）；第 3 部分（主程式的 `word:detect`／`word:convert`／`app:open-path` 換成假的：選 Word、送出的 PDF 只有選的頁面、沒有註解、文字方塊是真正的文字、〔開啟〕、Word 失敗改用內建、`WORD_PS` 的內容）。`window.__pdfapp.flatten`、`wordFonts` 是測試用的鉤子。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。
@@ -263,7 +273,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
   - 目錄 v2（`pdfeditor.fontcat.v2`）多記 `embed`（OS/2 fsType：`ok`／`full`／`no`）、`vert`（`vhea`＋`vmtx`＋GSUB `vert`）、`bytes`，以及每個家族的所有字面 `faces`（`FONT_FACES` 存 `queryLocalFonts` 的原物件）。測試用 `registerTestFont` 把字型位元組當成已安裝字型（`TEST_FONTS`）。
   - 格式列與 `currentTBStyle` 讀游標旁邊那段文字的樣式（`caretStyleNode`）：游標在元素之間時（例如剛打開編輯器、游標在最後）取前一段文字。
 - localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, find.v1, fontcat.v2, fontid.v1, fonts.recent.v1, lastact.v1, seenversion.v1, lasttool.v1, pagecolor, people.v1, print.v1, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
-- 測試用的鉤子：`window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars, getAnns, TBE, sel, links, …}`，端對端測試會用到，不要刪。
+- 測試用的鉤子：`window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars, getAnns, TBE, sel, links, flatten, wordFonts, …}`，端對端測試會用到，不要刪。
 
 ---
 

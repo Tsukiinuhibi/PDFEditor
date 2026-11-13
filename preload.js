@@ -28,6 +28,11 @@ contextBridge.exposeInMainWorld('desktop', {
     onProgress: cb => ipcRenderer.on('url:progress', (_e, id, got, total) => cb(id, got, total)),
   },
   clipboardText: () => ipcRenderer.invoke('app:clipboard-text'),
+  word: {
+    detect: () => ipcRenderer.invoke('word:detect'),
+    convert: (id, pdf, out) => ipcRenderer.invoke('word:convert', id, pdf, out),
+    cancel: id => ipcRenderer.invoke('word:cancel', id),
+  },
   print: {
     printers: () => ipcRenderer.invoke('print:printers'),
     run: opts => ipcRenderer.invoke('print:run', opts),

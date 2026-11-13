@@ -1,7 +1,7 @@
 // 轉存 Word: the document as it is now (our annotations flattened onto the pages) becomes an editable .docx — by
 // Microsoft Word when it is installed, otherwise by the built-in converter (text → paragraphs, sizes, bold, italic,
 // pictures, scanned pages). The save dialog is answered by the test; the .docx is unzipped and read.
-import { launchPath, TMP } from './_env.mjs';
+import { launchPath, TMP, ROOT } from './_env.mjs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import zlib from 'zlib';
@@ -161,6 +161,55 @@ await win.click('#wdCancel'); await win.waitForTimeout(2500);
 const stopped = await Ev(() => ({open:document.querySelector('#mask').classList.contains('show'), st:(document.querySelector('#wdSt') || {}).textContent || '', go:(document.querySelector('#wdGo') || {}).textContent || ''}));
 check('取消 during a long conversion (「轉換中：第 N／200 頁」): it stops, nothing is written, the window stays (「已取消」) to try again',
   /轉換中：第 \d+／200 頁/.test(mid) && stopped.open && stopped.st === '已取消' && stopped.go === '轉存' && !fs.existsSync(OUT4), {mid, stopped, file:fs.existsSync(OUT4)});
+
+await win.click('#wdCancel'); await win.waitForTimeout(400);   // (the window stayed open after 取消)
+// ---- part 3: Microsoft Word (replaced in the main process here: Linux has no Word) ----------------------------------------
+const pdfjs = await import('../../node_modules/pdfjs-dist/legacy/build/pdf.mjs');
+const pageTexts = async bytes => { const dd = await pdfjs.getDocument({data:new Uint8Array(bytes), verbosity:0}).promise, out = [];
+  for (let k = 1; k <= dd.numPages; k++) out.push((await (await dd.getPage(k)).getTextContent()).items.map(it => it.str).join(' ')); return out; };
+await app.evaluate(({ipcMain}) => {
+  global.__word = {sent:null, out:null, opened:null, fail:false};
+  ipcMain.removeHandler('word:detect'); ipcMain.handle('word:detect', () => ({ok:true, version:16}));
+  ipcMain.removeHandler('word:convert'); ipcMain.handle('word:convert', async (_e, id, pdf, out) => {
+    if (global.__word.fail) return {ok:false, why:'word', msg:'測試用的錯誤'};
+    global.__word.sent = Buffer.from(pdf).toString('base64'); global.__word.out = out; return {ok:true};
+  });
+  ipcMain.removeHandler('app:open-path'); ipcMain.handle('app:open-path', (_e, p) => { global.__word.opened = p; return ''; });
+});
+await win.locator('.dtab').first().click(); await win.waitForTimeout(1200);
+const OUT5 = path.join(TMP, 'byword.docx'); await answerSave(OUT5);
+await win.click('[data-amenu="output"] .sp-arr'); await win.waitForTimeout(300);
+await win.click('#toolMenu button:has-text("Word 檔")'); await win.waitForTimeout(800);
+const dw = await Ev(() => ({name:window.__pdfapp.S.name, how:document.querySelector('#wdHow').value, wordOn:!document.querySelector('#wdHow option[value="word"]').disabled, ocrOff:document.querySelector('#wdOcr').disabled}));
+check('Word on this computer: 「用 Microsoft Word 轉換」 is chosen; 掃描頁文字辨識 is off (Word reads scans itself)', dw.name === 'word.pdf' && dw.how === 'word' && dw.wordOn && dw.ocrOff, dw);
+await Ev(() => { const s = document.querySelector('#wdScope'); s.value = 'range'; s.dispatchEvent(new Event('change', {bubbles:true})); const r = document.querySelector('#wdRange'); r.value = '1, 3'; r.dispatchEvent(new Event('input', {bubbles:true})); });
+await win.waitForTimeout(200);
+await win.click('#wdGo');
+await win.waitForFunction(() => (document.querySelector('#wdGo') || {}).textContent === '開啟', null, {timeout:60000});
+const sentB64 = await app.evaluate(() => global.__word.sent), sentOut = await app.evaluate(() => global.__word.out);
+const sent = sentB64 ? Buffer.from(sentB64, 'base64') : null, sentDoc = sent ? await PDFDocument.load(sent) : null;
+const sentTexts = sent ? await pageTexts(sent) : [];
+check('Word gets the chosen pages (1 and 3) flattened: no annotations left, the text box written as real text', !!sentDoc && sentDoc.getPageCount() === 2
+  && sentDoc.getPages().every(pg => { const an = pg.node.Annots(); return !an || an.size() === 0; }) && /Quarterly Report/.test(sentTexts[0] || '') && /旋轉頁的方塊/.test((sentTexts[1] || '').replace(/\s/g, '')) && sentOut === OUT5,
+  {pages:sentDoc && sentDoc.getPageCount(), sentTexts, sentOut});
+await win.click('#wdGo'); await win.waitForTimeout(600);
+const opened = await app.evaluate(() => global.__word.opened), closed = !(await Ev(() => document.querySelector('#mask').classList.contains('show')));
+check('〔開啟〕 opens the .docx with the computer\'s program, and the window closes', opened === OUT5 && closed, {opened, closed});
+await app.evaluate(() => { global.__word.fail = true; });
+const OUT6 = path.join(TMP, 'fallback.docx'); await answerSave(OUT6);
+await win.click('[data-amenu="output"] .sp-arr'); await win.waitForTimeout(300);
+await win.click('#toolMenu button:has-text("Word 檔")'); await win.waitForTimeout(800);
+await win.click('#wdGo');
+await win.waitForFunction(() => /Word 轉換失敗/.test((document.querySelector('#wdErr') || {}).textContent || ''), null, {timeout:60000});
+const failed1 = await Ev(() => ({err:document.querySelector('#wdErr').textContent, how:document.querySelector('#wdHow').value, go:document.querySelector('#wdGo').textContent}));
+await win.click('#wdGo');
+const fb = await waitFile(OUT6), zf = fb ? unzip(fs.readFileSync(OUT6)) : null;
+check('Word fails: 「Word 轉換失敗：…」 and the built-in converter is chosen; 〔轉存〕 again makes the .docx that way',
+  failed1.err.includes('測試用的錯誤') && failed1.how === 'builtin' && failed1.go === '轉存' && !!zf && /Quarterly Report/.test(zf['word/document.xml'].toString('utf8')), {failed1, fb});
+await win.click('#wdCancel'); await win.waitForTimeout(300);
+const mainSrc = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8'), ps = (mainSrc.match(/const WORD_PS = `([\s\S]*?)`;/) || [])[1] || '';
+check('the script Word runs: paths from the environment, opened read-only without asking, saved as .docx, Word always closed, the PDF question turned off and back',
+  ps.includes('$env:PDFE_IN') && ps.includes('$env:PDFE_OUT') && ps.includes('Documents.Open($in, $false, $true, $false)') && /SaveAs2\(\$out, 16\)/.test(ps) && /finally[\s\S]*Quit\(/.test(ps) && /DisableConvertPdfWarning[\s\S]*Remove-ItemProperty/.test(ps), ps.slice(0, 200));
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
