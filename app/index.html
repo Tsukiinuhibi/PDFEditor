@@ -10278,6 +10278,10 @@ $('#zIn').addEventListener('blur', updateZoomUI);
 ['dragleave', 'drop'].forEach(ev => window.addEventListener(ev, e => { e.preventDefault(); if (ev === 'dragleave' && e.relatedTarget) return; viewer.classList.remove('drop'); }));
 window.addEventListener('drop', e => {
   const f = [...(e.dataTransfer && e.dataTransfer.files || [])];
+  if (!f.length && e.dataTransfer) {   // a link dragged in from a browser: download it (the window shows how it goes)
+    const u = (e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain') || '').split(/\r?\n/).map(x => x.trim()).find(x => x && !x.startsWith('#'));
+    if (URL_OK(u) && !/\s/.test(u)) { openUrlDialog(u, {auto:true}); return; }
+  }
   const isPdf = x => /\.pdf$/i.test(x.name) || x.type === 'application/pdf';
   const pdfs = f.filter(isPdf);
   if (pdfs.length > 1) { (async () => { for (const x of pdfs) { const fp = DESK && DESK.pathForFile(x); if (fp) await openPath(fp); else await openFile(x); } })(); return; }

@@ -72,6 +72,16 @@ await win.click('#urlGo'); await win.waitForTimeout(1200);
 await win.keyboard.press('Escape'); await win.waitForTimeout(2500);
 check('the window closed during a download: the download stops, nothing opens later', !(await dlg()).open && (await tabs()).length === 4 && !slow.size, {tabs:await tabs(), slow:slow.size});
 
+// ---- part 2: a link dropped on the window ---------------------------------------------------------------------------------
+const drop = u => Ev(u => { const dt = new DataTransfer(); dt.setData('text/uri-list', u); window.dispatchEvent(new DragEvent('drop', {dataTransfer:dt, bubbles:true, cancelable:true})); }, u);
+await drop(`${BASE}/files/a.pdf`); await win.waitForTimeout(3500);
+t = await tabs();
+check('a link dropped on the window: downloaded and opened (a.pdf)', t.length === 5 && t[4] === 'a.pdf' && !(await dlg()).open, t);
+await drop(`${BASE}/page.pdf`); await win.waitForTimeout(3000);
+d = await dlg();
+check('a link to a web page: the window says it is not a PDF, nothing opened', d.open && d.err.includes('不是 PDF 檔') && (await tabs()).length === 5, d);
+await win.click('#urlCancel'); await win.waitForTimeout(400);
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 slow.forEach(r => r.destroy()); server.close();
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
