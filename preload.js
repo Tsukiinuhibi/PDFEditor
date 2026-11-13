@@ -20,6 +20,12 @@ contextBridge.exposeInMainWorld('desktop', {
     write: (root, sub, name, data) => ipcRenderer.invoke('export:write', root, sub, name, data),
     openFolder: dir => ipcRenderer.invoke('export:open-folder', dir),
   },
+  url: {
+    fetch: (id, url) => ipcRenderer.invoke('url:fetch', id, url),
+    cancel: id => ipcRenderer.invoke('url:cancel', id),
+    onProgress: cb => ipcRenderer.on('url:progress', (_e, id, got, total) => cb(id, got, total)),
+  },
+  clipboardText: () => ipcRenderer.invoke('app:clipboard-text'),
   print: {
     printers: () => ipcRenderer.invoke('print:printers'),
     run: opts => ipcRenderer.invoke('print:run', opts),

@@ -6,7 +6,7 @@
  *  - "open with" (.pdf file association) and single-instance handling
  *  - automatic updates from GitHub Releases (electron-updater)
  */
-const { app, BrowserWindow, ipcMain, dialog, protocol, net, shell, Menu, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, protocol, net, shell, Menu, nativeTheme, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const { pathToFileURL } = require('url');
@@ -224,6 +224,49 @@ ipcMain.handle('app:set-theme', (_e, t) => {
   return nativeTheme.shouldUseDarkColors;
 });
 ipcMain.handle('app:open-external', (_e, url) => { if (/^https:\/\//i.test(url)) shell.openExternal(url); });
+
+/* ---------------- 從網址開啟 ---------------- */
+// a PDF downloaded into memory through Chromium's network (redirects, the system's proxy and certificates); the page sees
+// the progress and can stop it. Only http / https, at most 500 MB, stopped after 60 s without data; it must start %PDF.
+const URL_MAX = 500 * 1024 * 1024, downloads = new Map();
+// the file name: the server's (filename*=UTF-8'' first, then filename), else the address's last part; always .pdf
+function urlFileName(cd, href) {
+  let n = '';
+  const star = /filename\*\s*=\s*([^']*)'[^']*'([^;]+)/i.exec(cd || ''), plain = /filename\s*=\s*("([^"]*)"|[^;]+)/i.exec(cd || '');
+  try { if (star) n = decodeURIComponent(star[2].trim().replace(/^"|"$/g, '')); } catch (_) {}
+  if (!n && plain) { n = (plain[2] != null ? plain[2] : plain[1]).trim(); try { n = Buffer.from(n, 'latin1').toString('utf8'); } catch (_) {} }   // raw UTF-8 bytes come as latin1
+  if (!n) { try { n = decodeURIComponent(new URL(href).pathname.split('/').filter(Boolean).pop() || ''); } catch (_) {} }
+  n = safeName(path.basename(n || 'download'));
+  return /\.pdf$/i.test(n) ? n : n + '.pdf';
+}
+ipcMain.handle('url:fetch', async (e, id, url) => {
+  let u; try { u = new URL(String(url)); } catch (_) { return { ok: false, why: 'bad' }; }
+  if (!/^https?:$/.test(u.protocol)) return { ok: false, why: 'bad' };
+  const ctl = new AbortController(); downloads.set(id, ctl);
+  let idle = null; const wake = () => { clearTimeout(idle); idle = setTimeout(() => ctl.abort('idle'), 60000); };
+  try {
+    wake();
+    const res = await net.fetch(u.href, { signal: ctl.signal, redirect: 'follow' });
+    if (!res.ok) return { ok: false, why: 'status', status: res.status };
+    const total = +res.headers.get('content-length') || 0;
+    if (total > URL_MAX) return { ok: false, why: 'big' };
+    const reader = res.body.getReader(), parts = []; let got = 0, last = 0;
+    for (;;) {
+      const { done, value } = await reader.read(); if (done) break;
+      wake(); parts.push(Buffer.from(value)); got += value.length;
+      if (got > URL_MAX) { ctl.abort('big'); return { ok: false, why: 'big' }; }
+      if (Date.now() - last > 150) { last = Date.now(); if (!e.sender.isDestroyed()) e.sender.send('url:progress', id, got, total); }
+    }
+    const data = Buffer.concat(parts);
+    if (!data.subarray(0, 1024).includes('%PDF')) return { ok: false, why: 'notpdf' };
+    return { ok: true, data, name: urlFileName(res.headers.get('content-disposition'), res.url || u.href), url: res.url || u.href };
+  } catch (err) {
+    const r = ctl.signal.aborted ? String(ctl.signal.reason || 'cancel') : '';
+    return { ok: false, why: r === 'idle' ? 'idle' : r === 'big' ? 'big' : r ? 'cancel' : 'net', msg: String((err && err.message) || err) };
+  } finally { clearTimeout(idle); downloads.delete(id); }
+});
+ipcMain.handle('url:cancel', (_e, id) => { const c = downloads.get(id); if (c) c.abort('cancel'); });
+ipcMain.handle('app:clipboard-text', () => clipboard.readText());
 
 /* ---------------- 列印 ---------------- */
 // the printers (the page lists 「系統預設印表機」 first: Electron does not say which one is the default) and printing this

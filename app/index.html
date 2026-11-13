@@ -298,6 +298,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .pr-err{color:#c92a2a;font-size:12px;min-height:0;margin:-4px 0 8px}
 .pr-err:empty{display:none}
 .pr-warn{color:#b35c00;font-size:12px;margin:-4px 0 8px}
+.url-st{font-size:12px;color:var(--ink2);min-height:18px}
 .pr-sum{margin-right:auto;font-size:13px;color:var(--ink2)}
 #printRoot{display:none}
 @media print{
@@ -912,7 +913,7 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
 <div class="ribbon" id="ribbon">
   <div class="brand"><img class="logo" src="img/logo.png" alt=""><b>PDF 工作台</b></div>
   <div class="grp"><div class="btns">
-    <button class="rb" data-act="open" title="開啟 (Ctrl+O)"><i data-i="open"></i>開啟</button>
+    <button class="rb split" data-amenu="openm" title="開啟：點按開啟檔案，點 ▾ 選擇（開啟檔案、從網址開啟）"><span class="sp-main"></span><span class="sp-arr">▾</span></button>
     <button class="rb primary" data-act="save" data-need title="另存新檔 (Ctrl+S)：修改後的內容一律存成新檔案，不會覆蓋原檔"><i data-i="save"></i>另存新檔</button>
     <button class="rb split" data-amenu="output" data-need title="輸出：點按執行，點 ▾ 選擇（列印、轉存圖片）"><span class="sp-main"></span><span class="sp-arr">▾</span></button>
   </div><div class="cap">檔案</div></div>
@@ -1021,6 +1022,7 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
         <p>把 PDF 拖曳到這裡，或點下方按鈕選擇檔案。<br>檔案只在你的瀏覽器內處理，不會上傳。</p>
         <div class="acts">
           <button class="btn pri" data-act="open"><i data-i="open"></i>選擇 PDF 檔案</button>
+          <button class="btn" data-act="openUrl"><i data-i="web"></i>從網址開啟</button>
           <button class="btn" data-act="sample">使用範例文件試用</button>
         </div>
         <div class="keys">
@@ -1102,6 +1104,7 @@ const FONT = '"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif';
 const ICONS = {
   open:'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
   save:'M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14',
+  web:'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M3.5 9h17M3.5 15h17M12 3c2.4 2.5 3.6 5.5 3.6 9s-1.2 6.5-3.6 9M12 3c-2.4 2.5-3.6 5.5-3.6 9s1.2 6.5 3.6 9',
   print:'M7 9V4h10v5M7 17H5.5A2.5 2.5 0 0 1 3 14.5v-3A2.5 2.5 0 0 1 5.5 9h13a2.5 2.5 0 0 1 2.5 2.5v3a2.5 2.5 0 0 1-2.5 2.5H17M7 14h10v6H7z',
   undo:'M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11',
   redo:'m15 14 5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13',
@@ -2018,6 +2021,7 @@ new ResizeObserver(() => {
 window.addEventListener('keydown', e => {
   if ($('#mask').classList.contains('show')) { if (e.key === 'Escape' && !S.exporting && !capture) closeModal(undefined); return; }
   const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.shiftKey && e.code === 'KeyO') { e.preventDefault(); actions.openUrl(); return; }
   if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); actions.open(); return; }
   if (!S.pdf) return;
   if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); actions.save(); return; }
@@ -3817,6 +3821,7 @@ const actions = {
   cutPages(){ return copySelected(true); },
   pastePages(){ return pasteClip(); },
   exportImages(){ return openExportImages(); },
+  openUrl(){ return openUrlDialog(); },
   print(){ return openPrint(); },
   async delPage(){
     const n = S.pages.length;
@@ -7059,13 +7064,14 @@ function showToolMenu(btn, which){
 document.addEventListener('pointerdown', e => { const m = $('#toolMenu'); if (m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('[data-menu],[data-amenu]')) m.style.display = 'none'; }, true);
 /* buttons that gather a few related actions (加頁、旋轉、簽署): the main part repeats the one used last, ▾ lists them all */
 const ACTION_MENUS = {
+  openm:[{act:'open', ic:'open', label:'開啟', long:'開啟檔案…（Ctrl+O）'}, {act:'openUrl', ic:'web', label:'從網址', long:'從網址開啟…（Ctrl+Shift+O）'}],
   output:[{act:'print', ic:'print', label:'列印', long:'列印…（Ctrl+P）'}, {act:'exportImages', ic:'toImage', label:'轉存圖片', long:'將頁面轉存成圖片…'}],
   pageAdd:[{act:'addPage', ic:'pageAdd', label:'加頁', long:'加入空白頁…'}, {act:'insertPdf', ic:'pageIns', label:'插入PDF', long:'從 PDF 插入頁面…'}],
   rotate:[{act:'rotL', ic:'rotL', label:'左轉', long:'向左轉 90°'}, {act:'rotR', ic:'rotR', label:'右轉', long:'向右轉 90°'}],
   sign:[{tool:'signature', ic:'pen', label:'手寫簽名', long:'手寫簽名'}, {tool:'digisign', ic:'shield', label:'數位簽章', long:'數位簽章（憑證）'}, {act:'attach', ic:'clip', label:'附加檔案', long:'附加檔案到 PDF 內'}],
 };
 const LAST_ACT = (() => { try { return JSON.parse(localStorage.getItem('pdfeditor.lastact.v1')) || {}; } catch (_) { return {}; } })();
-const lastActOf = m => ACTION_MENUS[m][LAST_ACT[m]] || ACTION_MENUS[m][0];
+const lastActOf = m => (!FIXED_MENUS.has(m) && ACTION_MENUS[m][LAST_ACT[m]]) || ACTION_MENUS[m][0];
 function paintActionButtons(){
   $$('[data-amenu]').forEach(b => {
     const it = lastActOf(b.dataset.amenu), m = b.querySelector('.sp-main');
@@ -7073,8 +7079,9 @@ function paintActionButtons(){
     b.classList.toggle('on', ACTION_MENUS[b.dataset.amenu].some(x => x.tool && x.tool === S.tool));
   });
 }
+const FIXED_MENUS = new Set(['openm']);   // the button always does its first item (開啟 stays 開啟檔案)
 function runActionItem(m, it){
-  LAST_ACT[m] = ACTION_MENUS[m].indexOf(it); try { localStorage.setItem('pdfeditor.lastact.v1', JSON.stringify(LAST_ACT)); } catch (_) {}
+  if (!FIXED_MENUS.has(m)) LAST_ACT[m] = ACTION_MENUS[m].indexOf(it); try { localStorage.setItem('pdfeditor.lastact.v1', JSON.stringify(LAST_ACT)); } catch (_) {}
   paintActionButtons();
   if (it.tool) setTool(it.tool); else actions[it.act]();
 }
@@ -10132,6 +10139,60 @@ function closeFind(){
 })();
 
 /* ====================================================================
+   從網址開啟: a small window takes the address (filled in from the clipboard when that holds one); the main process
+   downloads it (url:fetch) with progress and a way to stop; a PDF opens in a new tab, anything else gets a message and
+   the window stays. Closing the window stops the download.
+   ==================================================================== */
+let URLJOB = null;   // {id, set}: the download under way and how it reports
+if (DESK && DESK.url) DESK.url.onProgress((id, got, total) => { if (URLJOB && URLJOB.id === id) URLJOB.set(`下載中…（${(got / 1048576).toFixed(1)}${total ? ' / ' + (total / 1048576).toFixed(1) : ''} MB）`); });
+const URL_OK = u => /^https?:\/\/[^\s/?#]+/i.test(String(u || '').trim());
+function urlWhy(r){
+  if (r.why === 'notpdf') return '這個網址下載到的不是 PDF 檔（可能需要登入，或是一個網頁）';
+  if (r.why === 'status') return `下載失敗（${r.status}）`;
+  if (r.why === 'big') return '檔案太大（超過 500 MB）';
+  if (r.why === 'idle') return '太久沒有收到資料，已停止下載';
+  if (r.why === 'bad') return '網址要以 http:// 或 https:// 開頭';
+  return '無法連線：' + (r.msg || '');
+}
+async function openUrlDialog(pre = '', {auto = false} = {}){
+  if (!DESK || !DESK.url) { toast('這個版本不能從網址開啟', 'err'); return; }
+  if (!pre) { try { const c = String(await DESK.clipboardText() || '').trim(); if (URL_OK(c) && !/\s/.test(c)) pre = c; } catch (_) {} }
+  const body = document.createElement('div'); body.style.width = 'min(520px, 80vw)';
+  body.innerHTML = `<div class="field"><label>PDF 的網址</label><input type="text" id="urlIn" placeholder="https://example.com/檔案.pdf" spellcheck="false" autocomplete="off"></div>
+    <div class="pr-err" id="urlErr"></div><div class="url-st" id="urlSt"></div>`;
+  let alive = true;
+  const $b = q => body.querySelector(q), setErr = t => { $b('#urlErr').textContent = t; }, setSt = t => { $b('#urlSt').textContent = t; };
+  const check = () => { const v = $b('#urlIn').value.trim(), bad = !!v && !URL_OK(v); setErr(bad ? '網址要以 http:// 或 https:// 開頭' : ''); const g = $('#urlGo'); if (g && !URLJOB) g.disabled = !URL_OK(v); };
+  const download = async () => {
+    const url = $b('#urlIn').value.trim(); if (!URL_OK(url) || URLJOB) return undefined;
+    const id = 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    URLJOB = {id, set:setSt}; setErr(''); setSt('下載中…'); $('#urlGo').disabled = true; $b('#urlIn').disabled = true;
+    let r;
+    try { r = await DESK.url.fetch(id, url); } catch (e) { r = {ok:false, why:'net', msg:e.message}; }
+    finally { URLJOB = null; }
+    if (!alive) return undefined;   // the window was closed meanwhile: nothing more
+    setSt(''); $b('#urlIn').disabled = false; check();
+    if (r.ok) return r;
+    if (r.why !== 'cancel') setErr(urlWhy(r));
+    return undefined;
+  };
+  const res = await openModal({title:'從網址開啟', body, buttons:[
+    {label:'取消', id:'urlCancel', handler:() => { if (URLJOB) { DESK.url.cancel(URLJOB.id); return; } return null; }},
+    {label:'開啟', id:'urlGo', primary:true, handler:download},
+  ], onOpen:() => {
+    const inp = $b('#urlIn'); inp.value = pre; inp.addEventListener('input', check);
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('#urlGo').click(); } });
+    check(); inp.focus(); inp.select();
+    if (auto && URL_OK(pre)) setTimeout(() => $('#urlGo').click(), 0);
+  }});
+  alive = false;
+  if (URLJOB) DESK.url.cancel(URLJOB.id);   // closed (Esc, the mask) while downloading: stop
+  if (!res || !res.ok) return;
+  try { await openInNewTab(new Uint8Array(res.data), res.name, null); toast(`已從網址開啟「${res.name}」`); }
+  catch (e) { toast('無法開啟這個 PDF：' + (e.message || e), 'err'); }
+}
+
+/* ====================================================================
    Sample document
    ==================================================================== */
 async function makeSample(){
@@ -10278,7 +10339,7 @@ function keyFromEvent(e){
   return K(e.code, label, {ctrl:e.ctrlKey || e.metaKey, shift:e.shiftKey, alt:e.altKey});
 }
 // shortcuts the app already uses; a custom binding may not take them over
-const RESERVED = [K('KeyO', 'O', {ctrl:1}), K('KeyS', 'S', {ctrl:1}), K('KeyZ', 'Z', {ctrl:1}), K('KeyY', 'Y', {ctrl:1}), K('KeyZ', 'Z', {ctrl:1, shift:1}),
+const RESERVED = [K('KeyO', 'O', {ctrl:1}), K('KeyO', 'O', {ctrl:1, shift:1}), K('KeyS', 'S', {ctrl:1}), K('KeyZ', 'Z', {ctrl:1}), K('KeyY', 'Y', {ctrl:1}), K('KeyZ', 'Z', {ctrl:1, shift:1}),
   K('KeyC', 'C', {ctrl:1}), K('KeyX', 'X', {ctrl:1}), K('KeyV', 'V', {ctrl:1}), K('KeyW', 'W', {ctrl:1}), K('KeyA', 'A', {ctrl:1}), K('KeyP', 'P', {ctrl:1}),
   K('Tab', 'Tab', {ctrl:1}), K('Tab', 'Tab', {ctrl:1, shift:1}), K('Digit0', '0', {ctrl:1}), K('Equal', '=', {ctrl:1}), K('Minus', '-', {ctrl:1}),
   K('Space', '空白鍵'), K('Escape', 'Esc'), K('Delete', 'Delete'), K('KeyR', 'R', {ctrl:1}), K('Enter', 'Enter'), K('KeyF', 'F', {ctrl:1}), K('F3', 'F3'), K('F3', 'F3', {shift:1}),
