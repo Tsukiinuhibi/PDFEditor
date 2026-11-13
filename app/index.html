@@ -4116,17 +4116,17 @@ function fontButtonLabel(f){
   return FONTCAT.ok && !fontInstalled(f) ? `${f}（這台電腦沒有）` : fontLabel(f);
 }
 const tbReal = () => !!(TBE && TBE.el.classList.contains('real'));
-function textBarHTML(){
-  const st = currentTBStyle();
+function textBarHTML(st = currentTBStyle(), obj = false){   // obj: the bar of a selected text box (its tbObjStyle)
   if (FONTCAT.ok === null) loadFontCatalog();
+  const sizes = TB_SIZES.includes(+st.size) ? TB_SIZES : [...TB_SIZES, +st.size].sort((a, b) => a - b);
   return `<span class="sb-h">字型</span><button class="fpick" data-tbfont style="font-family:${esc(fontStack(st.font))}" title="字型">${esc(fontButtonLabel(st.font))}</button>
-    <label class="sb-l">字級<select data-tb="size">${TB_SIZES.map(v => `<option value="${v}"${+st.size === v ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
+    <label class="sb-l">字級<select data-tb="size">${sizes.map(v => `<option value="${v}"${+st.size === v ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
     <span class="sb-h">顏色</span><button class="cpick" data-tbc="color" style="--c:${st.color}"><i></i>▾</button>
-    <span class="sb-h">文字底色</span><button class="cpick none" data-tbc="bg" data-none="1" style="--c:transparent"><i></i>▾</button>
+    <span class="sb-h">文字底色</span><button class="cpick${obj && st.bg ? '' : ' none'}" data-tbc="bg" data-none="1" style="--c:${obj && st.bg || 'transparent'}"><i></i>▾</button>
     <button class="tfmt${st.bold ? ' on' : ''}" data-tb="bold" title="粗體 (Ctrl+B)"><b>B</b></button><button class="tfmt${st.italic ? ' on' : ''}" data-tb="italic" title="斜體 (Ctrl+I)"><i>I</i></button><button class="tfmt${st.underline ? ' on' : ''}" data-tb="underline" title="底線 (Ctrl+U)"><u>U</u></button>
     <span class="sb-h">方塊背景</span><button class="cpick${st.boxBg ? '' : ' none'}" data-tbc="boxBg" data-none="1" style="--c:${st.boxBg || 'transparent'}"><i></i>▾</button>
     <label class="sb-l"><input type="checkbox" data-tb="border"${st.border ? ' checked' : ''}>框線</label>
-    <span class="sb-tip">${TBE ? '反白文字即可個別修改字級、顏色與底色；Esc 或點空白處完成' : '在頁面上點一下即可在十字處輸入文字'}</span>`;
+    <span class="sb-tip">${obj ? '套用到整個方塊・雙擊可修改文字' : TBE ? '反白文字即可個別修改字級、顏色與底色；Esc 或點空白處完成' : '在頁面上點一下即可在十字處輸入文字'}</span>`;
 }
 function syncTBBar(){
   if (S.tool !== 'textbox') return;
@@ -4249,11 +4249,11 @@ function refreshFontMenu(){
   FM.gen = FONTCAT.gen; FM.stale = false;
   list.innerHTML = fontMenuList(); filterFontMenu(); styleFontItems(list); list.scrollTop = top;
 }
-function openFontMenu(anchor, at){
+function openFontMenu(anchor, at, {cur = null, onPick = null} = {}){   // onPick: what a chosen font does instead (a selected text box)
   loadFontCatalog();
   const m = $('#fontMenu');
   if (TBE && document.activeElement === TBE.el) saveTBRange();
-  FM = {cur:currentTBStyle().font || '', gen:FONTCAT.gen, down:false, stale:false, real:tbReal(), vert:!!(TBE && TBE.vert)};
+  FM = {cur:cur != null ? cur : currentTBStyle().font || '', gen:FONTCAT.gen, down:false, stale:false, real:tbReal(), vert:!!(TBE && TBE.vert), onPick};
   // the search box takes the focus: keep the highlighted text visibly marked meanwhile
   if (TBE && TBE.range && !TBE.range.collapsed && window.Highlight && window.CSS && CSS.highlights) CSS.highlights.set('tb-sel', new Highlight(TBE.range.cloneRange()));
   m.innerHTML = `<input class="fm-q" placeholder="搜尋字型（中文或英文名稱）" spellcheck="false"><div class="fm-list">${fontMenuList()}</div>`;
@@ -4282,8 +4282,9 @@ function openFontMenu(anchor, at){
 }
 // the PDF's own text: a font that may not be embedded is refused, one that goes in whole is asked about first
 async function pickFont(f){
-  const ctx = {real:!!(FM && FM.real), vert:!!(FM && FM.vert)};
+  const ctx = {real:!!(FM && FM.real), vert:!!(FM && FM.vert)}, onPick = FM && FM.onPick;
   closeFontMenu();
+  if (onPick) { onPick(f); noteRecentFont(f); return; }
   if (ctx.real && f) {
     const fam = await ensureFontInfo(FONTCAT.fams.find(x => x.family === f)), why = fontBlockReason(fam, ctx);
     if (why) { toast(why, 'err'); restoreTBRange(); return; }
@@ -4296,7 +4297,7 @@ document.addEventListener('pointerdown', e => { if (FM && !e.target.closest('#fo
 document.addEventListener('pointerup', () => { if (FM && FM.down) { FM.down = false; if (FM.stale) refreshFontMenu(); } }, true);
 // the catalogue fills in: update the font button and an open menu
 FONTCAT.subs.add(() => {
-  const b = $('#hint [data-tbfont]'); if (b) b.textContent = fontButtonLabel(currentTBStyle().font);
+  const b = $('#hint [data-tbfont]'); if (b) b.textContent = fontButtonLabel(OBJBAR && OBJBAR.st && $('#hint').classList.contains('objbar') ? OBJBAR.st.font : currentTBStyle().font);
   if (!FM) return;
   if (FM.gen === FONTCAT.gen) { const p = $('#fontMenu .fm-busy'); if (p) p.textContent = fontBusyText(); return; }   // only progress: the list stays still
   if (FM.down) FM.stale = true; else refreshFontMenu();   // not under a button that is being pressed
@@ -4335,17 +4336,12 @@ function commitTextEditor(){
   const empty = !lines.some(l => l.some(r => r.text.trim()));
   if (edit) return (tbSaving = settle(commitPageTextEdit(i, x, y, lines, box, edit, empty, strut)));
   if (empty) { if (id) { veil && veil.classList.remove('hold'); tbSaving = settle(deleteAnnot(i, id)); el.remove(); } else drop(); return tbSaving; }
-  const data = JSON.stringify({lines, box});
   if (id && orig && orig === JSON.stringify(lines) && !TBE) { /* unchanged text; box style may still differ */ }
   tbSaving = (async () => {
     const r = await renderTextBox(lines, box, strut);
-    const plain = lines.map(l => l.map(x => x.text).join('')).join('\n');
     const b = {x, y, w:r.w, h:r.h};
     return mutate(id ? '已更新文字方塊' : '已新增文字方塊', async doc => {
-      const g = visToPdf(i, b), ap = await imageAP(doc, r.png, b.w, b.h, g.rot);
-      const f = lines[0] && lines[0][0] || TB_STYLE, col = hexColor(f.color || '#000000');
-      const fields = {Rect:g.rect, Contents:PDFHexString.fromText(plain), RC:PDFHexString.fromText(richTextXHTML(lines)),
-        DA:PDFString.of(`/Helv ${f.size || 12} Tf ${col.map(v => v.toFixed(3)).join(' ')} rg`), M:nowStr(), PDFE:true, PDFE_RT:PDFHexString.fromText(data), AP:{N:ap}};
+      const fields = await textBoxFields(doc, i, lines, box, r, b);
       if (id) {
         const ref = findAnnotRef(doc, i, id); if (!ref) return false;
         const dict = doc.context.lookup(ref, PDFDict);
@@ -4382,14 +4378,36 @@ async function commitPageTextEdit(i, x, y, lines, box, edit, empty, strut){
     }
     if (empty) return;
     if (real) { await writePageText(doc, i, x, y, lines, box, {rot:edit.rot || 0, vert:!!edit.vert, strut:strut && !edit.vert ? strut : realStrut(lines)}); return; }
-    const plain = lines.map(l => l.map(x => x.text).join('')).join('\n');
-    const b = {x, y, w:r.w, h:r.h}, g = visToPdf(i, b), ap = await imageAP(doc, r.png, b.w, b.h, g.rot);
-    const f = lines[0] && lines[0][0] || TB_STYLE, col = hexColor(f.color || '#000000');
     addAnnot(doc, i, {Type:'Annot', Subtype:'FreeText', T:PDFHexString.fromText(AUTHOR), CreationDate:nowStr(), Subj:PDFHexString.fromText('修改的文字'), F:4,
-      Rect:g.rect, Contents:PDFHexString.fromText(plain), RC:PDFHexString.fromText(richTextXHTML(lines)),
-      DA:PDFString.of(`/Helv ${f.size || 12} Tf ${col.map(v => v.toFixed(3)).join(' ')} rg`), M:nowStr(), PDFE:true,
-      PDFE_RT:PDFHexString.fromText(JSON.stringify({lines, box})), AP:{N:ap}});
+      ...(await textBoxFields(doc, i, lines, box, r, {x, y, w:r.w, h:r.h}))});
   });
+}
+// a text box's fields for its runs (lines), box style and rendering r (renderTextBox) placed at b (page view points)
+async function textBoxFields(doc, i, lines, box, r, b){
+  const g = visToPdf(i, b), ap = await imageAP(doc, r.png, b.w, b.h, g.rot);
+  const plain = lines.map(l => l.map(x => x.text).join('')).join('\n');
+  const f = lines[0] && lines[0][0] || TB_STYLE, col = hexColor(f.color || '#000000');
+  return {Rect:g.rect, Contents:PDFHexString.fromText(plain), RC:PDFHexString.fromText(richTextXHTML(lines)),
+    DA:PDFString.of(`/Helv ${f.size || 12} Tf ${col.map(v => v.toFixed(3)).join(' ')} rg`), M:nowStr(), PDFE:true,
+    PDFE_RT:PDFHexString.fromText(JSON.stringify({lines, box})), AP:{N:ap}};
+}
+// a selected text box restyled as a whole: each run takes the changed setting (font / size / colour / bg / bold / italic /
+// underline; 'toggle' turns it off when every run has it, else on), the box its background / frame; then it is laid out
+// and drawn again the way the editor would, from the same top-left corner
+async function restyleTextBox(doc, i, dict, patch){
+  const rt = readRT(dict); if (!rt) return false;
+  const lines = rt.lines.map(l => l.map(r => ({...r}))), box = {boxBg:'', border:false, ...rt.box}, rs = lines.flat();
+  for (const [k, v0] of Object.entries(patch)) {
+    if (k === 'boxBg') { box.boxBg = v0 || ''; continue; }
+    if (k === 'border') { box.border = !!v0; continue; }
+    if (!['font', 'size', 'color', 'bg', 'bold', 'italic', 'underline'].includes(k)) continue;
+    const v = v0 === 'toggle' ? !(rs.length && rs.every(r => !!r[k])) : v0;
+    rs.forEach(r => { if (k === 'font' && !v) delete r.font; else r[k] = v; });
+  }
+  const sizes = rs.map(r => +r.size).filter(v => v > 0);
+  const r = await renderTextBox(lines, box, {size:sizes.length ? Math.min(...sizes) : TB_STYLE.size, font:'', bold:false});   // as when it is opened again
+  const at = vRect(i, numArr(dict.lookup(N_('Rect'), PDFArray)));
+  Object.entries(await textBoxFields(doc, i, lines, box, r, {x:at.x, y:at.y, w:r.w, h:r.h})).forEach(([k, v]) => dict.set(N_(k), doc.context.obj(v)));
 }
 async function editTextBox(i, a){
   await tbSaving;
@@ -6641,6 +6659,7 @@ function objKind(dict){
   if (!dict.get(N_('PDFE'))) return null;   // another program's object: move and delete only
   const sub = subOf(dict), subj = subjOf(dict);
   const cloud = !!dict.lookupMaybe(N_('BE'), PDFDict);
+  if (sub === 'FreeText') return readRT(dict) ? 'textbox' : null;
   if (sub === 'Square' && subj === '填色') return 'fill';
   if (sub === 'Square') return cloud ? 'cloud' : 'rect';
   if (sub === 'Circle') return cloud ? 'cloud' : 'ellipse';
@@ -6661,7 +6680,15 @@ function readObjStyle(dict){
   }
   return st;
 }
-let OBJBAR = null;   // the object the bar shows: {i, id, kind}
+// a text box's content and look as the editor left it (PDFE_RT: {lines, box})
+const readRT = dict => { try { const v = dict.lookupMaybe(N_('PDFE_RT'), PDFHexString, PDFString); return v ? JSON.parse(v.decodeText()) : null; } catch (_) { return null; } };
+// what the text bar shows for a whole box: the first run's values; bold / italic / underline only when every run has it
+function tbObjStyle(rt){
+  const rs = rt.lines.flat(), f = rs[0] || {}, all = k => rs.length > 0 && rs.every(r => !!r[k]);
+  return {font:f.font || '', size:+f.size || TB_STYLE.size, color:f.color || '#1f2328', bg:rs.length && rs.every(r => (r.bg || '') === (f.bg || '')) ? f.bg || '' : '',
+    bold:all('bold'), italic:all('italic'), underline:all('underline'), boxBg:rt.box && rt.box.boxBg || '', border:!!(rt.box && rt.box.border)};
+}
+let OBJBAR = null;   // the object the bar shows: {i, id, kind, doc, st (a text box's tbObjStyle)}
 async function paintObjBar(){
   const h = $('#hint');
   const drop = () => { OBJBAR = null; if (h.classList.contains('objbar')) { h.classList.remove('objbar', 'show', 'styl'); h.innerHTML = ''; } };
@@ -6670,11 +6697,16 @@ async function paintObjBar(){
   if (!AS || AS.a.id !== a.id) return;   // the selection changed meanwhile: that call paints
   const dict = ref && doc.context.lookup(ref, PDFDict), kind = dict && objKind(dict);
   if (!kind || S.tool !== 'select') return drop();
-  const def = DRAW_TOOLS[kind];
-  const name = subjOf(dict) === '區域螢光筆' ? '區域螢光筆' : def.label.replace('工具', '');
-  h.innerHTML = `<b class="sb-t">${icon(def.ic)}已選取：${esc(name)}</b><span class="sb-row">${styleBar(kind, readObjStyle(dict), true)}</span>`;
+  const o = objBarHTML(kind, dict);
+  h.innerHTML = `<b class="sb-t">${icon(o.ic)}已選取：${esc(o.name)}</b><span class="sb-row">${o.html}</span>`;
   h.classList.add('show', 'styl', 'objbar');
-  OBJBAR = {i, id:a.id, kind, doc:activeDoc()};
+  OBJBAR = {i, id:a.id, kind, doc:activeDoc(), st:o.st};
+}
+// the bar for one kind of object: {name, ic (icon), html, st}
+function objBarHTML(kind, dict){
+  if (kind === 'textbox') { const st = tbObjStyle(readRT(dict)); return {name:subjOf(dict) === '修改的文字' ? '修改的文字' : '文字方塊', ic:'text', html:textBarHTML(st, true), st}; }
+  const def = DRAW_TOOLS[kind];
+  return {name:subjOf(dict) === '區域螢光筆' ? '區域螢光筆' : def.label.replace('工具', ''), ic:def.ic, html:styleBar(kind, readObjStyle(dict), true), st:null};
 }
 function drawASel(){
   if (!AS) return;
@@ -6798,9 +6830,10 @@ function regenAP(doc, i, dict, st = readObjStyle(dict), map = p => p, nb = null,
 }
 // a style change from the bar written into the object (one undo step): C, IC, BS, CA, LE, then drawn again
 async function restyleAnnot(i, id, patch){
-  return mutate('已變更樣式', doc => {
+  return mutate('已變更樣式', async doc => {
     const ref = findAnnotRef(doc, i, id); if (!ref) { toast('找不到此註解', 'err'); return false; }
     const ctx = doc.context, dict = ctx.lookup(ref, PDFDict), kind = objKind(dict); if (!kind) return false;
+    if (kind === 'textbox') return restyleTextBox(doc, i, dict, patch);
     const prev = readObjStyle(dict), st = {...prev, ...patch};
     if (kind === 'fill' && 'color' in patch) st.fill = st.color;   // a fill outline is one colour
     dict.set(N_('C'), ctx.obj(hexColor(st.color)));
@@ -6833,6 +6866,14 @@ function restyleSelected(patch, ob = OBJBAR){
 $('#hint').addEventListener('click', e => {
   if (!OBJBAR || !$('#hint').classList.contains('objbar')) return;
   const ob = OBJBAR;
+  if (ob.kind === 'textbox') {
+    const fb = e.target.closest('[data-tbfont]');
+    if (fb) { if (FM) closeFontMenu(); else openFontMenu(fb, null, {cur:ob.st.font, onPick:f => restyleSelected({font:f}, ob)}); return; }
+    const b = e.target.closest('button[data-tb]'); if (b) { restyleSelected({[b.dataset.tb]:'toggle'}, ob); return; }
+    const c = e.target.closest('.cpick[data-tbc]');
+    if (c) { const key = c.dataset.tbc; openColorPicker({anchor:c, value:ob.st[key], none:key !== 'color', title:{color:'文字顏色', bg:'文字底色', boxBg:'方塊背景'}[key], onPick:v => restyleSelected({[key]:v}, ob)}); }
+    return;
+  }
   const cp = e.target.closest('.cpick');
   if (cp) { const key = cp.dataset.cp; openColorPicker({anchor:cp, value:cp.style.getPropertyValue('--c').trim(), none:!!cp.dataset.none, title:key === 'fill' ? '填色顏色' : '顏色', onPick:v => restyleSelected({[key]:v}, ob)}); return; }
   const p = e.target.closest('[data-p]');
@@ -6840,6 +6881,7 @@ $('#hint').addEventListener('click', e => {
 });
 $('#hint').addEventListener('change', e => {
   if (!OBJBAR || !$('#hint').classList.contains('objbar')) return;
+  if (e.target.dataset.tb) { const el = e.target; el.blur(); restyleSelected({[el.dataset.tb]:el.type === 'checkbox' ? el.checked : +el.value}); return; }   // a text box's size / frame
   const el = e.target, k = el.dataset.s; if (!k) return;
   const v = el.type === 'checkbox' ? el.checked : (k === 'width' || k === 'opacity') ? +el.value : el.value;
   el.blur();   // Delete / arrows act on the object again
@@ -9178,7 +9220,7 @@ window.__pdfapp = {
     try { return new TextDecoder().decode(st.contents && !st.dict.get(N_('Filter')) ? st.contents : PDFLib.decodePDFRawStream(st).decode()); } catch (_) { return null; }
   },
   annStyle:async (i, id) => { const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); if (!ref) return null; const d = doc.context.lookup(ref, PDFDict), t = boxTurn(d);
-    return {kind:objKind(d), ...readObjStyle(d), deg:t ? t.deg : 0}; },
+    return {kind:objKind(d), ...readObjStyle(d), deg:t ? t.deg : 0, rt:readRT(d)}; },
   clip:() => ({last:LAST_CLIP, note:NOTE_CLIP ? {contents:NOTE_CLIP.contents, author:NOTE_CLIP.author} : null}),
   changelog:url => loadChangelog(url), notesHTML, whatsNewList, showWhatsNew, checkWhatsNew, updState:st => { UPD.state = st; renderUpdate(); },
   fontIdState:() => { const p = OCR.panel; if (!p) return null;

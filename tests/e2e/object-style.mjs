@@ -50,7 +50,7 @@ check('a drawing tool: its own bar, not the object\'s', (await A(() => document.
 await tool('textbox'); await click(await see(0, 100, 640)); await win.keyboard.type('abc'); await win.keyboard.press('Escape'); await win.waitForTimeout(1200);
 const ft = (await anns(0, 'FreeText'))[0];
 if (ft) await pick(ft);
-check('a text box selected: no style bar (next version)', !!ft && (await sel())?.sub === 'FreeText' && (await bar()) === null, {ft, sel:await sel(), bar:await bar()});
+check('a text box selected: its own bar (v1.0.34)', !!ft && (await sel())?.sub === 'FreeText' && ((await bar())?.title || '').includes('已選取：文字方塊'), {ft, sel:await sel(), bar:await bar()});
 
 
 // ---- part 2: a change in the bar restyles the selected object ---------------------------------------------------------
