@@ -163,6 +163,20 @@ ipcMain.handle('file:save-as', async (_e, suggested, data, opts) => {
   allowDir(path.dirname(r.filePath));
   return r.filePath;
 });
+// a place for a new file of another kind (a .docx): the save dialog only, the caller writes there; never the opened PDF
+ipcMain.handle('file:choose-save', async (_e, suggested, opts) => {
+  const ext = (path.extname(String(suggested)).slice(1) || 'bin').toLowerCase();
+  const avoid = ((opts && opts.avoid) || []).map(p => path.resolve(p).toLowerCase());
+  for (;;) {
+    const r = await dialog.showSaveDialog(win, { title: '另存新檔', defaultPath: suggested,
+      filters: [{ name: ext.toUpperCase() + ' 檔案', extensions: [ext] }, { name: '所有檔案', extensions: ['*'] }] });
+    if (r.canceled || !r.filePath) return null;
+    if (!avoid.includes(path.resolve(r.filePath).toLowerCase())) { allowDir(path.dirname(r.filePath)); return r.filePath; }
+    await dialog.showMessageBox(win, { type: 'warning', title: '不能覆蓋原檔', message: '不能存到原本的檔案', detail: '請換一個檔名或位置。' });
+  }
+});
+// open a file this program wrote (a .docx in Word) with the computer's default program
+ipcMain.handle('app:open-path', async (_e, p) => (typeof p === 'string' && isAllowed(path.dirname(p)) ? shell.openPath(p) : 'not allowed'));
 ipcMain.handle('export:default-dir', (_e, pdfPath, last) => {
   if (last && picked.includes(path.resolve(last))) return path.resolve(last);
   if (pdfPath && isAllowed(path.dirname(pdfPath))) return path.dirname(pdfPath);

@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('desktop', {
   readFile: p => ipcRenderer.invoke('file:read', p),
   writeFile: (p, data) => ipcRenderer.invoke('file:write', p, data),
   saveAs: (name, data, opts) => ipcRenderer.invoke('file:save-as', name, data, opts),
+  chooseSave: (name, opts) => ipcRenderer.invoke('file:choose-save', name, opts),
+  openPath: p => ipcRenderer.invoke('app:open-path', p),
   pathForFile: f => { try { return webUtils.getPathForFile(f) || ''; } catch (_) { return ''; } },
   openExternal: url => ipcRenderer.invoke('app:open-external', url),
   setTheme: t => ipcRenderer.invoke('app:set-theme', t),

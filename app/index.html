@@ -299,6 +299,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .pr-err:empty{display:none}
 .pr-warn{color:#b35c00;font-size:12px;margin:-4px 0 8px}
 .url-st{font-size:12px;color:var(--ink2);min-height:18px}
+.wd-note{font-size:12px;line-height:1.6;color:var(--ink2);margin-top:4px}
 .lk-other{font-size:12px;line-height:1.6;color:var(--ink2);word-break:break-all;border:1px solid var(--line);border-radius:6px;padding:6px 8px}
 .pr-sum{margin-right:auto;font-size:13px;color:var(--ink2)}
 #printRoot{display:none}
@@ -1068,6 +1069,7 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
 <input type="file" id="fInsert" accept="application/pdf,.pdf">
 
 <script src="../node_modules/pdf-lib/dist/pdf-lib.min.js"></script>
+<script src="../node_modules/pako/dist/pako_deflate.min.js"></script>
 <script src="../node_modules/@pdf-lib/fontkit/dist/fontkit.umd.min.js"></script>
 <script src="../node_modules/tesseract.js/dist/tesseract.min.js"></script>
 <script src="../node_modules/node-forge/dist/forge.min.js"></script>
@@ -1109,6 +1111,7 @@ const ICONS = {
   open:'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
   save:'M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14',
   link:'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1',
+  word:'M6 3h9l4 4v14H6zM14 3v5h5M8.5 11l1.5 6 2-4.5 2 4.5 1.5-6',
   web:'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M3.5 9h17M3.5 15h17M12 3c2.4 2.5 3.6 5.5 3.6 9s-1.2 6.5-3.6 9M12 3c-2.4 2.5-3.6 5.5-3.6 9s1.2 6.5 3.6 9',
   print:'M7 9V4h10v5M7 17H5.5A2.5 2.5 0 0 1 3 14.5v-3A2.5 2.5 0 0 1 5.5 9h13a2.5 2.5 0 0 1 2.5 2.5v3a2.5 2.5 0 0 1-2.5 2.5H17M7 14h10v6H7z',
   undo:'M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11',
@@ -3836,6 +3839,7 @@ const actions = {
   cutPages(){ return copySelected(true); },
   pastePages(){ return pasteClip(); },
   exportImages(){ return openExportImages(); },
+  exportWord(){ return openWordDialog(); },
   openUrl(){ return openUrlDialog(); },
   print(){ return openPrint(); },
   async delPage(){
@@ -7081,7 +7085,7 @@ document.addEventListener('pointerdown', e => { const m = $('#toolMenu'); if (m.
 const ACTION_MENUS = {
   insert:[{tool:'image', ic:'insImg', label:'插入圖片', long:'插入圖片…（也可以把圖片檔拖到頁面上）'}, {tool:'link', ic:'link', label:'連結', long:'連結（網址、本文件的頁面、電子郵件）'}],
   openm:[{act:'open', ic:'open', label:'開啟', long:'開啟檔案…（Ctrl+O）'}, {act:'openUrl', ic:'web', label:'從網址', long:'從網址開啟…（Ctrl+Shift+O）'}],
-  output:[{act:'print', ic:'print', label:'列印', long:'列印…（Ctrl+P）'}, {act:'exportImages', ic:'toImage', label:'轉存圖片', long:'將頁面轉存成圖片…'}],
+  output:[{act:'print', ic:'print', label:'列印', long:'列印…（Ctrl+P）'}, {act:'exportImages', ic:'toImage', label:'轉存圖片', long:'將頁面轉存成圖片…'}, {act:'exportWord', ic:'word', label:'轉存 Word', long:'轉存成可編輯的 Word 檔（.docx）…'}],
   pageAdd:[{act:'addPage', ic:'pageAdd', label:'加頁', long:'加入空白頁…'}, {act:'insertPdf', ic:'pageIns', label:'插入PDF', long:'從 PDF 插入頁面…'}],
   rotate:[{act:'rotL', ic:'rotL', label:'左轉', long:'向左轉 90°'}, {act:'rotR', ic:'rotR', label:'右轉', long:'向右轉 90°'}],
   sign:[{tool:'signature', ic:'pen', label:'手寫簽名', long:'手寫簽名'}, {tool:'digisign', ic:'shield', label:'數位簽章', long:'數位簽章（憑證）'}, {act:'attach', ic:'clip', label:'附加檔案', long:'附加檔案到 PDF 內'}],
@@ -8818,19 +8822,20 @@ async function zipAll(all){
 }
 const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
 function crc32(d){ let c = 0xFFFFFFFF; for (let i = 0; i < d.length; i++) c = CRC[(c ^ d[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+// a zip of [{name, data:Uint8Array, deflate}]: UTF-8 names; stored, or deflated with pako when deflate is set
 function makeZip(files){
   const enc = new TextEncoder(), parts = [], central = []; let off = 0;
   for (const f of files) {
-    const nm = enc.encode(f.name), crc = crc32(f.data), sz = f.data.length;
+    const nm = enc.encode(f.name), crc = crc32(f.data), sz = f.data.length, body = f.deflate ? pako.deflateRaw(f.data) : f.data, method = f.deflate ? 8 : 0;
     const h = new DataView(new ArrayBuffer(30));
-    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, 0, true);
-    h.setUint32(14, crc, true); h.setUint32(18, sz, true); h.setUint32(22, sz, true); h.setUint16(26, nm.length, true);
-    parts.push(new Uint8Array(h.buffer), nm, f.data);
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, method, true);
+    h.setUint32(14, crc, true); h.setUint32(18, body.length, true); h.setUint32(22, sz, true); h.setUint16(26, nm.length, true);
+    parts.push(new Uint8Array(h.buffer), nm, body);
     const c = new DataView(new ArrayBuffer(46));
-    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true);
-    c.setUint32(16, crc, true); c.setUint32(20, sz, true); c.setUint32(24, sz, true); c.setUint16(28, nm.length, true); c.setUint32(42, off, true);
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(10, method, true);
+    c.setUint32(16, crc, true); c.setUint32(20, body.length, true); c.setUint32(24, sz, true); c.setUint16(28, nm.length, true); c.setUint32(42, off, true);
     central.push(new Uint8Array(c.buffer), nm);
-    off += 30 + nm.length + sz;
+    off += 30 + nm.length + body.length;
   }
   const cdSize = central.reduce((a, b) => a + b.length, 0);
   const e = new DataView(new ArrayBuffer(22));
@@ -10357,6 +10362,318 @@ function linkLook(doc, t, i, box){
 }
 
 /* ====================================================================
+   轉存 Word: the document as it is now becomes an editable .docx. Our annotations are drawn onto the pages of a copy
+   first (flattenForExport); the built-in converter then reads that copy with pdf.js: text → lines → reading order
+   (XY-cut: a gap across everything first, then columns, left first) → paragraphs, written as OOXML in a zip (pako).
+   ==================================================================== */
+// a copy of the chosen pages (0-based) with every visible annotation drawn into the page content (PDF 32000 12.5.5: the
+// appearance's box through its /Matrix, fitted onto /Rect) and no annotations left. Notes, links, pop-ups, hidden ones and
+// those on hidden layers stay out. Text boxes are not drawn (ours are pictures of their text): their text comes back per
+// page as {rect (PDF space), lines: [[runs]]} — ours from PDFE_RT, others' from /Contents. The document is not touched.
+// → {bytes, boxes: [[text box] per page]}
+async function flattenForExport(pages){
+  const doc = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false}), ctx = doc.context;
+  const keep = new Set(pages); for (let k = doc.getPageCount() - 1; k >= 0; k--) if (!keep.has(k)) doc.removePage(k);
+  const L = readLayers(doc), ids = new Set(L.map(l => l.id)), hid = new Set(L.filter(l => !l.visible).map(l => l.id));
+  const num = v => v instanceof PDFNumber ? v.asNumber() : 0;
+  const boxes = [];
+  doc.getPages().forEach((page, pi) => {
+    const tbs = []; boxes.push(tbs);
+    const annots = page.node.lookupMaybe(N_('Annots'), PDFArray); if (!annots) return;
+    const ops = [], X = {};
+    for (let k = 0; k < annots.size(); k++) {
+      const d = annots.lookupMaybe(k, PDFDict); if (!d) continue;
+      const sub = String(d.get(N_('Subtype')) || '').slice(1), F = num(d.get(N_('F')));
+      if (['Text', 'Link', 'Popup'].includes(sub) || (F & 2) || (F & 32)) continue;
+      const lay = ids.size ? ocOfDict(doc, d, ids) : null; if (lay && hid.has(lay)) continue;
+      if (sub === 'FreeText') {
+        const rc = d.lookupMaybe(N_('Rect'), PDFArray), rt = readRT(d); if (!rc) continue;
+        let lines = rt && Array.isArray(rt.lines) ? rt.lines : null;
+        if (!lines) {
+          const c = d.lookupMaybe(N_('Contents'), PDFHexString, PDFString), m = /([\d.]+)\s+Tf/.exec(String(d.get(N_('DA')) || ''));
+          lines = (c ? c.decodeText() : '').split(/\r\n|\r|\n/).map(t => [{text:t, size:m ? +m[1] : 12}]);
+        }
+        if (lines.some(l => l.some(r => r.text && r.text.trim()))) tbs.push({rect:numArr(rc), lines});
+        continue;
+      }
+      const ap = d.lookupMaybe(N_('AP'), PDFDict); let n = ap && ap.get(N_('N'));
+      const states = n && ctx.lookup(n); if (states instanceof PDFDict) n = states.get(d.get(N_('AS')) || N_('Off'));   // (on / off: the state it is in)
+      if (!(n instanceof PDFRef)) continue;
+      const st = ctx.lookup(n); if (!(st instanceof PDFLib.PDFStream)) continue;
+      const bb = st.dict.lookupMaybe(N_('BBox'), PDFArray), rc = d.lookupMaybe(N_('Rect'), PDFArray); if (!bb || !rc) continue;
+      const b = numArr(bb), r = numArr(rc), mx = st.dict.lookupMaybe(N_('Matrix'), PDFArray), m = mx ? numArr(mx) : [1, 0, 0, 1, 0, 0];
+      const q = [[b[0], b[1]], [b[2], b[1]], [b[0], b[3]], [b[2], b[3]]].map(([x, y]) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]]);
+      const tx0 = Math.min(...q.map(p => p[0])), tx1 = Math.max(...q.map(p => p[0])), ty0 = Math.min(...q.map(p => p[1])), ty1 = Math.max(...q.map(p => p[1]));
+      const rx0 = Math.min(r[0], r[2]), rx1 = Math.max(r[0], r[2]), ry0 = Math.min(r[1], r[3]), ry1 = Math.max(r[1], r[3]);
+      if (!(tx1 - tx0 > 1e-6 && ty1 - ty0 > 1e-6)) continue;
+      const sx = (rx1 - rx0) / (tx1 - tx0), sy = (ry1 - ry0) / (ty1 - ty0), name = `PDFEFlat${pi}_${k}`;   // (unique: pages may share their resources)
+      if (!st.dict.get(N_('Subtype'))) st.dict.set(N_('Subtype'), N_('Form'));
+      X[name] = n; ops.push(`q ${[sx, 0, 0, sy, rx0 - tx0 * sx, ry0 - ty0 * sy].map(v => +v.toFixed(6)).join(' ')} cm /${name} Do Q`);
+    }
+    const {XObject} = page.node.normalizedEntries();
+    page.node.delete(N_('Annots'));
+    if (!ops.length) return;
+    Object.entries(X).forEach(([k, ref]) => XObject.set(N_(k), ref));
+    page.node.wrapContentStreams(ctx.getPushGraphicsStateContentStream(), ctx.getPopGraphicsStateContentStream());
+    page.node.addContentStream(ctx.register(ctx.stream(ops.join('\n'))));
+  });
+  return {bytes:await doc.save({useObjectStreams:false}), boxes};
+}
+
+const WD_CJK = /[⺀-鿿豈-﫿＀-￯　-〿]/;
+// the upright, left-to-right text of a page: pieces with box, size and style (text this program keeps hidden left out)
+async function wordItems(page, vp){
+  const ops = await page.getOperatorList();   // (loads the page's fonts: their names, bold, italic)
+  const tc = await page.getTextContent({includeMarkedContent:true}), U = pdfjsLib.Util, out = [];
+  let hide = 0;
+  for (const it of tc.items) {
+    if (it.type === 'beginMarkedContent' || it.type === 'beginMarkedContentProps') { if (hide || it.tag === 'PDFE_Hide') hide++; continue; }
+    if (it.type === 'endMarkedContent') { if (hide) hide--; continue; }
+    if (hide || !it.str || !it.str.trim()) continue;
+    const tx = U.transform(vp.transform, it.transform), fs = Math.hypot(tx[2], tx[3]);
+    if (!(fs > 0) || Math.abs(tx[1]) > fs * 0.05 || tx[0] <= 0) continue;   // upright, left to right (vertical and turned text: not yet)
+    const w = it.width * Math.hypot(vp.transform[0], vp.transform[1]) || fs * it.str.length * 0.5;
+    let font = null; try { if (page.commonObjs.has(it.fontName)) font = page.commonObjs.get(it.fontName); } catch (_) {}
+    const name = String(font && font.name || '').replace(/^[A-Z]{6}\+/, '');
+    out.push({str:it.str, x:tx[4], base:tx[5], w, fs, top:tx[5] - fs * 0.85, bottom:tx[5] + fs * 0.2, name,
+      bold:!!(font && (font.bold || font.black)) || /bold|black|heavy|semibold|demi|w[6-9]\b/i.test(name), italic:!!(font && font.italic) || /italic|oblique/i.test(name)});
+  }
+  return {items:out, ops};
+}
+// pieces on one baseline → a line; a wide gap (a column gutter) starts another. Runs: pieces of one style, with a space
+// where words stood apart (none between Chinese characters)
+function wordLines(items){
+  const lines = [];
+  for (const it of [...items].sort((a, b) => a.base - b.base || a.x - b.x)) {
+    const ln = lines.find(l => Math.abs(l.base - it.base) < Math.min(l.fs, it.fs) * 0.4 && it.x >= l.x1 - l.fs * 0.5 && it.x - l.x1 < Math.max(l.fs, it.fs) * 2.5);
+    if (ln) { ln.items.push(it); ln.x1 = Math.max(ln.x1, it.x + it.w); ln.fs = Math.max(ln.fs, it.fs); ln.y0 = Math.min(ln.y0, it.top); ln.y1 = Math.max(ln.y1, it.bottom); }
+    else lines.push({items:[it], base:it.base, x0:it.x, x1:it.x + it.w, fs:it.fs, y0:it.top, y1:it.bottom});
+  }
+  for (const l of lines) {
+    l.items.sort((a, b) => a.x - b.x); l.runs = [];
+    l.items.forEach((it, k) => {
+      const prev = l.items[k - 1]; let s = it.str;
+      if (prev) { const gap = it.x - (prev.x + prev.w), pc = prev.str.slice(-1), nc = s[0]; if (gap > Math.min(prev.fs, it.fs) * 0.18 && pc !== ' ' && nc !== ' ' && !(WD_CJK.test(pc) && WD_CJK.test(nc))) s = ' ' + s; }
+      const st = {size:Math.round(it.fs * 2) / 2, bold:it.bold, italic:it.italic, name:it.name}, last = l.runs[l.runs.length - 1];
+      if (last && last.size === st.size && last.bold === st.bold && last.italic === st.italic && last.name === st.name) last.text += s; else l.runs.push({text:s, ...st});
+    });
+    l.text = l.runs.map(r => r.text).join('');
+  }
+  return lines;
+}
+// reading order of boxes {x0, y0, x1, y1}: cut at the widest gap between rows when it runs across everything, else at a
+// column gutter (left first); each box learns the left edge of its column (col), which its indent is measured from
+function wordCut(boxes, fs, col){
+  if (!boxes.length) return [];
+  if (col == null) col = Math.min(...boxes.map(b => b.x0));
+  if (boxes.length === 1) { boxes[0].col = col; return boxes; }
+  const gaps = (lo, hi) => {
+    const s = [...boxes].sort((a, b) => a[lo] - b[lo]), out = []; let end = s[0][hi];
+    for (let k = 1; k < s.length; k++) { if (s[k][lo] > end) out.push({at:(end + s[k][lo]) / 2, size:s[k][lo] - end}); end = Math.max(end, s[k][hi]); }
+    return out.sort((a, b) => b.size - a.size);
+  };
+  const rows = gaps('y0', 'y1'), cols = gaps('x0', 'x1').filter(g => g.size >= fs * 1.5);
+  const split = (key, at, c1, c2) => { const a = boxes.filter(b => b[key] <= at), b2 = boxes.filter(b => b[key] > at); return a.length && b2.length ? [...wordCut(a, fs, c1(a)), ...wordCut(b2, fs, c2(b2))] : null; };
+  const left = g => Math.min(...g.map(b => b.x0));
+  if (rows.length && (!cols.length || rows[0].size >= fs * 0.6)) { const r = split('y1', rows[0].at, () => col, () => col); if (r) return r; }
+  if (cols.length) { const r = split('x1', cols[0].at, left, left); if (r) return r; }
+  if (rows.length) { const r = split('y1', rows[0].at, () => col, () => col); if (r) return r; }
+  boxes.forEach(b => { b.col = col; }); return [...boxes].sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0);
+}
+// consecutive lines of one column → paragraphs: the same size and weight, normal spacing, the same left edge (or a
+// first-line indent), and the line before running on (a short line ends a paragraph). Lines are joined with a space,
+// none between Chinese characters; a hyphen at a line end before a small letter goes.
+function wordParagraphs(seq){
+  const out = []; let cur = null;
+  const close = () => { if (cur) out.push(cur); cur = null; };
+  for (const b of seq) {
+    if (!b.runs) { close(); out.push(b); continue; }
+    const last = cur && cur.lines[cur.lines.length - 1], ref = cur && cur.lines[cur.lines.length > 1 ? 1 : 0];
+    const joins = !!last && b.col === last.col && Math.abs(b.fs - last.fs) <= last.fs * 0.15 && b.y0 - last.y1 < last.fs * 0.8 && b.y0 > last.y0
+      && Math.abs(b.x0 - ref.x0) < last.fs * (cur.lines.length > 1 ? 1 : 3) && last.x1 > Math.max(...cur.lines.map(l => l.x1)) - last.fs * 4
+      && b.runs[0].bold === last.runs[last.runs.length - 1].bold;
+    if (!joins) { close(); cur = {lines:[b], runs:b.runs.map(r => ({...r})), y0:b.y0, y1:b.y1, col:b.col}; continue; }
+    const pc = last.text.slice(-1), nc = b.text[0], tail = cur.runs[cur.runs.length - 1];
+    let runs = b.runs.map(r => ({...r}));
+    if (pc === '-' && /[a-z]/.test(nc)) tail.text = tail.text.slice(0, -1);
+    else if (!(WD_CJK.test(pc) || WD_CJK.test(nc) || pc === ' ' || nc === ' ')) runs[0].text = ' ' + runs[0].text;
+    runs.forEach(r => { const p = cur.runs[cur.runs.length - 1]; if (p.size === r.size && p.bold === r.bold && p.italic === r.italic && p.name === r.name) p.text += r.text; else cur.runs.push(r); });
+    cur.lines.push(b); cur.y1 = b.y1;
+  }
+  close();
+  return out;
+}
+// a PDF font name → the Windows font Word should use: [Latin, East Asian] (null: Word's default)
+function wordFonts(name){
+  const n = String(name || '');
+  const ea = /MingLiU|PMingLiU|Ming|明體|細明|SimSun|NSimSun|宋|SourceHanSerif|NotoSerifCJK|NotoSerifTC|思源宋/i.test(n) ? '新細明體' : /DFKai|BiauKai|Kai|楷/i.test(n) ? '標楷體'
+    : /JhengHei|正黑|SimHei|黑體|NotoSansTC|NotoSansCJK|SourceHanSans|思源黑|PDFE ?Sans|YaHei|雅黑|Gothic/i.test(n) ? '微軟正黑體' : null;
+  const lat = /Times|TimesNewRoman/i.test(n) ? 'Times New Roman' : /Arial|Helvetica/i.test(n) ? 'Arial' : /Calibri/i.test(n) ? 'Calibri' : /Cambria/i.test(n) ? 'Cambria'
+    : /Courier/i.test(n) ? 'Courier New' : /Georgia/i.test(n) ? 'Georgia' : /Verdana/i.test(n) ? 'Verdana' : /Tahoma/i.test(n) ? 'Tahoma' : /Garamond/i.test(n) ? 'Garamond' : /Segoe/i.test(n) ? 'Segoe UI' : null;
+  return [lat, ea];
+}
+// one page → one section of the Word file: its size, margins from where the text lies, its paragraphs. tbs: the page's text
+// boxes (flattenForExport), each a block of its own placed among the lines by where it lies; each of its lines a paragraph
+async function wordSection(page, tbs = []){
+  const vp = page.getViewport({scale:1}), {items} = await wordItems(page, vp), lines = wordLines(items);
+  const boxes = tbs.map(t => { const r = vp.convertToViewportRectangle(t.rect); return {x0:Math.min(r[0], r[2]), y0:Math.min(r[1], r[3]), x1:Math.max(r[0], r[2]), y1:Math.max(r[1], r[3]), tb:t}; });
+  const all = [...lines, ...boxes], fs = lines.length ? lines.map(l => l.fs).sort((a, b) => a - b)[lines.length >> 1] : 12;
+  const seq = wordCut(all, fs, null), paras = wordParagraphs(seq);
+  const m = v => Math.max(18, Math.min(72, v)), has = all.length > 0;
+  const margin = has ? {l:m(Math.min(...all.map(b => b.x0))), t:m(Math.min(...all.map(b => b.y0))), r:m(vp.width - Math.max(...all.map(b => b.x1))), b:m(vp.height - Math.max(...all.map(b => b.y1)))} : {l:72, t:72, r:72, b:72};
+  const mid = (margin.l + vp.width - margin.r) / 2, right = vp.width - margin.r;
+  let prev = margin.t; const blocks = [];
+  for (const p of paras) {
+    const before = Math.max(0, p.y0 - prev); prev = p.y1;
+    if (p.tb) {   // a text box: its own lines, as typed, with their styles
+      p.tb.lines.forEach((ln, k) => blocks.push({type:'p', before:k ? 0 : before, indent:Math.max(0, p.x0 - margin.l),
+        runs:ln.filter(r => r.text).map(r => { const [font, ea] = wordFonts(r.font || 'PDFE Sans'); return {text:r.text, size:r.size || 12, bold:!!r.bold, italic:!!r.italic, underline:!!r.underline, color:r.color, font, ea}; })}));
+      continue;
+    }
+    const l0 = p.lines[0], one = p.lines.length === 1;
+    const align = one && Math.abs((l0.x0 + l0.x1) / 2 - mid) < l0.fs && l0.x0 - margin.l > l0.fs * 3 ? 'center' : one && Math.abs(l0.x1 - right) < l0.fs && l0.x0 - margin.l > l0.fs * 6 ? 'right' : 'left';
+    const pitch = one ? 0 : (p.lines[p.lines.length - 1].base - l0.base) / (p.lines.length - 1);
+    blocks.push({type:'p', align, before, indent:align === 'left' ? Math.max(0, l0.x0 - Math.max(margin.l, p.col ?? margin.l)) : 0, line:pitch,
+      runs:p.runs.map(r => { const [font, ea] = wordFonts(r.name); return {text:r.text, size:r.size, bold:r.bold, italic:r.italic, font, ea}; })});
+  }
+  return {w:vp.width, h:vp.height, margin, blocks};
+}
+
+// .docx writing: OOXML parts in a zip (makeZip, the parts deflated, the pictures stored)
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+// sections [{w, h, margin:{t, r, b, l}, blocks:[{type:'p', align, before, indent, line, runs:[{text, size, bold, italic, underline, color, font, ea}]}
+//   | {type:'img', png, w, h, before, indent}]}] (points) → a .docx (a Blob): one section per page, page breaks between
+function docxBytes(sections, meta = {}){
+  const xe = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;'}[c])).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f￾￿]/g, '');
+  const tw = pt => Math.round(pt * 20), emu = pt => Math.round(pt * 12700), media = [], body = []; let pic = 0;
+  const run = r => {
+    const pr = [];
+    if (r.font || r.ea) pr.push(`<w:rFonts${r.font ? ` w:ascii="${xe(r.font)}" w:hAnsi="${xe(r.font)}"` : ''}${r.ea ? ` w:eastAsia="${xe(r.ea)}"` : ''}/>`);
+    if (r.bold) pr.push('<w:b/><w:bCs/>'); if (r.italic) pr.push('<w:i/><w:iCs/>'); if (r.underline) pr.push('<w:u w:val="single"/>');
+    if (/^#[0-9a-f]{6}$/i.test(r.color || '') && !/^#0{6}$/.test(r.color)) pr.push(`<w:color w:val="${r.color.slice(1).toUpperCase()}"/>`);
+    if (r.size) { const hp = Math.max(2, Math.round(r.size * 2)); pr.push(`<w:sz w:val="${hp}"/><w:szCs w:val="${hp}"/>`); }
+    return `<w:r>${pr.length ? `<w:rPr>${pr.join('')}</w:rPr>` : ''}<w:t xml:space="preserve">${xe(r.text)}</w:t></w:r>`;
+  };
+  const ppr = (b, extra = '') => `<w:pPr>${b.align && b.align !== 'left' ? `<w:jc w:val="${b.align}"/>` : ''}<w:spacing w:before="${tw(Math.max(0, b.before || 0))}" w:after="0"${b.line ? ` w:line="${tw(b.line)}" w:lineRule="atLeast"` : ''}/>${b.indent ? `<w:ind w:left="${tw(Math.max(0, b.indent))}"/>` : ''}${extra}</w:pPr>`;
+  const sect = sc => { const m = sc.margin || {t:72, r:72, b:72, l:72};
+    return `<w:sectPr><w:type w:val="nextPage"/><w:pgSz w:w="${tw(sc.w)}" w:h="${tw(sc.h)}"${sc.w > sc.h ? ' w:orient="landscape"' : ''}/><w:pgMar w:top="${tw(m.t)}" w:right="${tw(m.r)}" w:bottom="${tw(m.b)}" w:left="${tw(m.l)}" w:header="0" w:footer="0" w:gutter="0"/></w:sectPr>`; };
+  sections.forEach((sc, k) => {
+    const last = k === sections.length - 1, blocks = sc.blocks.length ? sc.blocks : [{type:'p', runs:[]}];
+    blocks.forEach((b, j) => {
+      const end = !last && j === blocks.length - 1 ? sect(sc) : '';
+      if (b.type !== 'img') { body.push(`<w:p>${ppr(b, end)}${(b.runs || []).map(run).join('')}</w:p>`); return; }
+      pic++; media.push({name:`word/media/image${pic}.png`, data:b.png});
+      const cx = emu(b.w), cy = emu(b.h);
+      body.push(`<w:p>${ppr(b, end)}<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${pic}" name="圖片 ${pic}"/>`
+        + `<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">`
+        + `<pic:pic><pic:nvPicPr><pic:cNvPr id="${pic}" name="image${pic}.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdImg${pic}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>`
+        + `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`);
+    });
+    if (last) body.push(sect(sc));
+  });
+  const X = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n', REL = 'http://schemas.openxmlformats.org/package/2006/relationships', OD = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="' + OD + '" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+    + 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"';
+  const now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+  const enc = new TextEncoder(), xmlPart = (name, text) => ({name, data:enc.encode(text), deflate:true});
+  return makeZip([
+    xmlPart('[Content_Types].xml', X + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+      + '<Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/>'
+      + '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+      + '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
+      + '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
+      + '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>'),
+    xmlPart('_rels/.rels', X + `<Relationships xmlns="${REL}"><Relationship Id="rId1" Type="${OD}/officeDocument" Target="word/document.xml"/>`
+      + `<Relationship Id="rId2" Type="${REL}/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="${OD}/extended-properties" Target="docProps/app.xml"/></Relationships>`),
+    xmlPart('docProps/core.xml', X + '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" '
+      + 'xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+      + `<dc:title>${xe(meta.title || '')}</dc:title><dc:creator>${xe(meta.creator || '')}</dc:creator>`
+      + `<dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified></cp:coreProperties>`),
+    xmlPart('docProps/app.xml', X + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>PDF 工作台</Application></Properties>'),
+    xmlPart('word/_rels/document.xml.rels', X + `<Relationships xmlns="${REL}"><Relationship Id="rIdStyles" Type="${OD}/styles" Target="styles.xml"/>`
+      + media.map((m, k) => `<Relationship Id="rIdImg${k + 1}" Type="${OD}/image" Target="media/image${k + 1}.png"/>`).join('') + '</Relationships>'),
+    xmlPart('word/styles.xml', X + '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr>'
+      + '<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="新細明體" w:cs="Times New Roman"/><w:sz w:val="24"/><w:szCs w:val="24"/><w:lang w:val="en-US" w:eastAsia="zh-TW"/></w:rPr></w:rPrDefault>'
+      + '<w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>'
+      + '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style></w:styles>'),
+    xmlPart('word/document.xml', X + `<w:document ${NS}><w:body>${body.join('')}</w:body></w:document>`),
+    ...media,
+  ]);
+}
+// the copy (flattenForExport) → a .docx, page by page (step(k, n) before each); job.cancel stops it
+async function builtinDocx({bytes, boxes}, {job, step}){
+  const pdf = await pdfjsLib.getDocument({...PDF_OPTS, data:bytes}).promise;
+  try {
+    const sections = [];
+    for (let k = 1; k <= pdf.numPages; k++) {
+      if (job.cancel) throw new Error('cancel');
+      step(k, pdf.numPages);
+      const page = await pdf.getPage(k);
+      sections.push(await wordSection(page, boxes[k - 1] || [])); page.cleanup();
+    }
+    if (job.cancel) throw new Error('cancel');
+    return docxBytes(sections, {title:S.name.replace(/\.pdf$/i, ''), creator:AUTHOR || ''});
+  } finally { pdf.destroy(); }
+}
+let WORDJOB = null;   // the conversion under way: {cancel}
+async function openWordDialog(){
+  if (!S.pdf || WORDJOB) return;
+  if (!(await settleEdits())) return;
+  const n = S.pages.length;
+  let word = null; try { word = DESK && DESK.word ? await DESK.word.detect() : null; } catch (_) {}
+  const hasWord = !!(word && word.ok);
+  const body = document.createElement('div'); body.style.width = 'min(500px, 82vw)';
+  body.innerHTML = `<div class="field"><label>頁面</label><div style="display:flex;gap:8px;align-items:center"><select id="wdScope"><option value="all">全部 ${n} 頁</option><option value="range">指定範圍</option></select>
+      <input type="text" id="wdRange" placeholder="例如 1-3, 5, 8-" style="width:170px;display:none" spellcheck="false" autocomplete="off"></div></div>
+    <div class="field"><label>轉換方式</label><select id="wdHow"><option value="word"${hasWord ? '' : ' disabled'}>用 Microsoft Word 轉換（最接近原本的版面）</option><option value="builtin">程式內建轉換</option></select>
+      <div class="wd-note" id="wdNote">${hasWord ? 'Word 會在背景開啟並轉換，完成後自動關閉。' : '這台電腦沒有 Word，使用程式內建轉換：文字、段落、字級、粗體斜體；表格與多欄等複雜版面較弱。'}</div></div>
+    <div class="url-st" id="wdSt"></div><div class="pr-err" id="wdErr"></div>`;
+  let done = null;   // the file written: 〔轉存〕 has become 〔開啟〕
+  const $b = q => body.querySelector(q), setSt = t => { $b('#wdSt').textContent = t; }, setErr = t => { $b('#wdErr').textContent = t; };
+  const chosen = () => { if ($b('#wdScope').value === 'all') return [...Array(n).keys()]; const r = parseRange($b('#wdRange').value, n); return r && r.size ? [...r].sort((a, b) => a - b) : null; };
+  const check = () => {
+    const some = $b('#wdScope').value === 'range'; $b('#wdRange').style.display = some ? '' : 'none';
+    const ok = !!chosen(); setErr(ok || !$b('#wdRange').value.trim() ? '' : `頁碼要在 1～${n} 之間，例如 1-3, 5`);
+    const g = $('#wdGo'); if (g && !WORDJOB && !done) g.disabled = !ok;
+  };
+  const run = async () => {
+    if (done) { if (DESK && done.path) DESK.openPath(done.path); return null; }
+    const pages = chosen(); if (!pages || WORDJOB) return undefined;
+    const fn = S.name.replace(/\.pdf$/i, '').replace(/_已編輯(\(\d+\))?$/, '') + '.docx';
+    let where = null;
+    if (DESK) {
+      const dir = S.handle && S.handle.path ? S.handle.path.replace(/[\\/][^\\/]*$/, '') : '', orig = S.handle && (S.handle.orig || S.handle.path);
+      where = await DESK.chooseSave(dir ? dir + (S.handle.path.includes('\\') ? '\\' : '/') + fn : fn, {avoid:orig ? [orig] : []});
+      if (!where) return undefined;   // no place chosen: the window stays
+    }
+    const job = WORDJOB = {cancel:false}, inputs = [...body.querySelectorAll('select,input')];
+    setErr(''); $('#wdGo').disabled = true; inputs.forEach(x => { x.disabled = true; });
+    try {
+      setSt('準備中…');
+      const flat = await flattenForExport(pages); if (job.cancel) throw new Error('cancel');
+      const out = await builtinDocx(flat, {job, step:(k, m) => setSt(`轉換中：第 ${k}／${m} 頁`)});
+      if (job.cancel) throw new Error('cancel');
+      const name = where ? where.split(/[\\/]/).pop() : fn;
+      if (DESK) await DESK.writeFile(where, new Uint8Array(await out.arrayBuffer()));   // (makeZip gives a Blob)
+      else if (!(await saveFile(fn, new Blob([out], {type:DOCX_MIME})))) throw new Error('cancel');
+      done = {path:where, name}; setSt('已轉存成 Word：' + name); toast('已轉存成 Word：' + name);
+      if (!DESK) return null;
+      $('#wdGo').textContent = '開啟'; $('#wdGo').disabled = false; $('#wdCancel').textContent = '關閉';
+      return undefined;
+    } catch (e) {
+      inputs.forEach(x => { x.disabled = false; }); WORDJOB = null; check();   // (first: check() rewrites the error line)
+      setSt(e && e.message === 'cancel' ? '已取消' : ''); if (!(e && e.message === 'cancel')) setErr('轉存失敗：' + (e && e.message || e));
+      return undefined;
+    } finally { WORDJOB = null; }
+  };
+  await openModal({title:'轉存成 Word', body, buttons:[
+    {label:'取消', id:'wdCancel', handler:() => { if (WORDJOB) { WORDJOB.cancel = true; return undefined; } return null; }},
+    {label:'轉存', id:'wdGo', primary:true, handler:run},
+  ], onOpen:() => { $b('#wdHow').value = hasWord ? 'word' : 'builtin'; body.addEventListener('input', check); body.addEventListener('change', check); check(); }});
+  if (WORDJOB) WORDJOB.cancel = true;   // closed (Esc) during a conversion: it stops
+}
+
+/* ====================================================================
    Sample document
    ==================================================================== */
 async function makeSample(){
@@ -10945,6 +11262,7 @@ window.__pdfapp = {
   },
   imageBoxes:i => detectImages(i),
   multi:() => MS ? {i:MS.i, ids:MS.items.map(a => a.id)} : null,
+  flatten:pages => flattenForExport(pages),   // (tests) the copy that 轉存 Word converts
   links:async i => {   // (tests) page i's links: on screen, where they go, how they look
     const doc = await geoDoc();
     return Promise.all((await pageLinks(i)).map(async l => {
