@@ -81,6 +81,15 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .set-h:not(:first-child){margin-top:16px}
 .set-opt{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;cursor:pointer;font-size:13px}
 .set-opt:hover{background:var(--hover)}
+.ppl-row{display:flex;align-items:center;gap:6px}
+.ppl-row .set-opt{flex:1;min-width:0;overflow-wrap:anywhere}
+.ppl-def{font-size:11.5px;color:var(--seal-ink);background:var(--seal-soft);border-radius:9px;padding:1px 8px;flex:none}
+.ppl-del{border:0;background:none;width:30px;height:30px;border-radius:7px;cursor:pointer;color:var(--ink2);display:grid;place-items:center;flex:none}
+.ppl-del:hover:not(:disabled){background:#ffe3e3;color:#c92a2a}
+.ppl-del:disabled{opacity:.35;cursor:default}
+.ppl-del svg.i{width:18px;height:18px}
+.ppl-add{display:flex;gap:8px;margin-top:10px}
+.ppl-add .ex-in{flex:1}
 .set-opt small{color:var(--ink3);margin-left:4px}
 .set-opt svg.i{width:17px;height:17px}
 .set-btns{display:flex;align-items:center;gap:8px;margin-top:14px}
@@ -1021,6 +1030,7 @@ const ICONS = {
   redo:'m15 14 5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13',
   pageAdd:'M6 3h8l4 4v14H6zM14 3v4h4M12 11v6M9 14h6',
   pageDel:'M6 3h8l4 4v14H6zM14 3v4h4M9 14h6',
+  trash:'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6',
   toImage:'M4 4h10l4 4v5M14 4v4h4M4 4v16h7M14 15h7v6h-7zM15.5 19l2-2 1.5 1.5 1-1 1 1.5M12 18h-1',
   copy:'M8 8h12v12H8zM16 8V4H4v12h4',
   cut:'M6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12',
@@ -5225,6 +5235,41 @@ viewer.addEventListener('drop', async e => {
    shapes, pen / eraser, stamps — with preset styles
    ==================================================================== */
 let AUTHOR = '使用者';
+// the people list (設定 → 人員): the names of those who write in these PDFs (handing over, making the changes); the
+// default one is the author of every new annotation. Made from the computer's user name the first time.
+const PEOPLE_KEY = 'pdfeditor.people.v1';
+let PEOPLE = (() => {   // {names, def}, or null until made (nothing stored, or what is stored is not a list of names)
+  try {
+    const p = JSON.parse(localStorage.getItem(PEOPLE_KEY));
+    const names = [...new Set((p && Array.isArray(p.names) ? p.names : []).filter(n => typeof n === 'string').map(n => n.trim()).filter(Boolean))];
+    return names.length ? {names, def:names.includes(p.def) ? p.def : names[0]} : null;
+  } catch (_) { return null; }
+})();
+const savePeople = () => { try { localStorage.setItem(PEOPLE_KEY, JSON.stringify(PEOPLE)); } catch (_) {} };
+const applyPeople = () => { if (PEOPLE) AUTHOR = PEOPLE.def; };
+applyPeople();
+function seedPeople(user){
+  if (!PEOPLE) { const n = String(user || '').trim() || '使用者'; PEOPLE = {names:[n], def:n}; savePeople(); }
+  applyPeople();
+}
+function addPerson(name){
+  const n = String(name ?? '').trim();
+  if (!n || !PEOPLE) return {ok:false};
+  if (PEOPLE.names.includes(n)) return {ok:false, msg:`名單裡已經有「${n}」`};
+  PEOPLE.names.push(n); savePeople();
+  return {ok:true};
+}
+function removePerson(name){   // the list keeps at least one name; the first one takes over as the default
+  if (!PEOPLE || PEOPLE.names.length <= 1 || !PEOPLE.names.includes(name)) return false;
+  PEOPLE.names = PEOPLE.names.filter(n => n !== name);
+  if (PEOPLE.def === name) PEOPLE.def = PEOPLE.names[0];
+  savePeople(); applyPeople();
+  return true;
+}
+function setDefaultPerson(name){
+  if (!PEOPLE || !PEOPLE.names.includes(name)) return;
+  PEOPLE.def = name; savePeople(); applyPeople();
+}
 const pad2 = n => String(n).padStart(2, '0');
 function zhDateTime(d){
   if (!(d instanceof Date) || isNaN(d)) return '';
@@ -8556,7 +8601,7 @@ function applyRibbon(){ $('#ribbon').classList.toggle('icons-only', !!RIBBON.ico
 let SET = null;   // the open settings window
 async function openSettings(tab = 'look'){
   if (SET) { SET.show(tab); return; }
-  const tabs = [['look', '外觀'], ['bar', '工具列'], ['keys', '按鍵'], ...(DESK ? [['update', '軟體更新']] : [])];
+  const tabs = [['look', '外觀'], ['bar', '工具列'], ['keys', '按鍵'], ['people', '人員'], ...(DESK ? [['update', '軟體更新']] : [])];
   const body = document.createElement('div'); body.className = 'set';
   body.innerHTML = `<div class="set-tabs">${tabs.map(([k, n]) => `<button data-st="${k}">${n}</button>`).join('')}</div><div class="set-pane"></div>`;
   const pane = body.querySelector('.set-pane');
@@ -8570,6 +8615,13 @@ async function openSettings(tab = 'look'){
     bar:() => `<div class="set-h">工具列</div>
       ${opt('checkbox', 'iconsOnly', '1', !!RIBBON.iconsOnly, '只顯示圖示，不顯示文字', '<small>滑鼠移到按鈕上會顯示名稱</small>')}
       <div class="note" style="margin-top:12px">「加頁」「旋轉」「簽署」按鈕的 ▾ 會列出同一類的其他功能，按鈕上會留著你最近用的那一個。工具列放不下時，把滑鼠移到工具列上滾動滾輪即可左右捲動。</div>`,
+    people:() => {
+      const names = PEOPLE ? PEOPLE.names : [], one = names.length <= 1;
+      return `<div class="set-h">人員名單</div>
+        <div class="note" style="margin-bottom:8px">新加的便利貼和其他註解，作者會用「預設」的名字。</div>
+        ${names.map(n => `<div class="ppl-row"><label class="set-opt"><input type="radio" name="pdef" value="${esc(n)}"${PEOPLE.def === n ? ' checked' : ''}>${esc(n)}</label>${PEOPLE.def === n ? '<small class="ppl-def">預設</small>' : ''}<button class="ppl-del" data-pdel="${esc(n)}" title="${one ? '名單至少要留一個名字' : '從名單刪除'}"${one ? ' disabled' : ''}>${icon('trash')}</button></div>`).join('')}
+        <div class="ppl-add"><input id="pName" class="ex-in" placeholder="輸入名字" maxlength="40" spellcheck="false"><button class="btn" data-padd>新增</button></div>`;
+    },
     update:() => {
       const st = UPD.state.state, ready = st === 'ready', working = st === 'checking' || st === 'downloading';
       return `<div class="set-h">軟體更新</div>
@@ -8589,8 +8641,16 @@ async function openSettings(tab = 'look'){
   };
   // the update pane is drawn again on every updater event: an open 更新內容 (and where it is scrolled to) stays as it is
   SET = {tab, show, paintUpdate:() => { if (!SET || SET.tab !== 'update') return; const keep = pane.querySelector('#updNotes'), top = keep ? keep.scrollTop : 0; pane.innerHTML = panes.update(); if (keep) { pane.querySelector('#updNotes').replaceWith(keep); keep.scrollTop = top; } }};
+  const addFromInput = () => {   // 人員: the name typed in the box joins the list
+    const r = addPerson(pane.querySelector('#pName').value);
+    if (r.msg) toast(r.msg, 'err');
+    if (r.ok) { show('people'); pane.querySelector('#pName').focus(); }
+  };
+  body.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'pName') { e.preventDefault(); addFromInput(); } });
   body.addEventListener('click', e => {
     const t = e.target.closest('[data-st]'); if (t) { show(t.dataset.st); return; }
+    const pd = e.target.closest('[data-pdel]'); if (pd) { if (!pd.disabled && removePerson(pd.dataset.pdel)) show('people'); return; }
+    if (e.target.closest('[data-padd]')) { addFromInput(); return; }
     const u = e.target.closest('[data-u2]'); if (!u || u.disabled) return;
     if (u.dataset.u2 === 'check') { UPD.state = {state:'checking'}; renderUpdate(); DESK.update.check().then(st => { if (st) { UPD.state = st; renderUpdate(); } }); }
     if (u.dataset.u2 === 'install') { closeModal(true); installUpdate(); }
@@ -8605,6 +8665,7 @@ async function openSettings(tab = 'look'){
     const el = e.target;
     if (el.name === 'th') { setTheme(el.value); toast('顯示模式：' + THEME_NAMES[el.value]); }
     if (el.name === 'pc') { setPageColor(el.value); toast('頁面色彩：' + PAGE_NAMES[el.value]); }
+    if (el.name === 'pdef') { setDefaultPerson(el.value); show('people'); }
     if (el.name === 'iconsOnly') { RIBBON.iconsOnly = el.checked; try { localStorage.setItem(RIBBON_KEY, JSON.stringify(RIBBON)); } catch (_) {} applyRibbon(); }
   });
   await openModal({title:'設定', body, width:620, buttons:[{spacer:true}, {label:'關閉', value:true, primary:true}], onOpen:() => show(tab)});
@@ -8750,9 +8811,10 @@ $('#updBar').addEventListener('click', e => {
   if (u === 'later') { UPD.dismissed = UPD.state.version; renderUpdate(); }
   if (u === 'notes') openSettings('update');
 });
+if (!DESK) seedPeople('');
 if (DESK) {
   $('#grpApp').style.display = '';
-  DESK.info().then(info => { UPD.info = info; if (info.user) AUTHOR = info.user; $('#stVer').textContent = 'v' + info.version; $('#stVer').title = '檢查更新'; checkWhatsNew(info.version, !!info.usedBefore); });
+  DESK.info().then(info => { UPD.info = info; seedPeople(info.user); $('#stVer').textContent = 'v' + info.version; $('#stVer').title = '檢查更新'; checkWhatsNew(info.version, !!info.usedBefore); });
   $('#stVer').addEventListener('click', () => actions.checkUpdate());
   DESK.update.on(st => {
     const prev = UPD.state.state; UPD.state = st; renderUpdate();
@@ -8785,6 +8847,7 @@ function setTheme(t){
 if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyTheme();
 paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {
+  people:() => ({names:PEOPLE ? [...PEOPLE.names] : [], def:PEOPLE ? PEOPLE.def : '', author:AUTHOR}),
   changelog:url => loadChangelog(url), notesHTML, whatsNewList, showWhatsNew, checkWhatsNew, updState:st => { UPD.state = st; renderUpdate(); },
   fontIdState:() => { const p = OCR.panel; if (!p) return null;
     const row = r => { const b = r.querySelector('button[data-fa]'), pct = r.querySelector('.fi-pct');
