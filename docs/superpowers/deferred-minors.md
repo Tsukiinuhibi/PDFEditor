@@ -9,6 +9,11 @@ For each batch: read the items, fix the ones that still hold with a test that fa
 (test-only, docs-only, obsolete, or a deliberate choice) as rulings in the batch's ledger. Take a release's
 section out of this file when its batch ships.
 
+## v1.0.48 (next batch)
+
+- linkRef: two links written straight into /Annots with the same box cannot be told apart; changing or deleting the upper one may hit the lower one (prefer the one whose target matches)
+- open-url.mjs: url:cancel stays replaced by a no-op after the Esc check (harmless today; restore it if parts are added after it)
+
 ## v1.0.47 (batch v1.0.48)
 
 - 轉存 Word: 「取消中…（正在停止 Word）」 shows during 準備中, before Word has started (wording only)

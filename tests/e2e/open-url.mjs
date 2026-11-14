@@ -28,6 +28,10 @@ const server = http.createServer((req, res) => {
   if (u === '/latin1') { res.writeHead(200, {'Content-Type':'application/pdf', 'Content-Disposition':'attachment; filename="r\u00e9sum\u00e9.pdf"'}); res.end(PDF); return; }
   if (u === '/big5') { res.writeHead(200, {'Content-Type':'application/pdf', 'Content-Disposition':'attachment; filename="' + Buffer.from('b3f8a769aed12e706466', 'hex').toString('latin1') + '"'}); res.end(PDF); return; }
   if (u === '/named/fallback.pdf') { res.writeHead(200, {'Content-Type':'application/pdf', 'Content-Disposition':'attachment; filename="..."'}); res.end(PDF); return; }
+  // (fix pass) a name with nothing before .pdf; a percent-encoded name; an RFC 2047 name
+  if (u === '/stem') { res.writeHead(200, {'Content-Type':'application/pdf', 'Content-Disposition':'attachment; filename=".pdf"'}); res.end(PDF); return; }
+  if (u === '/pct') { res.writeHead(200, {'Content-Type':'application/pdf', 'Content-Disposition':'attachment; filename="%E4%B8%AD%E6%96%87.pdf"'}); res.end(PDF); return; }
+  if (u === '/b64') { res.writeHead(200, {'Content-Type':'application/pdf', 'Content-Disposition':'attachment; filename="=?UTF-8?B?' + Buffer.from('中文2.pdf').toString('base64') + '?="'}); res.end(PDF); return; }
   if (u === '/401') { res.writeHead(401, {'Content-Type':'text/plain'}); res.end('sign in'); return; }
   if (u === '/404big' || u === '/huge2.pdf') {
     held.add(res); res.writeHead(u === '/404big' ? 404 : 200, {'Content-Type':'application/pdf', 'Content-Length':u === '/404big' ? 50 * 1024 * 1024 : 600 * 1024 * 1024});
@@ -129,6 +133,13 @@ for (const u of ['/latin1', '/big5', '/named/fallback.pdf']) { await openUrl(BAS
 t = await tabs();
 // (Chromium decodes the header as UTF-8: Latin-1 or Big5 bytes arrive as U+FFFD, their bytes lost — the address's own name then)
 check('names: Latin-1 or Big5 bytes (lost to U+FFFD on the way) → the address\'s own name, no mojibake; a name of only dots → the address\'s own (fallback.pdf)', JSON.stringify(t.slice(-3)) === JSON.stringify(['latin1.pdf', 'big5.pdf', 'fallback.pdf']), t.slice(-3));
+for (const u of ['/stem', '/pct', '/b64']) { await openUrl(BASE + u); await go(); }
+const tNames2 = (await tabs()).slice(-3);
+check('(fix pass) names: nothing before .pdf → the address\'s own (stem.pdf); percent-encoded → 中文.pdf; RFC 2047 =?UTF-8?B?…?= → 中文2.pdf', JSON.stringify(tNames2) === JSON.stringify(['stem.pdf', '中文.pdf', '中文2.pdf']), tNames2);
+const why5 = await Ev(() => ['ERR_BLOCKED_BY_ADMINISTRATOR', 'ERR_NETWORK_CHANGED', 'ERR_HTTP2_PROTOCOL_ERROR'].map(code => window.__pdfapp.urlWhy({why:'net', code})));
+check('(fix pass) messages: blocked → the administrator or firewall; the network changed → try again; any other code → 「下載失敗（代碼：…）」',
+  /系統管理員|防火牆/.test(why5[0]) && /再試一次/.test(why5[1]) && why5[2] === '下載失敗（代碼：HTTP2_PROTOCOL_ERROR）', why5);
+t = await tabs();
 const nT4 = t.length;
 await openUrl(`${BASE}/401`); await go(1500);
 const d401 = await dlg();
@@ -175,7 +186,7 @@ const twice = await dlg(); await win.keyboard.press('Escape'); await win.waitFor
 const afterEsc = await Ev(() => ({mask:document.querySelector('#mask').classList.contains('show'), modals:document.querySelectorAll('#modal').length}));
 check('Ctrl+Shift+O twice in a row: one window, and Esc leaves nothing behind', twice.open && !afterEsc.mask && afterEsc.modals === 1, {twice, afterEsc});
 // a shortcut set to Ctrl+Shift+O before 從網址開啟 took it: said once, and taken off that action
-await Ev(k => localStorage.setItem(k, JSON.stringify({firstPage:[{type:'key', code:'KeyO', label:'O', ctrl:true, shift:true, alt:false}]})), 'pdfeditor.bindings.v1');
+await Ev(k => localStorage.setItem(k, JSON.stringify({firstPage:[null, {type:'key', code:'KeyO', label:'O', ctrl:true, shift:true, alt:false}], lastPage:'not a list'})), 'pdfeditor.bindings.v1');   // (with broken entries too)
 await win.reload(); await win.waitForFunction(() => !!(window.__pdfapp && window.__pdfapp.S), null, {timeout:30000}); await win.waitForTimeout(2500);
 const tKeys = await toasts(), keysNow = await Ev(k => localStorage.getItem(k), 'pdfeditor.bindings.v1');
 check('a custom shortcut on Ctrl+Shift+O (taken by 從網址開啟): the person is told, and it is taken off', tKeys.some(x => /Ctrl \+ Shift \+ O/.test(x) && /第一頁/.test(x)) && !/KeyO/.test(keysNow || ''), {tKeys, keysNow});

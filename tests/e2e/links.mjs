@@ -185,6 +185,7 @@ q1.node.set(N('Annots'), c4.obj([
   c4.register(c4.obj({Type:'Annot', Subtype:'Link', Rect:[100, 500, 300, 530], Border:[0, 0, 0], A:{S:'JavaScript', JS:PDFString.of('app.alert(1)')}})),
   c4.register(c4.obj({Type:'Annot', Subtype:'Link', Rect:[100, 400, 300, 430], Border:[0, 0, 0], Dest:[q2.ref, N('Fit')]})),
   c4.register(c4.obj({Type:'Annot', Subtype:'Link', Rect:[100, 300, 300, 330], Border:[0, 0, 0], A:{S:'URI', URI:PDFString.of('https://old.example.com')}, PA:{S:'URI', URI:PDFString.of('https://old.example.com')}})),
+  c4.register(c4.obj({Type:'Annot', Subtype:'Link', Rect:[100, 200, 300, 230], Border:[0, 0, 0], A:{S:'URI', URI:PDFString.of('https://long.example.com/' + 'a'.repeat(600))}})),   // (fix pass) a very long address
 ]));
 const PDF4 = path.join(TMP, 'links4.pdf'); fs.writeFileSync(PDF4, await d4.save());
 await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), PDF4);
@@ -249,6 +250,28 @@ await Ev(async () => {
 await win.waitForTimeout(1500);
 const cur1 = await Ev(() => window.__pdfapp.S.current);
 check('Ctrl+click right after a change (the page\'s links not read again yet): the page link is still followed', cur0 === 0 && cur1 === 1, {cur0, cur1});
+// (fix pass) a held Ctrl repeats its keydown between the press and the click: the click is still eaten
+await Ev(() => window.__pdfapp.scrollToPage(0)); await win.waitForTimeout(600); await see(0, 200, 427);
+const passedThrough = await Ev(async () => {
+  const S = window.__pdfapp.S; let got = 0; const count = () => { got++; }; window.addEventListener('click', count);
+  const r = S.els[0].getBoundingClientRect(), x = r.left + 200 * S.scale, y = r.top + 427 * S.scale, t = document.elementFromPoint(x, y);
+  t.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true, cancelable:true, ctrlKey:true, button:0, clientX:x, clientY:y, pointerId:1, isPrimary:true}));
+  await new Promise(res => setTimeout(res, 60));
+  window.dispatchEvent(new KeyboardEvent('keydown', {key:'Control', code:'ControlLeft', ctrlKey:true, repeat:true, bubbles:true}));
+  t.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, ctrlKey:true, button:0, clientX:x, clientY:y}));
+  window.removeEventListener('click', count); return got;
+});
+await win.waitForTimeout(800);
+check('Ctrl held (its keydown repeating) between the press on a link and the click: the click is still eaten, nothing under the link reacts', passedThrough === 0, passedThrough);
+// a page whose links could not be read counts as having none (a later Ctrl+press there is not held for good)
+const st2 = await Ev(async () => { await window.__pdfapp.failLinks(1); return window.__pdfapp.pageLinksNow(1); });
+check('a page whose links could not be read: known to have none, not left waiting', st2 === 'ready', st2);
+// a very long address: the question shows it cut, with 「…」
+await Ev(() => window.__pdfapp.scrollToPage(0)); await win.waitForTimeout(600); await see(0, 200, 627);
+await ctrlClick(await P(0, 200, 627));
+const askLong = await Ev(() => (document.querySelector('#modal') || {}).textContent || '');
+if (await Ev(() => document.querySelector('#mask').classList.contains('show'))) { await win.keyboard.press('Escape'); await win.waitForTimeout(400); }
+check('a very long web address in the question: cut, and marked with 「…」', /long\.example\.com\/a+…/.test(askLong), askLong.slice(0, 80) + ' … ' + askLong.slice(-40));
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

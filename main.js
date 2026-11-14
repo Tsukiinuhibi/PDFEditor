@@ -308,9 +308,17 @@ const URL_MAX = 500 * 1024 * 1024, downloads = new Map();
 // filename="…": Chromium hands a header over as its UTF-8 bytes, one character each, and bytes that were not UTF-8 (a Latin-1
 // or Big5 name) have become U+FFFD on the way, the bytes themselves lost: such a name is no name (the address's own is used)
 function headerName(raw) {
-  if ([...raw].some(c => c.charCodeAt(0) > 0xff)) return raw.includes('\ufffd') ? '' : raw;   // (already decoded)
-  const t = Buffer.from(raw, 'latin1').toString('utf8');
-  return t.includes('\ufffd') ? '' : t;
+  let t = [...raw].some(c => c.charCodeAt(0) > 0xff) ? raw : Buffer.from(raw, 'latin1').toString('utf8');   // (else already decoded)
+  if (t.includes('\ufffd')) return '';
+  // what browsers also accept: RFC 2047 words (=?UTF-8?B?…?=, =?UTF-8?Q?…?=) and percent-encoded UTF-8 (%E4%B8%AD…)
+  t = t.replace(/=\?([\w-]+)\?([BbQq])\?([^?]*)\?=/g, (w, cs, enc, s) => {
+    try {
+      const b = /b/i.test(enc) ? Buffer.from(s, 'base64') : Buffer.from(s.replace(/_/g, ' ').replace(/=([0-9A-Fa-f]{2})/g, (m, h) => String.fromCharCode(parseInt(h, 16))), 'latin1');
+      const d = new TextDecoder(cs.toLowerCase(), { fatal: true }).decode(b); return d.includes('\ufffd') ? w : d;
+    } catch (_) { return w; }
+  });
+  if (/%[0-9A-Fa-f]{2}/.test(t)) { try { const d = decodeURIComponent(t); if (!d.includes('\ufffd')) t = d; } catch (_) {} }
+  return t;
 }
 const cleanName = n => String(n || '').replace(/[\x00-\x1f\\/:*?"<>|]/g, '_').replace(/[. ]+$/, '').trim();
 function urlFileName(cd, href) {
@@ -319,7 +327,8 @@ function urlFileName(cd, href) {
   try { if (star) names.push(decodeURIComponent(star[2].trim().replace(/^"|"$/g, ''))); } catch (_) {}
   if (plain) names.push(headerName((plain[2] != null ? plain[2] : plain[1]).trim()));
   try { names.push(decodeURIComponent(new URL(href).pathname.split('/').filter(Boolean).pop() || '')); } catch (_) {}
-  const n = safeName(path.basename(names.find(x => cleanName(path.basename(x))) || 'download'));
+  const usable = x => cleanName(path.basename(x)).replace(/\.pdf$/i, '').replace(/^[. ]+/, '') !== '';   // (".pdf" alone is no name either)
+  const n = safeName(path.basename(names.find(usable) || 'download'));
   return /\.pdf$/i.test(n) ? n : n + '.pdf';
 }
 ipcMain.handle('url:fetch', async (e, id, url) => {

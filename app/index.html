@@ -1793,8 +1793,8 @@ async function ensureOverlay(i){
     d.addEventListener('pointerdown', ev => {
       if (!mine(ev)) return; ev.stopPropagation(); ev.preventDefault(); drew = false;
       const mv = e2 => { if (Math.hypot(e2.clientX - ev.clientX, e2.clientY - ev.clientY) > 4) { drew = true; off(); startLinkDraw(i, ev); } };
-      const off = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', off); };
-      window.addEventListener('pointermove', mv); window.addEventListener('pointerup', off);
+      const off = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', off); window.removeEventListener('pointercancel', off); };
+      window.addEventListener('pointermove', mv); window.addEventListener('pointerup', off); window.addEventListener('pointercancel', off);
     });
     d.addEventListener('click', ev => { if (mine(ev)) { ev.stopPropagation(); if (!drew) openLinkDialog(i, {link:l}); } });
     ovl.appendChild(d);
@@ -10372,13 +10372,15 @@ function urlWhy(r){
   if (r.why === 'creds') return '網址裡不能有帳號或密碼。請先在瀏覽器登入並下載，再用「開啟」開啟下載的檔案';
   const c = r.code || '';   // (net::ERR_…: Chromium's own words stay out of the window)
   if (/NAME_NOT_RESOLVED|NAME_RESOLUTION_FAILED/.test(c)) return '找不到這個網站，請檢查網址';
-  if (/INTERNET_DISCONNECTED|NETWORK_CHANGED/.test(c)) return '沒有網路連線';
+  if (/INTERNET_DISCONNECTED/.test(c)) return '沒有網路連線';
+  if (/NETWORK_CHANGED/.test(c)) return '網路連線剛剛改變了，請再試一次';
+  if (/BLOCKED|ACCESS_DENIED/.test(c)) return '這個網址被擋住了（可能是系統管理員或防火牆的設定）';
   if (/CERT_|SSL_/.test(c)) return '這個網站的安全憑證有問題，無法安全連線';
   if (/PROXY|TUNNEL/.test(c)) return '透過 Proxy 連線失敗';
   if (/TOO_MANY_REDIRECTS/.test(c)) return '這個網址轉址太多次';
   if (/UNSAFE_PORT/.test(c)) return '這個網址的連接埠不能使用';
   if (/CONNECTION_|ADDRESS_|TIMED_OUT|EMPTY_RESPONSE/.test(c)) return '連不上這個網站，請稍後再試，或檢查網址';
-  return c ? `下載失敗（${c.replace(/^ERR_/, '').toLowerCase()}）` : '下載失敗';
+  return c ? `下載失敗（代碼：${c.replace(/^ERR_/, '')}）` : '下載失敗';
 }
 let URLOPEN = false;   // the window is up or coming up
 async function openUrlDialog(pre = '', {auto = false} = {}){
@@ -10455,7 +10457,7 @@ function pageLinks(i){
       out.push({id:a.id, box, url:a.unsafeUrl || a.url || '', href:a.url || '', page, look:w > 0 ? (ours ? 'blue' : 'other') : 'none'});
     }
     ent.now = out; return out;
-  }).catch(() => []);
+  }).catch(() => (ent.now = []));   // (could not be read: none, so Ctrl+click there is not held for good)
   cache.set(i, ent); return ent.p;
 }
 // Ctrl+click (⌘ on a Mac) on a link follows it, whatever the tool: the page it goes to, or the address in the browser.
@@ -10471,9 +10473,10 @@ pagesEl.addEventListener('pointerdown', e => {
   e.preventDefault(); e.stopPropagation();
   // this press's own click is eaten — until the next press or key, so a press that ends in a drag (no click) takes no later click
   const eat = ev => { ev.stopPropagation(); ev.preventDefault(); off(); };
-  const off = () => { clearTimeout(t); ['click', 'pointerdown', 'keydown'].forEach(k => window.removeEventListener(k, k === 'click' ? eat : off, true)); };
+  const offKey = ev => { if (!ev.repeat && !['Control', 'Meta', 'Shift', 'Alt'].includes(ev.key)) off(); };   // (a held Ctrl repeats its keydown: not a new action)
+  const off = () => { clearTimeout(t); window.removeEventListener('click', eat, true); window.removeEventListener('pointerdown', off, true); window.removeEventListener('keydown', offKey, true); };
   window.addEventListener('click', eat, true); const t = setTimeout(off, 2000);   // (2 s at most: a click from the keyboard has no press before it)
-  setTimeout(() => { window.addEventListener('pointerdown', off, true); window.addEventListener('keydown', off, true); }, 0);
+  setTimeout(() => { window.addEventListener('pointerdown', off, true); window.addEventListener('keydown', offKey, true); }, 0);
   if (hit) { followLink(hit); return; }
   pageLinks(i).then(list => { const h = at(list); if (h) followLink(h); });   // (just after a change the page's links are read again: wait for them)
 }, true);
@@ -10482,7 +10485,7 @@ function followLink(l){
   const u = l.href || '';   // (as pdf.js checked it; l.url is the address as written)
   if (!/^(https?:\/\/|mailto:)/i.test(u)) { toast(l.url ? '這個連結不能開啟：' + l.url.slice(0, 80) : '這種連結不支援', 'err'); return; }
   if (/^https?:/i.test(u)) {   // a web address: asked first, as other readers do (the link may not go where its text says)
-    openModal({title:'開啟網址', body:`<div style="max-width:440px;line-height:1.7">要在瀏覽器開啟這個網址嗎？<div class="lk-other" style="margin-top:6px;word-break:break-all">${esc(u.slice(0, 500))}</div></div>`,
+    openModal({title:'開啟網址', body:`<div style="max-width:440px;line-height:1.7">要在瀏覽器開啟這個網址嗎？<div class="lk-other" style="margin-top:6px;word-break:break-all">${esc(u.length > 500 ? u.slice(0, 500) + '…' : u)}</div></div>`,
       buttons:[{label:'取消', value:false}, {label:'開啟', id:'lnkOpen', value:true, primary:true}]}).then(ok => { if (ok) openWeb(u); });
     return;
   }
@@ -11527,7 +11530,10 @@ const isReserved = b => b.type === 'key' && RESERVED.some(r => sameBind(r, b));
 // taken off and the person told once
 setTimeout(() => {
   const gone = [];
-  for (const a of BIND_ACTIONS) { const l = BINDS[a.id] || [], keep = l.filter(b => !isReserved(b)); if (keep.length < l.length) { gone.push(...l.filter(isReserved).map(b => `${bindLabel(b)}（${a.label}）`)); BINDS[a.id] = keep; } }
+  for (const a of BIND_ACTIONS) {
+    const l = Array.isArray(BINDS[a.id]) ? BINDS[a.id] : [], ok = b => b && typeof b === 'object', keep = l.filter(b => ok(b) && !isReserved(b));
+    if (keep.length < l.length || !Array.isArray(BINDS[a.id])) { gone.push(...l.filter(b => ok(b) && isReserved(b)).map(b => `${bindLabel(b)}（${a.label}）`)); BINDS[a.id] = keep; }
+  }
   if (!gone.length) return;
   try { localStorage.setItem(BIND_KEY, JSON.stringify(BINDS)); } catch (_) {}
   toast(`自訂的快捷鍵 ${gone.join('、')} 跟程式內建的快捷鍵重複，已經取消，可以到「設定 → 快捷鍵」重新設定`, 'long');
@@ -11986,6 +11992,10 @@ window.__pdfapp = {
   clRun:() => CL_RUN,   // (tests) whether a Claude call is being carried out
   urlProgress:urlProgressText,   // (tests) the download's progress line
   wordCancelText,   // (tests) what 〔取消〕 says while a conversion stops
+  urlWhy,   // (tests) the download window's message for a failure
+  pageLinksNow:i => { const e = S.linkCache.get(i); return e ? (e.now ? 'ready' : 'pending') : 'none'; },   // (tests) whether page i's links are known
+  failLinks:i => { S.linkCache.delete(i); const pg = S.pages[i].page, g = pg.getAnnotations; pg.getAnnotations = () => Promise.reject(new Error('test'));   // (tests) a read that fails
+    return pageLinks(i).then(() => { pg.getAnnotations = g; }); },
   claudeSaveWait:ms => { CL_SAVE_WAIT = ms; },   // (tests) pdf_save_as answers sooner
   wordFonts,
   links:async i => {   // (tests) page i's links: on screen, where they go, how they look
