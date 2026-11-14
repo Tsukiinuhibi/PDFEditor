@@ -3,43 +3,12 @@
 Each release's final whole-branch review sorts its findings; Critical and Important ones are fixed before the
 release, Minor ones are deferred. These are the deferred ones, still open, in the reviewers' words. They are fixed
 in batches, one release per batch (the user, 2026-11-14: 「接著修正再發佈」). The minors of v1.0.42 and v1.0.43
-were fixed in v1.0.47; those of v1.0.40, v1.0.41 and v1.0.47 in v1.0.48.
+were fixed in v1.0.47; those of v1.0.40, v1.0.41 and v1.0.47 in v1.0.48;
+those of v1.0.38, v1.0.39 and v1.0.48 in v1.0.49.
 
 For each batch: read the items, fix the ones that still hold with a test that fails first, and record the rest
 (test-only, docs-only, obsolete, or a deliberate choice) as rulings in the batch's ledger. Take a release's
 section out of this file when its batch ships.
-
-## v1.0.48 (batch v1.0.49)
-
-- linkRef: two links written straight into /Annots with the same box cannot be told apart; changing or deleting the upper one may hit the lower one (prefer the one whose target matches)
-- open-url.mjs: url:cancel stays replaced by a no-op after the Esc check (harmless today; restore it if parts are added after it)
-
-## v1.0.39 (batch v1.0.49)
-
-- a line that cannot be taken out (text in a form object) with an empty replacement still counts in 「已取代 N 處」 and makes an undo step that changes nothing
-- lines that cannot be done are dropped without saying which; a block without editing data is not replaceable (the editor treats it as plain text)
-- a line mixing original pieces and one of our blocks is rewritten as plain text, leaving the block's shell (as the single-click editor does)
-- every change re-reads every page's text while the bar is open; over 400 pages the line cache clears in the middle of a search
-- a scan read by OCR is remembered by page object, so a rotated or changed scan keeps its old reading; blank pages are sent to OCR
-- no button to stop 「辨識掃描頁…」 (turning 掃描頁 off or closing the bar stops it; the page in flight finishes); stepping overwrites the progress label
-- the find boxes swallow Ctrl+S / Ctrl+O / Ctrl+P; Ctrl+F and F3 do nothing in the replace box or other inputs
-- with 全形＝半形 on, whole-word sees AB as a word inside ＡＢＣ (full-width letters count as CJK)
-- the 搜尋 tab keeps the last list while the bar is closed (not refreshed after edits)
-- Ctrl+F / F3 became reserved: an old custom binding on them stops working without a message
-- a font fallback message can repeat once per line in a replace-all
-
-## v1.0.38 (batch v1.0.49)
-
-- 「9」 on a 5-page file says 頁面範圍的格式不對 (the page does not exist), and the red line shows as soon as 自訂 is chosen
-- a second Ctrl+P while the printer list loads opens a second window over the first (the first promise is left waiting); no busy sign while a slow printer list loads
-- a stalled spooler leaves the window on 「正在送到印表機…」 with 取消 and Esc doing nothing
-- pages centred at fractional pixels are resampled (slightly soft) at 300 dpi
-- an emptied 放大 % / 比例 box is saved as 0; values under the minimum are clamped without the box changing; 份數 over 999 shows the larger number but sends 999
-- stored print settings are type-checked but not range-checked (a hand-edited settings file with quality 100000)
-- 「第 K 張正面／背面」 shows only for booklets, not for other two-sided jobs
-- a PDF opened from Explorer while the print window is open prints from the new document
-- the exported settings file carries this computer's printer names (harmless on import)
-- in a browser build both print buttons are off with no explanation
 
 ## v1.0.37 (batch v1.0.50)
 
