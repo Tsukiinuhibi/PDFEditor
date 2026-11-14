@@ -63,6 +63,7 @@ process.stdin.on('data', chunk => {
     const line = buf.slice(0, k).trim(); buf = buf.slice(k + 1);
     if (!line) continue;
     let m; try { m = JSON.parse(line); } catch (_) { send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); continue; }
+    if (Array.isArray(m) || !m || typeof m !== 'object') { send({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request: batches are not supported' } }); continue; }
     handle(m).catch(e => { if (m && m.id != null) send({ jsonrpc: '2.0', id: m.id, error: { code: -32603, message: String((e && e.message) || e) } }); });
   }
 });

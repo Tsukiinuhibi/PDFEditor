@@ -8,6 +8,7 @@ import http from 'http';
 import net from 'net';
 import fs from 'fs';
 import path from 'path';
+import { PDFDocument, StandardFonts, beginText, endText, setFontAndSize, setTextRenderingMode, TextRenderingMode, moveText, showText } from 'pdf-lib';
 
 let failed = 0;
 const check = (name, ok, detail = '') => { console.log(`${ok ? '✔' : '✘'} ${name}${detail !== '' ? '  ' + (typeof detail === 'string' ? detail : JSON.stringify(detail)) : ''}`); if (!ok) { failed++; process.exitCode = 1; } };
@@ -26,12 +27,13 @@ function unzip(buf){
 // an MCP session with the extension's server: request(method, params) → result (or {error})
 function mcp(env){
   const ch = spawn(process.execPath, [path.join(ROOT, 'app', 'claude', 'server', 'index.js')], {env:{...process.env, ...env}, stdio:['pipe', 'pipe', 'inherit']});
-  let buf = '', seq = 0; const wait = new Map();
+  let buf = '', seq = 0, noId = null; const wait = new Map();
   ch.stdout.setEncoding('utf8');
-  ch.stdout.on('data', d => { buf += d; let k; while ((k = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, k); buf = buf.slice(k + 1); if (!line.trim()) continue; const m = JSON.parse(line); const f = wait.get(m.id); if (f) { wait.delete(m.id); f(m); } } });
+  ch.stdout.on('data', d => { buf += d; let k; while ((k = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, k); buf = buf.slice(k + 1); if (!line.trim()) continue; const m = JSON.parse(line); if (m.id == null && noId) { noId(m); noId = null; continue; } const f = wait.get(m.id); if (f) { wait.delete(m.id); f(m); } } });
   return {
     request:(method, params = {}) => new Promise(res => { const id = ++seq; wait.set(id, m => res(m.error ? {error:m.error} : m.result)); ch.stdin.write(JSON.stringify({jsonrpc:'2.0', id, method, params}) + '\n'); setTimeout(() => { if (wait.has(id)) { wait.delete(id); res({error:'timeout'}); } }, 60000); }),
     notify:(method, params = {}) => ch.stdin.write(JSON.stringify({jsonrpc:'2.0', method, params}) + '\n'),
+    raw:line => new Promise(res => { noId = res; ch.stdin.write(line + '\n'); setTimeout(() => { if (noId === res) { noId = null; res(null); } }, 5000); }),
     close:() => { ch.stdin.end(); ch.kill(); },
   };
 }
@@ -43,6 +45,7 @@ const post = (port, headers, body = {tool:'pdf_status', args:{}}) => new Promise
 });
 
 const { app } = await launch('c.pdf');
+process.on('exit', () => { try { app.process().kill(); } catch (_) {} });
 const win = await app.firstWindow(); win.on('pageerror', e => console.log('PAGEERR', e.message)); win.on('console', m => { if (m.type() === 'error') console.log('C', m.text().slice(0, 300)); });
 await win.waitForTimeout(3000);
 await win.waitForFunction(() => !!(window.__pdfapp && window.__pdfapp.S.pages.length), null, {timeout:30000});
@@ -223,6 +226,83 @@ await win.click('#clOn'); await win.waitForTimeout(1000);   // on again: that po
 const prof2 = JSON.parse(fs.readFileSync(profFile, 'utf8')), st6 = await status();
 blocker.close(); await closeModal();
 check('its port taken: the next one is used, shown and remembered', prof2.port === prof.port + 1 && st6.includes(String(prof.port + 1)), {before:prof.port, after:prof2.port, st6});
+
+// ---- part 5 (v1.0.47): the small things left over ------------------------------------------------------------------------
+await Ev(() => { window.__toasts = []; new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => n.classList && n.classList.contains('toast') && window.__toasts.push(n.textContent))))
+  .observe(document.querySelector('#toasts'), {childList:true}); });
+const toasts = () => Ev(() => window.__toasts.splice(0));
+const prof5 = JSON.parse(fs.readFileSync(profFile, 'utf8'));
+const s5 = mcp({PDFE_PORT:String(prof5.port), PDFE_KEY:prof5.key});
+await s5.request('initialize', {protocolVersion:'2025-06-18', capabilities:{}, clientInfo:{name:'test', version:'1'}});
+check('claude.json (it holds the key) can be read only by its owner', (fs.statSync(profFile).mode & 0o777) === 0o600, (fs.statSync(profFile).mode & 0o777).toString(8));
+const evilHost = await post(prof5.port, {'X-PDFE-Key':prof5.key, Host:'evil.example.com'});
+check('a request whose Host is not this computer is refused (403)', evilHost === 403, evilHost);
+const batch = await s5.raw(JSON.stringify([{jsonrpc:'2.0', id:91, method:'ping'}]));
+check('a JSON-RPC batch is answered: -32600, batches are not supported', !!(batch && batch.error && batch.error.code === -32600), batch);
+const list5 = await s5.request('tools/list'), ann = n => ((list5.tools || []).find(t => t.name === n) || {}).annotations || {};
+check('the tools say what they do (for Claude Desktop\'s permission prompts): reading is read-only, replacing and deleting are destructive',
+  ['pdf_status', 'pdf_read_text', 'pdf_find'].every(n => ann(n).readOnlyHint === true) && ann('pdf_add_note').readOnlyHint === false && ann('pdf_add_note').destructiveHint === false
+  && ann('pdf_delete_pages').destructiveHint === true && ann('pdf_replace').destructiveHint === true, {status:ann('pdf_status'), del:ann('pdf_delete_pages'), note:ann('pdf_add_note')});
+// the settings pane follows Claude's calls while it is open
+await openClaude();
+await tool(s5, 'pdf_status'); await win.waitForTimeout(2800);
+const st7 = await status(); await closeModal();
+check('設定 → Claude, left open: after a call it says Claude is connected, without being reopened', st7.includes('已連線'), st7);
+// a document whose second page holds hidden (scan) text only
+const SCANS = path.join(TMP, 'scan words.pdf');
+{
+  const d = await PDFDocument.create(), f = await d.embedFont(StandardFonts.Helvetica);
+  d.addPage([595, 842]).drawText('Hello visible', {x:72, y:700, size:24, font:f});
+  const p2 = d.addPage([595, 842]), fk = p2.node.newFontDictionary(f.name, f.ref);
+  p2.pushOperators(beginText(), setFontAndSize(fk, 24), setTextRenderingMode(TextRenderingMode.Invisible), moveText(72, 700), showText(f.encodeText('Hello hidden')), endText());
+  fs.writeFileSync(SCANS, await d.save());
+}
+let o5 = await tool(s5, 'pdf_open', {path:SCANS}); await toasts();
+let r5 = await tool(s5, 'pdf_replace', {query:'Hello', replacement:'World'});
+let t5 = await toasts();
+check('pdf_replace on a page with scan text: says only the pages done and how many scan places were skipped; the notice starts with 「Claude：」',
+  !r5.isError && /第 1 頁/.test(r5.text) && !/第 1、2 頁/.test(r5.text) && /跳過/.test(r5.text) && t5.some(x => x.startsWith('Claude：已取代')), {open:o5.text, r:r5.text, t5});
+let u5 = await tool(s5, 'pdf_undo'); t5 = await toasts();
+check('pdf_undo of Claude\'s change: says what was undone; the notice starts with 「Claude：」', !u5.isError && /已取代/.test(u5.text) && t5.some(x => x.startsWith('Claude：已復原')), {u:u5.text, t5});
+// the person's own change is not undone by Claude
+await win.click('[data-view="single"]'); await win.waitForTimeout(400);
+await Ev(() => window.__pdfapp.setTool('rect')); await win.waitForTimeout(300);
+{ const box = await win.locator('.page').first().boundingBox();
+  await win.mouse.move(box.x + 120, box.y + 120); await win.mouse.down(); await win.mouse.move(box.x + 260, box.y + 220, {steps:5}); await win.mouse.up(); await win.waitForTimeout(2200); }
+await Ev(() => window.__pdfapp.setTool('select'));
+const uMine = await undos(), u6 = await tool(s5, 'pdf_undo');
+check('pdf_undo when the last change was the person\'s own: not undone, and Claude is told why', !u6.isError && /使用者/.test(u6.text) && (await undos()) === uMine, {u:u6.text, before:uMine, after:await undos()});
+// a long text wraps at the page's right edge
+const w5 = await tool(s5, 'pdf_add_text', {page:1, x:300, y:400, size:14, text:'This is a fairly long sentence that would run far past the right edge of the page if it were not wrapped onto more lines.'});
+const ft5 = (await Ev(async () => (await window.__pdfapp.getAnns(0)).filter(a => a.subtype === 'FreeText').map(a => ({x:a.x, y:a.y, w:a.w, h:a.h})))).pop(), pw5 = await Ev(() => window.__pdfapp.S.pages[0].w);
+check('pdf_add_text with a long line: wrapped to stay on the page (several lines, within the right edge)', !w5.isError && !!ft5 && ft5.x + ft5.w <= pw5 + 0.5 && ft5.h > 14 * 2.5, {w:w5.text, ft5, pw5});
+const neg = await tool(s5, 'pdf_add_text', {page:1, x:-5, y:40, text:'x'}), empty = await tool(s5, 'pdf_add_text', {page:1, x:5, y:40, text:'   '});
+check('pdf_add_text with a negative x, or nothing to write: an error, nothing added', neg.isError && /0 以上/.test(neg.text) && empty.isError, {neg:neg.text, empty:empty.text});
+// pdf_go_to_page while the person is typing in a text box: refused as busy
+await Ev(() => window.__pdfapp.setTool('textbox')); await win.waitForTimeout(300);
+{ const bx = await Ev(() => { const r = window.__pdfapp.S.els[window.__pdfapp.S.current].getBoundingClientRect(); return [r.left + 200, r.top + 520]; });
+  await win.mouse.click(...bx); await win.waitForTimeout(600); await win.keyboard.type('typing'); }
+const g5 = await tool(s5, 'pdf_go_to_page', {page:2}), tbe5 = !!(await Ev(() => window.__pdfapp.TBE()));
+await win.keyboard.press('Escape'); await win.waitForTimeout(500); await Ev(() => window.__pdfapp.setTool('select'));
+check('pdf_go_to_page while a text box is being typed in: refused as busy', tbe5 && g5.isError && /正在忙/.test(g5.text), {g:g5.text, tbe5});
+// pdf_open: a file that needs a password, and a broken file named like an open one
+const LOCKED = path.join(TMP, 'locked.pdf'); fs.copyFileSync(path.join(ROOT, 'tests', 'e2e', 'fixtures', 'encrypted', 'r6-userpw.pdf'), LOCKED);
+const pw = await tool(s5, 'pdf_open', {path:LOCKED});
+check('pdf_open of a PDF that needs a password: says so', pw.isError && /密碼/.test(pw.text), pw.text);
+await tool(s5, 'pdf_open', {path:OTHER});   // (its tab is the current one now)
+fs.mkdirSync(path.join(TMP, 'other'), {recursive:true}); const SAME = path.join(TMP, 'other', path.basename(OTHER)); fs.writeFileSync(SAME, '%PDF-1.7\nnot really a pdf');
+const sm = await tool(s5, 'pdf_open', {path:SAME});
+check('pdf_open of a broken file named like the current document: an error, not 「已開啟」', sm.isError, sm.text);
+// a call still waiting when the window reloads is answered at once
+await app.evaluate(({ipcMain, dialog}) => { ipcMain.removeHandler('file:save-as'); ipcMain.handle('file:save-as', () => new Promise(() => {}));
+  dialog.showMessageBoxSync = () => 0; });   // (the document has changes: 「不儲存並關閉」 lets the page reload)
+await Ev(() => window.__pdfapp.claudeSaveWait(60000));
+const tReload = Date.now(), pend = tool(s5, 'pdf_save_as');
+await win.waitForTimeout(1500);
+await win.reload().catch(() => {});
+const rp = await Promise.race([pend, new Promise(res => setTimeout(() => res({text:'(no answer in 20 s)', isError:true, late:true}), 20000))]);
+check('a call still waiting when the window reloads: answered at once with an error', rp.isError && !rp.late && Date.now() - tReload < 15000 && /重新載入/.test(rp.text), {r:rp.text, ms:Date.now() - tReload});
+s5.close();
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

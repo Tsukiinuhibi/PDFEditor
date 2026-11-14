@@ -18,7 +18,10 @@ function loadSettings(file){
     return { enabled: !!j.enabled, key: typeof j.key === 'string' && /^[0-9a-f]{48}$/.test(j.key) ? j.key : newKey(), port: Number.isInteger(j.port) && j.port >= 1024 && j.port < 65526 ? j.port : DEFAULT_PORT };
   } catch (_) { return { enabled: false, key: newKey(), port: DEFAULT_PORT }; }
 }
-function saveSettings(file, s){ try { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(s)); } catch (_) {} }
+// (it holds the key: readable by the owner only — 0o600 also on a file an older version made)
+function saveSettings(file, s){
+  try { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(s), { mode: 0o600 }); fs.chmodSync(file, 0o600); } catch (_) {}
+}
 // keys compared without giving away, by the time it takes, how much of one matched
 const sameKey = (a, b) => { const x = Buffer.from(String(a || '')), y = Buffer.from(String(b || '')); return x.length === y.length && x.length > 0 && crypto.timingSafeEqual(x, y); };
 

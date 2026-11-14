@@ -1527,11 +1527,13 @@ function mountDoc({scroll = 'current', anchorOffset = 0, scrollTop = 0, scrollLe
   }
 }
 
-async function openFile(file, handle = null){
+// the same file: Windows paths ignore case and the slash's direction
+const samePath = (a, b) => !!a && !!b && (a === b || (/^[A-Za-z]:[\\/]/.test(a) && a.replace(/\//g, '\\').toLowerCase() === String(b).replace(/\//g, '\\').toLowerCase()));
+async function openFile(file, handle = null, {rethrow = false} = {}){
   if (!file) return;
   await whenIdle();   // (a file sent while a change is being made opens after it)
   // the same file is already open: just switch to its tab
-  const same = handle && handle.path && docs.findIndex(d => { const h = docField(d, 'handle'); return h && h.path === handle.path; });
+  const same = handle && handle.path && docs.findIndex(d => { const h = docField(d, 'handle'); return h && samePath(h.path, handle.path); });
   if (same >= 0) { switchTab(same); toast('「' + file.name + '」已經開啟'); return; }
   busy(true, '開啟中…');
   try {
@@ -1541,6 +1543,7 @@ async function openFile(file, handle = null){
   } catch (e) {
     console.error(e);
     toast(e && e.name === 'PasswordException' ? '此 PDF 受密碼保護，目前版本尚不支援' : '無法開啟此檔案：' + (e.message || e), 'err');
+    if (rethrow) throw e;
   } finally { busy(false); }
 }
 
@@ -2686,7 +2689,7 @@ async function mutate(label, fn, opts = {}){
     if (res === false) return false;
     const out = await doc.save();
     const was = {redo:S.redo, signed:S.signed, dirty:S.dirty};
-    S.undo.push({bytes:S.bytes, signed:S.signed, cur:S.current});
+    S.undo.push({bytes:S.bytes, signed:S.signed, cur:S.current, label, by:CL_RUN ? 'claude' : ''});
     S.redo = []; S.signed = false; S.dirty = true;
     try { await loadDoc(out, {keepView:true, scrollToCurrent:!!opts.scrollToCurrent}); }
     catch (e) {   // the result cannot be shown: the document stays as it was, with no undo step and not marked changed
@@ -3966,16 +3969,16 @@ const actions = {
     if (TBE) return;   // the text editor stays open (回去修改): nothing is saved
     await saveAsNew(S.bytes, '_已編輯');
   },
-  async undo(){
+  async undo(msg){   // (msg: the notice instead of 已復原)
     if (!S.undo.length) return;
-    const u = S.undo.pop(); S.redo.push({bytes:S.bytes, signed:S.signed, cur:S.current});
+    const u = S.undo.pop(); S.redo.push({bytes:S.bytes, signed:S.signed, cur:S.current, label:u.label, by:u.by});
     S.signed = u.signed; S.current = u.cur; S.dirty = true;
     primeWrite();
-    await loadDoc(u.bytes, {keepView:true}); toast('已復原'); await afterEdit();
+    await loadDoc(u.bytes, {keepView:true}); toast(typeof msg === 'string' ? msg : '已復原'); await afterEdit();
   },
   async redo(){
     if (!S.redo.length) return;
-    const r = S.redo.pop(); S.undo.push({bytes:S.bytes, signed:S.signed, cur:S.current});
+    const r = S.redo.pop(); S.undo.push({bytes:S.bytes, signed:S.signed, cur:S.current, label:r.label, by:r.by});
     S.signed = r.signed; S.current = r.cur; S.dirty = true;
     primeWrite();
     await loadDoc(r.bytes, {keepView:true}); toast('已重做'); await afterEdit();
@@ -10246,9 +10249,9 @@ async function replaceHits(list, repl){
   REPLACING = true;
   try { return await replaceNow(list, repl); } finally { REPLACING = false; }
 }
-async function replaceNow(list, repl, o = {...FIND.opts}, q = FIND.q){   // → how many were replaced, or false
+async function replaceNow(list, repl, o = {...FIND.opts}, q = FIND.q, {prefix = ''} = {}){   // → how many were replaced, or false
   const scans = list.filter(h => h.ocr).length, todo = list.filter(h => !h.ocr);
-  if (!todo.length) { toast(scans ? '掃描頁的文字不能取代' : '沒有可以取代的文字', 'err'); return false; }
+  if (!todo.length) { toast(prefix + (scans ? '掃描頁的文字不能取代' : '沒有可以取代的文字'), 'err'); return false; }
   if (!(await settleEdits())) return false;
   const groups = new Map();   // our own blocks as a whole, the page's own text a line at a time
   for (const h of todo) {
@@ -10262,9 +10265,9 @@ async function replaceNow(list, repl, o = {...FIND.opts}, q = FIND.q){   // → 
   catch (e) { console.error(e); }
   finally { busy(false); }
   const n = jobs.reduce((a, j) => a + j.n, 0);
-  if (!n) { toast('這些文字無法取代', 'err'); return false; }
-  const ok = await mutate(`已取代 ${n} 處`, async doc => { for (const j of jobs) await applyPageText(doc, j.i, j.x, j.y, j.prep, j.box, j.edit, j.empty, j.strut); });
-  if (ok && scans) toast(`掃描頁的 ${scans} 處沒有取代`);
+  if (!n) { toast(prefix + '這些文字無法取代', 'err'); return false; }
+  const ok = await mutate(`${prefix}已取代 ${n} 處`, async doc => { for (const j of jobs) await applyPageText(doc, j.i, j.x, j.y, j.prep, j.box, j.edit, j.empty, j.strut); });
+  if (ok && scans) toast(`${prefix}掃描頁的 ${scans} 處沒有取代`);
   return ok ? n : false;
 }
 // 取代: the current match, then the next one
@@ -11043,9 +11046,12 @@ async function openWordDialog(){
    to the local bridge in main.js (claude.js), and main.js hands it here (claude:call → claude:result). A tool gets the
    arguments Claude sent and answers {text} or {error} in words a person reads; every change goes through mutate().
    ==================================================================== */
-let CLAUDE_ST = {enabled:false, port:0, key:'', error:'', last:0};
+let CLAUDE_ST = {enabled:false, port:0, key:'', error:'', last:0}, CL_POLL = 0;
+const clStatus = c => !c.enabled ? '關閉' : c.error ? '無法開始：' + c.error
+  : (c.last && Date.now() - c.last < 10 * 60000 ? `Claude 已連線（連接埠 ${c.port}）` : `等待 Claude 連線（連接埠 ${c.port}）`)
+    + (c.last ? `　上次 Claude 的呼叫：${new Date(c.last).toLocaleTimeString()}` : '');
 function claudePaneHTML(){
-  const c = CLAUDE_ST, st = !c.enabled ? '關閉' : c.error ? '無法開始：' + c.error : `等待 Claude 連線（連接埠 ${c.port}）` + (c.last ? `　上次 Claude 的呼叫：${new Date(c.last).toLocaleTimeString()}` : '');
+  const c = CLAUDE_ST, st = clStatus(c);
   return `<div class="set-h">Claude</div>
     <div class="note" style="margin-bottom:10px">讓 Claude 桌面版用 PDF 工作台讀取與修改你開著的 PDF：找與取代文字、加文字方塊與便利貼、螢光筆、旋轉與刪除頁面、另存新檔。Claude 做的修改都可以復原，也不會覆蓋原本的檔案。</div>
     <label class="set-opt"><input type="checkbox" id="clOn"${c.enabled ? ' checked' : ''}>允許 Claude 使用 PDF 工作台<small>只有這台電腦上的 Claude 擴充功能連得到</small></label>
@@ -11084,7 +11090,8 @@ async function saveClaudeMcpb(){
   } catch (e) { toast('儲存擴充功能失敗：' + (e.message || e), 'err'); }
 }
 let CL_SAVE_WAIT = 150000;   // how long pdf_save_as waits for the 另存新檔 window before it answers
-const CL_EDIT = new Set(['pdf_open', 'pdf_replace', 'pdf_highlight', 'pdf_add_text', 'pdf_add_note', 'pdf_rotate_pages', 'pdf_delete_pages', 'pdf_insert_blank_page', 'pdf_undo', 'pdf_save_as']);
+// tools that need the program free (a change, or moving the view under someone typing in a text box)
+const CL_EDIT = new Set(['pdf_open', 'pdf_replace', 'pdf_highlight', 'pdf_add_text', 'pdf_add_note', 'pdf_rotate_pages', 'pdf_delete_pages', 'pdf_insert_blank_page', 'pdf_undo', 'pdf_save_as', 'pdf_go_to_page']);
 const clNeed = () => { if (!S.pdf) throw new Error('PDF 工作台現在沒有開啟的文件，請先用 pdf_open 開啟一個 PDF'); };
 // a change through mutate(): false (the person declined, e.g. for a signed document, or it failed) is an error for Claude
 const clDone = ok => { if (!ok) throw new Error('這個修改沒有完成：使用者取消了（例如數位簽署過的文件會先問），或發生錯誤。文件沒有改變。'); };
@@ -11114,7 +11121,14 @@ const CLAUDE_TOOLS = {
     return {text};
   },
   async pdf_go_to_page({page}){ clNeed(); const i = clPage(page); scrollToPage(i); return {text:`已跳到第 ${i + 1} 頁`}; },
-  async pdf_undo(){ clNeed(); if (!S.undo.length) return {text:'沒有可以復原的修改'}; await actions.undo(); return {text:'已復原上一個修改'}; },
+  async pdf_undo(){   // only Claude's own last change: the person's own is theirs to undo
+    clNeed();
+    const u = S.undo[S.undo.length - 1]; if (!u) return {text:'沒有可以復原的修改'};
+    const what = String(u.label || '').replace(/^Claude：/, '');
+    if (u.by !== 'claude') return {text:`上一個修改是使用者自己做的${what ? `（${what}）` : ''}，Claude 不會復原它；需要的話請使用者自己按「復原」。`};
+    await actions.undo('Claude：已復原' + (what ? `「${what}」` : ''));
+    return {text:'已復原：' + (what || '上一個修改')};
+  },
   async pdf_find(a){
     const {hits, q} = await clSearch(a);
     if (!hits.length) return {text:`找不到「${q}」`};
@@ -11125,10 +11139,12 @@ const CLAUDE_TOOLS = {
     if (!hits.length) return {text:`找不到「${q}」，沒有取代`};
     if (REPLACING) throw new Error('PDF 工作台正在取代別的文字，請稍後再試');
     REPLACING = true; let n;
-    try { n = await replaceNow(hits, repl, o, q); } finally { REPLACING = false; }
+    try { n = await replaceNow(hits, repl, o, q, {prefix:'Claude：'}); } finally { REPLACING = false; }
     if (!n) throw new Error(hits.every(h => h.ocr) ? '這些是掃描頁上的文字，不能取代' : '這些文字沒有取代：無法取代，或使用者取消了（例如數位簽署過的文件會先問）');
-    scrollToPage(hits[0].i);
-    return {text:`已把「${q}」取代成「${repl}」，共 ${n} 處（第 ${[...new Set(hits.map(h => h.i + 1))].join('、')} 頁）。可以用 pdf_undo 復原。`};
+    const done = hits.filter(h => !h.ocr), skipped = hits.length - done.length;
+    scrollToPage(done[0].i);
+    return {text:`已把「${q}」取代成「${repl}」，共 ${n} 處（第 ${[...new Set(done.map(h => h.i + 1))].join('、')} 頁）。`
+      + (skipped ? `掃描頁上的 ${skipped} 處不能取代，已跳過。` : '') + '可以用 pdf_undo 復原。'};
   },
   async pdf_highlight(a){
     const color = /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : '#ffd43b', {hits, q} = await clSearch(a);
@@ -11140,12 +11156,17 @@ const CLAUDE_TOOLS = {
   },
   async pdf_add_text(a){
     clNeed();
-    const i = clPage(a.page), pg = S.pages[i], text = String(a.text ?? '');
+    const i = clPage(a.page), pg = S.pages[i], text = String(a.text ?? '').replace(/\r\n|\r/g, '\n');
     if (!text.trim()) throw new Error('文字是空的');
     const size = a.size == null ? 12 : Number(a.size); if (!(size >= 4 && size <= 200)) throw new Error('字級要在 4～200 pt 之間');
     const color = /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color.toLowerCase() : '#000000';
-    const lines = text.split(/\r\n|\r|\n/).map(t => [{text:t, size, color, bold:!!a.bold, italic:false, underline:false, bg:'', font:''}]), box = {boxBg:'', border:false};
-    const r = await renderTextBox(lines, box), x = clCoord(a.x, 'x', Math.max(0, pg.w - r.w)), y = clCoord(a.y, 'y', Math.max(0, pg.h - r.h));
+    const run = {text:'', size, color, bold:!!a.bold, italic:false, underline:false, bg:'', font:''}, box = {boxBg:'', border:false};
+    // lines too long for the room to the page's right edge (or for the width asked) are wrapped
+    const x0 = clCoord(a.x, 'x', Math.max(0, pg.w - size * 3)), room = a.width == null ? pg.w - x0 - 12 : Number(a.width);
+    if (!(room >= 20)) throw new Error('width 要是 20 以上的數字（單位 pt）');
+    const m = document.createElement('canvas').getContext('2d'); m.font = runFont(run, 1);
+    const lines = wrapText(m, text, Math.max(size * 2, room)).map(t => [{...run, text:t}]);
+    const r = await renderTextBox(lines, box), x = Math.min(x0, Math.max(0, pg.w - r.w)), y = clCoord(a.y, 'y', Math.max(0, pg.h - r.h));
     clDone(await mutate('Claude：已加上文字方塊', async doc => {
       addAnnot(doc, i, {Type:'Annot', Subtype:'FreeText', T:PDFHexString.fromText(AUTHOR), CreationDate:nowStr(), Subj:PDFHexString.fromText('文字方塊'), F:4,
         ...(await textBoxFields(doc, i, lines, box, r, {x, y, w:r.w, h:r.h}))});
@@ -11194,14 +11215,16 @@ Object.assign(CLAUDE_TOOLS, {
     return {text:`已在${after ? `第 ${after} 頁後面` : '最前面'}加上一張空白頁（第 ${after + 1} 頁），現在共 ${S.pages.length} 頁。`};
   },
   async pdf_open(a){
-    const p = String(a.path ?? '').trim();
+    let p = String(a.path ?? '').trim();
     if (!/\.pdf$/i.test(p)) throw new Error('只能開啟 .pdf 檔（收到：' + p + '）');
     if (!(/^[A-Za-z]:[\\/]/.test(p) || /^\/(?![\\/])/.test(p)))
       throw new Error('請給 PDF 檔在這台電腦上的完整路徑（例如 C:\\Users\\名字\\Documents\\檔案.pdf），不接受網路位置或相對路徑（收到：' + p + '）');
     if (!DESK) throw new Error('這個版本不能開啟電腦裡的檔案');
+    if (/^[A-Za-z]:[\\/]/.test(p)) p = p.replace(/\//g, '\\');   // (C:/a.pdf is C:\a.pdf)
     let r; try { r = await DESK.readFile(p, {quiet:true}); } catch (_) { throw new Error('讀不到這個檔案：' + p); }
-    await openFile(new File([r.data], r.name, {type:'application/pdf'}), desktopHandle(p, r.name));
-    if (!S.pdf || S.name !== r.name) throw new Error('這個檔案打不開（可能不是 PDF，或檔案已損壞）：' + p);
+    try { await openFile(new File([r.data], r.name, {type:'application/pdf'}), desktopHandle(p, r.name), {rethrow:true}); }
+    catch (e) { throw new Error(e && e.name === 'PasswordException' ? '這個 PDF 需要密碼才能開啟，PDF 工作台目前不支援：' + p : '這個檔案打不開（可能不是 PDF，或檔案已損壞）：' + p); }
+    if (!S.pdf || !S.handle || !samePath(S.handle.path, p)) throw new Error('這個檔案打不開（可能不是 PDF，或檔案已損壞）：' + p);
     return {text:`已開啟「${r.name}」（${S.pages.length} 頁），它現在是目前的文件。`};
   },
   async pdf_save_as(){   // the 另存新檔 window, as Ctrl+S opens it: the person picks the place (never the original)
@@ -11237,7 +11260,7 @@ const clContext = h => { const a = Math.max(0, h.s - 20), b = Math.min(h.ctx.len
 // stroke or shape being drawn
 const clBusy = () => $('#mask').classList.contains('show') || $('#busy').classList.contains('show') || CL_SAVING || !!TBE || !!NP
   || !!POLY || !!FPOLY || PEN.busy || PEN.strokes.length > 0;
-let CL_QUEUE = Promise.resolve(), CL_SAVING = false;
+let CL_QUEUE = Promise.resolve(), CL_SAVING = false, CL_RUN = false;   // (CL_RUN: a Claude call is being carried out)
 // calls are carried out one at a time, in the order they came (two at once would both start from the same document, and
 // one change would be lost)
 function runClaudeTool(tool, args){
@@ -11245,7 +11268,9 @@ function runClaudeTool(tool, args){
     const f = CLAUDE_TOOLS[tool]; if (!f) return {error:'PDF 工作台還沒有這個工具：' + tool};
     if (CL_EDIT.has(tool) && clBusy())
       return {error:'PDF 工作台正在忙（有視窗開著、正在存檔，或使用者正在編輯）。請使用者先完成或關掉它，再試一次。'};
+    CL_RUN = true;
     try { return await f(args && typeof args === 'object' ? args : {}); } catch (e) { return {error:String((e && e.message) || e)}; }
+    finally { CL_RUN = false; }
   };
   const p = CL_QUEUE.then(run, run); CL_QUEUE = p.catch(() => {}); return p;
 }
@@ -11615,6 +11640,11 @@ async function openSettings(tab = 'look'){
     if (k === 'keys') { keys = keyEditor(); pane.innerHTML = ''; pane.appendChild(keys.body); }
     else pane.innerHTML = panes[k]();
     if (k === 'claude') DESK.claude.state().then(st => { CLAUDE_ST = st; if (SET && SET.tab === 'claude') pane.innerHTML = panes.claude(); });   // (as it is now)
+    clearInterval(CL_POLL);
+    if (k === 'claude') CL_POLL = setInterval(() => {   // the status line follows Claude's calls while the pane is open
+      if (!SET || SET.tab !== 'claude') { clearInterval(CL_POLL); return; }
+      DESK.claude.state().then(st => { CLAUDE_ST = st; const el = pane.querySelector('#clSt'); if (el) el.textContent = clStatus(st); }).catch(() => {});
+    }, 2000);
   };
   // the update pane is drawn again on every updater event: an open 更新內容 (and where it is scrolled to) stays as it is
   SET = {tab, show, paintUpdate:() => { if (!SET || SET.tab !== 'update') return; const keep = pane.querySelector('#updNotes'), top = keep ? keep.scrollTop : 0; pane.innerHTML = panes.update(); if (keep) { pane.querySelector('#updNotes').replaceWith(keep); keep.scrollTop = top; } }};

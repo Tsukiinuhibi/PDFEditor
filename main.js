@@ -85,6 +85,9 @@ function createWindow() {
   // the page decides whether a binding uses them
   win.on('app-command', (_e, cmd) => send('app-command', cmd));
   win.on('closed', () => { win = null; rendererReady = false; });
+  // a Claude call waiting for the page: answered at once if the page reloads or stops (it would never answer)
+  win.webContents.on('did-start-loading', () => dropClaudeCalls('PDF 工作台的畫面重新載入了，這個呼叫沒有完成'));
+  win.webContents.on('render-process-gone', () => dropClaudeCalls('PDF 工作台的畫面停止回應了，這個呼叫沒有完成'));
 }
 
 /* ---------------- IPC: files ---------------- */
@@ -199,6 +202,7 @@ const bridge = CL.createBridge({
     win.webContents.send('claude:call', id, tool, args);
   }),
 });
+function dropClaudeCalls(why){ for (const [id, f] of claudeWait) { claudeWait.delete(id); f({ error: why }); } }
 ipcMain.on('claude:result', (_e, id, r) => { const f = claudeWait.get(id); if (f) { claudeWait.delete(id); f(r && typeof r === 'object' ? r : { error: '沒有結果' }); } });
 const claudeState = () => ({ enabled: !!(claudeSet && claudeSet.enabled), port: bridge.port, key: claudeSet ? claudeSet.key : '', error: claudeErr, last: claudeLast });
 async function claudeApply(){
