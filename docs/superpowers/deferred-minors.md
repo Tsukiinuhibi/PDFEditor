@@ -3,52 +3,16 @@
 Each release's final whole-branch review sorts its findings; Critical and Important ones are fixed before the
 release, Minor ones are deferred. These are the deferred ones, still open, in the reviewers' words. They are fixed
 in batches, one release per batch (the user, 2026-11-14: 「接著修正再發佈」). The minors of v1.0.42 and v1.0.43
-were fixed in v1.0.47.
+were fixed in v1.0.47; those of v1.0.40, v1.0.41 and v1.0.47 in v1.0.48.
 
 For each batch: read the items, fix the ones that still hold with a test that fails first, and record the rest
 (test-only, docs-only, obsolete, or a deliberate choice) as rulings in the batch's ledger. Take a release's
 section out of this file when its batch ships.
 
-## v1.0.48 (next batch)
+## v1.0.48 (batch v1.0.49)
 
 - linkRef: two links written straight into /Annots with the same box cannot be told apart; changing or deleting the upper one may hit the lower one (prefer the one whose target matches)
 - open-url.mjs: url:cancel stays replaced by a no-op after the Esc check (harmless today; restore it if parts are added after it)
-
-## v1.0.47 (batch v1.0.48)
-
-- 轉存 Word: 「取消中…（正在停止 Word）」 shows during 準備中, before Word has started (wording only)
-- file:write leaves a partial .pdfeditor-tmp when writing the temporary file itself fails (a full disk); the rename/copy failure path already removes it
-
-## v1.0.41 (batch v1.0.48)
-
-- a link that is a direct dictionary in /Annots (no NNR id) can be "saved" or "deleted" with nothing happening and no message
-- another program's link with /Border [0 0 1] and no /AP reads as 細藍框 (also for a red frame); getting our drawn frame needs 不顯示框, save, then 細藍框
-- on a look change the old /AP stream and an indirect /A are left as unused objects; /QuadPoints and /PA are kept
-- the click eater lives 800 ms; a Ctrl+press on a link that ends in a drag can swallow the next real click within that time
-- in the short gap after a change, before the page's overlay is rebuilt, Ctrl+click finds nothing and falls through to the tool
-- with the link tool, a new link cannot be drawn starting inside an existing link's box
-- the $$('[data-act="insertImage"]') line in setTool matches nothing now; actions.insertImage has no caller left
-- Ctrl+click opens a web address with no confirmation (Acrobat asks first); main.js allows only http, https and mailto
-- tests — no JavaScript-action fixture; the page-link Ctrl+click check does not first confirm the view went back to page 1; fixed waits throughout
-- the insertImage on-state line in setTool matches nothing now; actions.insertImage has no caller left
-
-## v1.0.40 (batch v1.0.48)
-
-- Latin-1 or Big5 filename= values become mojibake ("r�sum�.pdf") — keep the original name when the decoded one has �
-- early returns (!res.ok, Content-Length over the cap) leave the response body open until garbage collection
-- no http(s) check on res.url after redirects
-- peak memory about 2 GB for a 500 MB file (four copies across main, IPC and the page)
-- the whole clipboard is sent to the page on every open, not only an address
-- a double Ctrl+Shift+O orphaned a dialog — the URLOPEN guard added for Important 1/2 now also stops it; no test of its own
-- reopening right after Esc can leave 〔開啟〕 dead while the cancelled request winds down
-- raw English error text (net::ERR_…, an address with a user name and password); 401/403 have no sign-in hint
-- no busy sign while a large downloaded PDF is read; a password-protected PDF gets the generic message
-- with gzip, the progress line can read "12.0 / 3.0 MB"
-- the text/plain drop fallback is wider than the spec — dragged text that is an address also starts a download
-- an empty file name (filename="...") becomes page.pdf instead of the address's own name
-- an old custom Ctrl+Shift+O binding stops working silently (the built-in shortcut wins)
-- fixed sleeps in the test; /r and /noext asserted together; the test overwrites the system clipboard
-- docs not closed out (HANDOFF queue line, package.json version, release notes) — the release step does these
 
 ## v1.0.39 (batch v1.0.49)
 
