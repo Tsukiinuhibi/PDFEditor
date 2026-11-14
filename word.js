@@ -31,7 +31,7 @@ try {
 }
 exit $code
 `;
-const LIMIT = 10 * 60 * 1000;
+const LIMIT = 10 * 60 * 1000, STALE = 60 * 60 * 1000;
 const optionsKey = v => `HKCU\\Software\\Microsoft\\Office\\${v}.0\\Word\\Options`;
 
 // the installed Word's major version (16 for Word 2016 and later), 0 without Word
@@ -53,11 +53,31 @@ const stopWord = (run, since) => run('powershell.exe', ['-NoProfile', '-NonInter
   "Get-CimInstance Win32_Process -Filter \"Name='WINWORD.EXE'\" | Where-Object { $_.CommandLine -match 'Automation' -and $_.CreationDate -ge [datetime]::Parse('"
   + since.toISOString() + "') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"], { timeout: 20000 });
 
+// temporary folders an earlier run could not remove (its Word could not be closed and kept the PDF open): gone after an
+// hour (a run takes 10 minutes at most)
+async function sweepTemp(now = Date.now()){
+  let names = []; try { names = await fs.readdir(os.tmpdir()); } catch (_) { return; }
+  for (const n of names) {
+    if (!n.startsWith('pdfe-word-')) continue;
+    const p = path.join(os.tmpdir(), n);
+    try { const st = await fs.stat(p); if (st.isDirectory() && now - st.mtimeMs > STALE) await fs.rm(p, { recursive: true, force: true }); } catch (_) {}
+  }
+}
+// a .docx that cannot be written: open in Word (EBUSY on Windows), read-only, or not a file
+const LOCKED = new Set(['EBUSY', 'EPERM', 'EACCES', 'EISDIR', 'EROFS']);
+const lockedMsg = out => `這個檔案正被其他程式（例如 Word）開著，或不能寫入：${path.basename(out)}。請先關閉它，或換一個檔名。`;
+async function targetLocked(out){
+  try { const h = await fs.open(out, 'r+'); await h.close(); return false; }   // (opened for writing, nothing written)
+  catch (err) { return !!(err && LOCKED.has(err.code)); }   // (not there yet: fine)
+}
+
 // the PDF (bytes) → the .docx at `out` by Word `version`. job: {cancelled, child} (取消 sets cancelled and kills child);
 // killWord(since) closes the Word a stopped run left (stopWord, replaced in tests)
-// → {ok: true} | {ok: false, why: 'cancel' | 'timeout' | 'word', msg}
+// → {ok: true} | {ok: false, why: 'cancel' | 'timeout' | 'word' | 'locked', msg}
 async function convertWithWord({ pdf, out, version, run, job, killWord: kill = since => stopWord(run, since) }){
   if (job.cancelled) return { ok: false, why: 'cancel' };
+  if (await targetLocked(out)) return { ok: false, why: 'locked', msg: lockedMsg(out) };   // (before Word is started for nothing)
+  await sweepTemp();
   const since = new Date(Date.now() - 3000), had = await readPdfWarning(run, version);
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pdfe-word-'));
   await setPdfWarning(run, version, 1);
@@ -70,7 +90,8 @@ async function convertWithWord({ pdf, out, version, run, job, killWord: kill = s
     if (job.cancelled) { await kill(since); return { ok: false, why: 'cancel' }; }
     if (r.err && r.err.killed) { await kill(since); return { ok: false, why: 'timeout' }; }
     if (!/PDFE_OK/.test(r.stdout)) { const m = /PDFE_ERR:(.*)/.exec(r.stdout); return { ok: false, why: 'word', msg: (m ? m[1] : r.stderr || (r.err && r.err.message) || '').trim().slice(0, 300) }; }
-    await fs.copyFile(tmpOut, out);
+    try { await fs.copyFile(tmpOut, out); }
+    catch (err) { if (err && LOCKED.has(err.code)) return { ok: false, why: 'locked', msg: lockedMsg(out) }; throw err; }
     return { ok: true };
   } catch (err) { return { ok: false, why: 'word', msg: String((err && err.message) || err) }; }
   finally {
@@ -79,4 +100,4 @@ async function convertWithWord({ pdf, out, version, run, job, killWord: kill = s
   }
 }
 
-module.exports = { WORD_PS, wordVersion, readPdfWarning, setPdfWarning, stopWord, convertWithWord };
+module.exports = { WORD_PS, wordVersion, readPdfWarning, setPdfWarning, stopWord, convertWithWord, sweepTemp, targetLocked };

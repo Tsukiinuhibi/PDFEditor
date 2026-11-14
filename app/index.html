@@ -10318,9 +10318,11 @@ function openFind(){
   q.focus(); q.select();
   if (FIND.q) searchDoc();
 }
+// let go of 尋找's OCR worker (it holds a few hundred MB); the next scanned page starts a new one
+function dropFindWorker(){ if (FIND.worker) { const w = FIND.worker; FIND.worker = null; w.then(x => x.terminate()).catch(() => {}); } }
 function closeFind(){
   FIND.open = false; FIND.seq++; clearTimeout(FIND.timer); $('#findBar').hidden = true; $$('.fhit').forEach(d => d.remove());
-  if (FIND.worker) { const w = FIND.worker; FIND.worker = null; w.then(x => x.terminate()).catch(() => {}); }
+  dropFindWorker();
   viewer.focus({preventScroll:true});
 }
 (() => {
@@ -10565,7 +10567,7 @@ async function flattenForExport(pages, {realText = false} = {}){
   const keep = [...new Set(pages)].sort((a, b) => a - b);
   const L = readLayers(doc), ids = new Set(L.map(l => l.id)), hid = new Set(L.filter(l => !l.visible).map(l => l.id)), off = ocgsOff(doc);
   const num = v => v instanceof PDFNumber ? v.asNumber() : 0;
-  const boxes = [];
+  const boxes = []; let skipped = 0;   // skipped: annotations with nothing to draw (no appearance), said when it is done
   for (const pi of keep) {   // (numbered as in the document: the real-text writer reads the page's geometry from S.pages)
     const page = doc.getPage(pi), tbs = []; boxes.push(tbs);
     stripHiddenContent(doc, page, off);
@@ -10596,6 +10598,11 @@ async function flattenForExport(pages, {realText = false} = {}){
         continue;
       }
       const ap = d.lookupMaybe(N_('AP'), PDFDict); let n = ap && ap.get(N_('N'));
+      if (!n) {   // another program's highlight, a form field waiting for NeedAppearances: counted when it covers some area
+        const rc = d.lookupMaybe(N_('Rect'), PDFArray), r = rc ? numArr(rc) : null;
+        if (r && Math.abs(r[2] - r[0]) > 1 && Math.abs(r[3] - r[1]) > 1) skipped++;
+        continue;
+      }
       const states = n && ctx.lookup(n); if (states instanceof PDFDict) n = states.get(d.get(N_('AS')) || N_('Off'));   // (on / off: the state it is in)
       if (!(n instanceof PDFRef)) continue;
       const st = ctx.lookup(n); if (!(st instanceof PDFLib.PDFStream)) continue;
@@ -10612,8 +10619,19 @@ async function flattenForExport(pages, {realText = false} = {}){
     flush();
     page.node.delete(N_('Annots'));
   }
-  const kept = new Set(keep); for (let k = doc.getPageCount() - 1; k >= 0; k--) if (!kept.has(k)) doc.removePage(k);
-  return {bytes:await doc.save({useObjectStreams:false}), boxes};
+  const kept = new Set(keep), all = doc.getPageCount(); for (let k = all - 1; k >= 0; k--) if (!kept.has(k)) doc.removePage(k);
+  if (keep.length < all) trimCopy(doc);
+  return {bytes:await doc.save({useObjectStreams:false}), boxes, skipped};
+}
+// a copy of some of the pages: what points at the pages left out (the outline, the form, the structure tree, named
+// destinations and attachments, the opening view, article threads) goes, then every object nothing points at any more,
+// so one page of a large file makes a small copy. (Not for encrypted files or ones with objects pdf-lib could not read.)
+function trimCopy(doc){
+  const ctx = doc.context;
+  if (ctx.trailerInfo.Encrypt || hasUnreadable(doc)) return;
+  ['Outlines', 'AcroForm', 'StructTreeRoot', 'MarkInfo', 'Names', 'Dests', 'OpenAction', 'AA', 'Threads'].forEach(k => doc.catalog.delete(N_(k)));
+  const live = reachableRefs(doc);
+  ctx.enumerateIndirectObjects().forEach(([ref]) => { if (!live.has(ref.toString())) ctx.delete(ref); });
 }
 // a content stream added at the end of a page of the copy, the page's own content wrapped in q … Q first. (Contents may
 // be one stream or an array of them: the real-text writer leaves a single stream.)
@@ -10971,7 +10989,8 @@ async function builtinDocx({bytes, boxes}, {job, step, ocr = true}){
     return docxBytes(sections, {title:S.name.replace(/\.pdf$/i, ''), creator:AUTHOR || ''});
   } finally { pdf.destroy(); }
 }
-let WORDJOB = null;   // the conversion under way: {cancel}
+let WORDJOB = null;   // the conversion under way: {cancel, word, byWord}
+const lockedDocx = name => `這個檔案正被其他程式（例如 Word）開著，或不能寫入：${name}。請先關閉它，或換一個檔名。`;
 async function openWordDialog(){
   if (!S.pdf || WORDJOB) return;
   if (!(await settleEdits())) return;
@@ -11004,23 +11023,34 @@ async function openWordDialog(){
       where = await DESK.chooseSave(dir ? dir + (S.handle.path.includes('\\') ? '\\' : '/') + fn : fn, {avoid:orig ? [orig] : []});
       if (!where) return undefined;   // no place chosen: the window stays
     }
-    const job = WORDJOB = {cancel:false, word:null}, inputs = [...body.querySelectorAll('select,input')], byWord = $b('#wdHow').value === 'word' && hasWord;
+    const byWord = $b('#wdHow').value === 'word' && hasWord, job = WORDJOB = {cancel:false, word:null, byWord}, inputs = [...body.querySelectorAll('select,input')];
     setErr(''); $('#wdGo').disabled = true; inputs.forEach(x => { x.disabled = true; });
+    S.exporting = true;   // Esc and a click outside leave the window open while it works: 〔取消〕 is the way to stop it
     try {
       setSt('準備中…');
       const flat = await flattenForExport(pages, {realText:byWord}); if (job.cancel) throw new Error('cancel');
       const name = where ? where.split(/[\\/]/).pop() : fn;
+      let late = false;   // 取消 came after Word had finished: the .docx is there all the same
       if (byWord) {   // Word converts the flattened copy in the background and writes the .docx itself
         setSt('Word 轉換中…（Word 在背景執行，可能需要一點時間）');
         const r = await DESK.word.convert(job.word = 'w' + Date.now().toString(36), flat.bytes, where);
-        if (!r || !r.ok) { if (job.cancel || (r && r.why === 'cancel')) throw new Error('cancel'); throw Object.assign(new Error(r && r.why === 'timeout' ? 'Word 超過 10 分鐘還沒有完成' : (r && r.msg) || '原因不明'), {word:true}); }
+        if (!r || !r.ok) {
+          if (job.cancel || (r && r.why === 'cancel')) throw new Error('cancel');
+          if (r && r.why === 'locked') throw Object.assign(new Error(r.msg), {locked:true});   // (the built-in converter would fail the same way)
+          throw Object.assign(new Error(r && r.why === 'timeout' ? 'Word 超過 10 分鐘還沒有完成' : (r && r.msg) || '原因不明'), {word:true});
+        }
+        late = job.cancel;
       } else {
-        const out = await builtinDocx(flat, {job, ocr:$b('#wdOcr').checked, step:(k, m, note = '') => setSt(`轉換中：第 ${k}／${m} 頁${note}`)});
+        const out = await builtinDocx(flat, {job, ocr:$b('#wdOcr').checked, step:(k, m, note = '') => { if (!job.cancel) setSt(`轉換中：第 ${k}／${m} 頁${note}`); }});
         if (job.cancel) throw new Error('cancel');
-        if (DESK) await DESK.writeFile(where, new Uint8Array(await out.arrayBuffer()));   // (makeZip gives a Blob)
-        else if (!(await saveFile(fn, new Blob([out], {type:DOCX_MIME})))) throw new Error('cancel');
+        if (DESK) {
+          try { await DESK.writeFile(where, new Uint8Array(await out.arrayBuffer())); }   // (makeZip gives a Blob)
+          catch (e) { throw /EBUSY|EPERM|EACCES|EISDIR|EROFS/.test(String(e && e.message || e)) ? Object.assign(new Error(lockedDocx(name)), {locked:true}) : e; }
+        } else if (!(await saveFile(fn, new Blob([out], {type:DOCX_MIME})))) throw new Error('cancel');
       }
-      done = {path:where, name}; setSt('已轉存成 Word：' + name); toast('已轉存成 Word：' + name);
+      const left = flat.skipped ? `。有 ${flat.skipped} 個註解沒有轉進去（它們沒有可以顯示的外觀，例如其他程式加的標示）` : '';
+      done = {path:where, name}; setSt((late ? '按取消時 Word 已經轉好了：' : '已轉存成 Word：') + name + left);
+      toast((late ? 'Word 已經轉好了：' : '已轉存成 Word：') + name + left, left ? 'long' : undefined);
       if (!DESK) return null;
       $('#wdGo').textContent = '開啟'; $('#wdGo').disabled = false; $('#wdCancel').textContent = '關閉';
       return undefined;
@@ -11029,13 +11059,18 @@ async function openWordDialog(){
       if (e && e.word) $b('#wdHow').value = 'builtin';   // Word failed: the built-in converter is chosen for the next try
       check();   // (first: check() rewrites the error line)
       setSt(e && e.message === 'cancel' ? '已取消' : '');
-      if (e && e.word) setErr(`Word 轉換失敗：${e.message}。已改成程式內建轉換，再按一次〔轉存〕。`);
+      if (e && e.locked) setErr(e.message);
+      else if (e && e.word) setErr(`Word 轉換失敗：${e.message}。已改成程式內建轉換，再按一次〔轉存〕。`);
       else if (!(e && e.message === 'cancel')) setErr('轉存失敗：' + (e && e.message || e));
       return undefined;
-    } finally { WORDJOB = null; }
+    } finally { WORDJOB = null; S.exporting = false; if (!FIND.open) dropFindWorker(); }   // (scanned pages read here: let the OCR worker go)
   };
   await openModal({title:'轉存成 Word', body, buttons:[
-    {label:'取消', id:'wdCancel', handler:() => { if (WORDJOB) { WORDJOB.cancel = true; if (WORDJOB.word) DESK.word.cancel(WORDJOB.word); return undefined; } return null; }},
+    {label:'取消', id:'wdCancel', handler:() => {
+      const j = WORDJOB; if (!j) return null;
+      if (!j.cancel) { j.cancel = true; setSt(j.byWord ? '取消中…（正在停止 Word）' : '取消中…（等目前這一頁做完）'); if (j.word) DESK.word.cancel(j.word); }
+      return undefined;
+    }},
     {label:'轉存', id:'wdGo', primary:true, handler:run},
   ], onOpen:() => { $b('#wdHow').value = hasWord ? 'word' : 'builtin'; body.addEventListener('input', check); body.addEventListener('change', check); check(); }});
   if (WORDJOB) { WORDJOB.cancel = true; if (WORDJOB.word) DESK.word.cancel(WORDJOB.word); }   // closed (Esc) during a conversion: it stops
@@ -11883,6 +11918,8 @@ window.__pdfapp = {
   imageBoxes:i => detectImages(i),
   multi:() => MS ? {i:MS.i, ids:MS.items.map(a => a.id)} : null,
   flatten:pages => flattenForExport(pages),   // (tests) the copy that 轉存 Word converts
+  findWorker:() => !!FIND.worker,   // (tests) whether 尋找's OCR worker is still kept
+  wordJob:() => !!WORDJOB,   // (tests) whether a 轉存 Word conversion is under way
   claudeSaveWait:ms => { CL_SAVE_WAIT = ms; },   // (tests) pdf_save_as answers sooner
   wordFonts,
   links:async i => {   // (tests) page i's links: on screen, where they go, how they look

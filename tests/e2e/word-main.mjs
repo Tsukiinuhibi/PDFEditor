@@ -17,13 +17,14 @@ const KEY = 'HKCU\\Software\\Microsoft\\Office\\16.0\\Word\\Options';
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'pdfe-wordmain-'));
 
 // a recorder for the programs word.js runs. had: the setting before (null: not set); ps: what PowerShell does
-function fake({had = null, ps = 'ok', job = null} = {}){
+function fake({had = null, ps = 'ok', job = null, during = null} = {}){
   const calls = [];
   const run = async (file, args, opts = {}) => {
     calls.push([file, ...args]);
     if (file === 'reg' && args[0] === 'query') return {stdout:had == null ? '' : `\r\n${KEY}\r\n    DisableConvertPdfWarning    REG_DWORD    0x${had.toString(16)}\r\n`, stderr:'', err:had == null ? {code:1} : null};
     if (file === 'powershell.exe' && args.includes('-File')) {
       if (opts.onChild) opts.onChild({kill:() => { calls.push(['kill']); }});
+      if (during) during();
       const out = opts.env && opts.env.PDFE_OUT;
       if (ps === 'ok') { fs.writeFileSync(out, 'PK fake docx'); return {stdout:'PDFE_OK\r\n', stderr:'', err:null}; }
       if (ps === 'fail') return {stdout:'PDFE_ERR:無法開啟檔案\r\n', stderr:'', err:{code:2}};
@@ -64,6 +65,25 @@ if (W) {
   check('取消 before PowerShell starts: it is not started, and the setting is left as it was', !r.ok && r.why === 'cancel' && !f.calls.some(c => c[0] === 'powershell.exe') && !f.calls.some(c => c[0] === 'reg' && c[1] !== 'query'), {r, calls:f.calls});
   await new Promise(res => setTimeout(res, 300));
   check('no temporary folder is left behind', tempLeft().length === 0, tempLeft());
+  // (v1.0.47) a .docx that cannot be written — open in Word (EBUSY on Windows), here a folder of that name: said at once,
+  // before the setting is touched or Word started
+  const busy = path.join(TMP, 'busy.docx'); fs.mkdirSync(busy);
+  job = {cancelled:false}; f = fake({had:null});
+  r = await W.convertWithWord({pdf:new Uint8Array([37, 80, 68, 70]), out:busy, version:16, run:f.run, job});
+  check('a .docx that cannot be written (open in Word): 「locked」 and a message, Word not started, the setting not touched',
+    !r.ok && r.why === 'locked' && /開著|不能寫入/.test(r.msg || '') && !f.calls.some(c => c[0] === 'powershell.exe') && !f.calls.some(c => c[0] === 'reg'), {r, calls:f.calls});
+  // … or it becomes so while Word works: the copy to its place fails the same way, not as a Word failure
+  const later = path.join(TMP, 'later.docx');
+  job = {cancelled:false}; f = fake({had:null, during:() => fs.mkdirSync(later)});
+  r = await W.convertWithWord({pdf:new Uint8Array([37, 80, 68, 70]), out:later, version:16, run:f.run, job});
+  check('the .docx is opened elsewhere while Word works: 「locked」 too, not 「Word 轉換失敗」', !r.ok && r.why === 'locked' && /開著|不能寫入/.test(r.msg || ''), r);
+  // temporary folders left by a run whose Word could not be closed: over an hour old → removed at the next run; a new one stays
+  const old = fs.mkdtempSync(path.join(os.tmpdir(), 'pdfe-word-')), fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'pdfe-word-'));
+  fs.writeFileSync(path.join(old, 'in.pdf'), '%PDF'); const hoursAgo = new Date(Date.now() - 2 * 3600e3); fs.utimesSync(old, hoursAgo, hoursAgo);
+  job = {cancelled:false}; f = fake({had:null});
+  r = await W.convertWithWord({pdf:new Uint8Array([37, 80, 68, 70]), out:path.join(TMP, 'sweep.docx'), version:16, run:f.run, job});
+  check('a temporary folder over an hour old (a Word that could not be closed) goes at the next run; a new one is kept', r.ok && !fs.existsSync(old) && fs.existsSync(fresh), {r, old:fs.existsSync(old), fresh:fs.existsSync(fresh)});
+  fs.rmSync(old, {recursive:true, force:true}); fs.rmSync(fresh, {recursive:true, force:true});
 } else check('word.js exists and loads', false);
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 check('word.js is packed into the installer (package.json build.files)', (pkg.build.files || []).includes('word.js'), pkg.build.files.slice(0, 4));

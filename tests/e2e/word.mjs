@@ -175,6 +175,8 @@ check('a scanned page, 文字辨識 on: its text is read (no picture of it); a s
   /SCAN/.test(x2) && /12345/.test(x2) && P2.some(p => p.text === 'HIDDEN LAYER TEXT'), P2.map(p => p.text || '[picture]'));
 check('a scan with only a page number on it is still read as a scan; a photo with no text in it stays a picture (nothing is lost)',
   (x2.match(/SCAN TEST/g) || []).length === 2 && media2.length === 2 && /<w:drawing>/.test(P2[P2.length - 1].x), P2.map(p => p.text || '[picture]'));
+const ocrKept = await Ev(() => window.__pdfapp.findWorker());
+check('(v1.0.47) after a conversion that used 文字辨識, with 尋找 closed: the OCR worker is let go', ocrKept === false, ocrKept);
 const z3 = await exportTo(path.join(TMP, 'scan.docx'), {ocr:false}), x3 = z3 ? z3['word/document.xml'].toString('utf8') : '';
 const media3 = z3 ? Object.keys(z3).filter(n => n.startsWith('word/media/')) : [];
 check('文字辨識 off: each scanned page is one picture of the whole page (its page number in it), and no text is made up',
@@ -290,6 +292,98 @@ await win.click('#wdCancel'); await win.waitForTimeout(300);
 const mainSrc = fs.readFileSync(path.join(ROOT, 'word.js'), 'utf8'), ps = (mainSrc.match(/const WORD_PS = `([\s\S]*?)`;/) || [])[1] || '';
 check('the script Word runs: paths from the environment, opened read-only without asking, saved as .docx, Word always closed',
   ps.includes('$env:PDFE_IN') && ps.includes('$env:PDFE_OUT') && ps.includes('Documents.Open($in, $false, $true, $false)') && /SaveAs2\(\$out, 16\)/.test(ps) && /finally[\s\S]*Quit\(/.test(ps), ps.slice(0, 200));
+
+// ---- part 4 (v1.0.47): a conversion under way (Esc, 取消, 取消 too late), a locked .docx, annotations with nothing to draw,
+// one page of a large file. main's word:* stay replaced; the conversion now takes a while and can finish after 取消
+await app.evaluate(({ipcMain}) => {
+  Object.assign(global.__word, {fail:false, delay:0, lateOk:false, locked:false, cancelled:null});
+  ipcMain.removeHandler('word:convert'); ipcMain.handle('word:convert', async (_e, id, pdf, out) => {
+    const w = global.__word; await new Promise(res => setTimeout(res, w.delay));
+    if (w.locked) return {ok:false, why:'locked', msg:'這個檔案正被其他程式（例如 Word）開著，或不能寫入：locked.docx。請先關閉它，或換一個檔名。'};
+    if (w.cancelled === id && !w.lateOk) return {ok:false, why:'cancel'};
+    w.out = out; return {ok:true};
+  });
+  ipcMain.removeHandler('word:cancel'); ipcMain.handle('word:cancel', (_e, id) => { global.__word.cancelled = id; });
+});
+const wdState = () => Ev(() => ({open:document.querySelector('#mask').classList.contains('show'), st:(document.querySelector('#wdSt') || {}).textContent || '',
+  err:(document.querySelector('#wdErr') || {}).textContent || '', how:(document.querySelector('#wdHow') || {}).value, go:(document.querySelector('#wdGo') || {}).textContent}));
+const openWord = async out => { await answerSave(out); await win.click('[data-amenu="output"] .sp-arr'); await win.waitForTimeout(300); await win.click('#toolMenu button:has-text("Word 檔")'); await win.waitForTimeout(800); };
+const wdShown = () => Ev(() => document.querySelector('#mask').classList.contains('show') && !!document.querySelector('#wdCancel'));
+const closeWord = async () => { if (await wdShown()) { await win.click('#wdCancel'); await win.waitForTimeout(400); } };
+const waitSt = (re, ms = 20000) => win.waitForFunction(re => { const t = (document.querySelector('#wdSt') || {}).textContent || '', e = (document.querySelector('#wdErr') || {}).textContent || '';
+  return new RegExp(re).test(t + '|' + e); }, re.source, {timeout:ms, polling:50}).catch(() => {});
+await app.evaluate(() => { global.__word.delay = 5000; });
+const OUT7 = path.join(TMP, 'esc.docx'); await openWord(OUT7);
+await win.click('#wdGo'); await waitSt(/Word 轉換中/);
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+if ((await wdState()).open) { const mb = await win.locator('#mask').boundingBox(); await win.mouse.click(mb.x + 6, mb.y + 6); await win.waitForTimeout(300); }
+const esc = await wdState(), escCancel = await app.evaluate(() => global.__word.cancelled);
+check('Esc or a click outside during a conversion: the window stays and the conversion goes on', esc.open && /Word 轉換中/.test(esc.st) && !escCancel, {esc, escCancel});
+if (await wdShown()) await win.click('#wdCancel');
+await win.waitForTimeout(120); const cancelling = await wdState();
+await waitSt(/已取消/); const cancelled = await wdState();
+check('〔取消〕: 「取消中…」 at once; then 「已取消」, the window stays to try again', /取消中/.test(cancelling.st) && cancelled.open && cancelled.st === '已取消' && cancelled.go === '轉存', {cancelling, cancelled});
+// 取消 that comes too late: Word had finished
+await app.evaluate(() => { Object.assign(global.__word, {delay:2500, lateOk:true, cancelled:null}); });
+const OUT8 = path.join(TMP, 'late.docx');
+await win.waitForFunction(() => !window.__pdfapp.wordJob(), null, {timeout:15000}).catch(() => {});
+if ((await wdState()).open) await answerSave(OUT8); else await openWord(OUT8);
+await win.click('#wdGo'); await waitSt(/Word 轉換中/);
+if (await wdShown()) await win.click('#wdCancel');
+await waitSt(/轉好了|已轉存|已取消/);
+const late = await wdState();
+check('取消 that comes after Word has finished: it says the .docx was made anyway, and 〔開啟〕 opens it', /按取消時 Word 已經轉好了/.test(late.st) && late.go === '開啟', late);
+await closeWord();
+// the .docx is open in Word: the message says so, and Word stays chosen (the built-in converter would fail the same way)
+await app.evaluate(() => { Object.assign(global.__word, {delay:0, lateOk:false, locked:true}); });
+await openWord(path.join(TMP, 'locked.docx')); await win.click('#wdGo'); await waitSt(/開著|失敗/);
+const lk = await wdState();
+check('a .docx that is open in Word: the message says so, and Word stays chosen', /正被其他程式/.test(lk.err) && !/Word 轉換失敗/.test(lk.err) && lk.how === 'word', lk);
+await closeWord(); await app.evaluate(() => { global.__word.locked = false; });
+// the built-in converter cannot write it (open elsewhere, or not a file — a folder of that name here)
+const DIRT = path.join(TMP, 'a folder.docx'); fs.mkdirSync(DIRT);
+await openWord(DIRT);
+await Ev(() => { const h = document.querySelector('#wdHow'); h.value = 'builtin'; h.dispatchEvent(new Event('change', {bubbles:true})); });
+await win.click('#wdGo'); await waitSt(/開著|不能寫入|失敗/, 60000);
+const wf = await wdState(), tmpLeft = fs.readdirSync(TMP).filter(n => n.includes('pdfeditor-tmp'));
+check('the built-in converter cannot write the .docx: it says so plainly; no temporary file is left beside it',
+  /正被其他程式.*開著，或不能寫入/.test(wf.err) && !/EISDIR|invoking/.test(wf.err) && !tmpLeft.length, {wf, tmpLeft});
+await closeWord();
+// annotations with nothing to draw, and a big picture on the page not chosen (an outline points at that page)
+const d5 = await PDFDocument.create(), H5 = await d5.embedFont(StandardFonts.Helvetica), c5 = d5.context;
+const p51 = d5.addPage([595, 842]), p52 = d5.addPage([595, 842]);
+p51.drawText('Annotations without an appearance', {x:72, y:770, size:14, font:H5});
+p52.drawText('A page with a big picture', {x:72, y:770, size:14, font:H5});
+const BW = 640, big = Buffer.alloc(BW * BW * 3); for (let k = 0; k < big.length; k++) big[k] = (Math.random() * 256) | 0;   // (does not compress)
+const imName = p52.node.newXObject('Im', c5.register(c5.stream(big, {Type:'XObject', Subtype:'Image', Width:BW, Height:BW, ColorSpace:'DeviceRGB', BitsPerComponent:8})));
+p52.pushOperators(pushGraphicsState(), PDFOperator.of('cm', [300, 0, 0, 300, 100, 300].map(v => c5.obj(v))), PDFOperator.of('Do', [imName]), popGraphicsState());
+const olRef = c5.register(c5.obj({Type:'Outlines', Count:1})), itRef = c5.register(c5.obj({Title:PDFString.of('Page 2'), Parent:olRef, Dest:[p52.ref, PDFName.of('Fit')]}));
+c5.lookup(olRef).set(PDFName.of('First'), itRef); c5.lookup(olRef).set(PDFName.of('Last'), itRef); d5.catalog.set(PDFName.of('Outlines'), olRef);
+const sqAP = c5.register(c5.stream('0 0 1 rg 0 0 50 50 re f', {Type:'XObject', Subtype:'Form', BBox:[0, 0, 50, 50]}));
+const field = c5.register(c5.obj({Type:'Annot', Subtype:'Widget', FT:'Tx', T:PDFString.of('name'), V:PDFString.of('Hello'), Rect:[72, 600, 272, 620], F:4, P:p51.ref}));
+const anns5 = [
+  c5.register(c5.obj({Type:'Annot', Subtype:'Highlight', Rect:[70, 762, 330, 790], QuadPoints:[70, 790, 330, 790, 70, 762, 330, 762], C:[1, 1, 0], F:4})),   // another program's highlight, no /AP
+  field,   // a form field waiting for NeedAppearances
+  c5.register(c5.obj({Type:'Annot', Subtype:'Square', Rect:[100, 400, 150, 450], F:4, AP:{N:sqAP}})),   // drawn: not counted
+  c5.register(c5.obj({Type:'Annot', Subtype:'Text', Rect:[400, 700, 420, 720], Contents:PDFString.of('a note')})),   // a sticky note: never converted
+  c5.register(c5.obj({Type:'Annot', Subtype:'Highlight', Rect:[70, 500, 330, 520], QuadPoints:[70, 520, 330, 520, 70, 500, 330, 500], F:2})),   // hidden: not counted
+];
+p51.node.set(PDFName.of('Annots'), c5.obj(anns5));
+d5.catalog.set(PDFName.of('AcroForm'), c5.obj({Fields:[field], NeedAppearances:true}));
+const PDF5 = path.join(TMP, 'word5.pdf'); fs.writeFileSync(PDF5, await d5.save());
+await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), PDF5);
+await win.waitForFunction(() => window.__pdfapp.S.pages.length === 2 && /word5/.test(window.__pdfapp.S.name), null, {timeout:30000}); await win.waitForTimeout(1500);
+const fl1 = await Ev(async () => { const r = await window.__pdfapp.flatten([0]); return {size:r.bytes.length, skipped:r.skipped}; });
+const flAll = await Ev(async () => { const r = await window.__pdfapp.flatten([0, 1]); return {size:r.bytes.length, skipped:r.skipped}; });
+check('annotations with nothing to draw (another program\'s highlight, a field waiting for its appearance) are counted as left out', fl1.skipped === 2 && flAll.skipped === 2, {fl1, flAll});
+check('one page of a file whose other page holds a big picture: the copy leaves that picture out', fl1.size < 150000 && flAll.size > 1000000, {fl1, flAll});
+const OUT10 = path.join(TMP, 'skipped.docx'); await openWord(OUT10);
+await Ev(() => { const h = document.querySelector('#wdHow'); h.value = 'builtin'; h.dispatchEvent(new Event('change', {bubbles:true}));
+  const s = document.querySelector('#wdScope'); s.value = 'range'; s.dispatchEvent(new Event('change', {bubbles:true})); const r = document.querySelector('#wdRange'); r.value = '1'; r.dispatchEvent(new Event('input', {bubbles:true})); });
+await win.click('#wdGo'); const okSk = await waitFile(OUT10, 60000); await waitSt(/已轉存/);
+const sk = await wdState(), zsk = okSk ? unzip(fs.readFileSync(OUT10)) : null;
+check('the finished message says how many annotations were left out', /2 個註解/.test(sk.st) && !!zsk && /Annotations without an appearance/.test(zsk['word/document.xml'].toString('utf8')), sk);
+await closeWord();
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

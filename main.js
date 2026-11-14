@@ -144,7 +144,7 @@ ipcMain.handle('file:write', async (_e, p, data) => {
   const tmp = p + '.pdfeditor-tmp';
   await fs.writeFile(tmp, toBuf(data));
   try { await fs.rename(tmp, p); }
-  catch (err) { await fs.copyFile(tmp, p); await fs.unlink(tmp).catch(() => {}); }
+  catch (err) { try { await fs.copyFile(tmp, p); } finally { await fs.unlink(tmp).catch(() => {}); } }   // (failed: the temp file goes too)
   return true;
 });
 ipcMain.handle('file:save-as', async (_e, suggested, data, opts) => {
