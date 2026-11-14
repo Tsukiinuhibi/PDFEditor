@@ -189,6 +189,8 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .pp-card.on .num{color:var(--seal-ink);font-weight:500}
 .pp-del .pp-card.on .th::after{content:"";position:absolute;inset:0;background:rgba(200,55,29,.28);background-image:linear-gradient(45deg,transparent 48.5%,rgba(200,55,29,.75) 48.5% 51.5%,transparent 51.5%),linear-gradient(-45deg,transparent 48.5%,rgba(200,55,29,.75) 48.5% 51.5%,transparent 51.5%)}
 .pp-card.cur .num::after{content:" · 目前頁";color:var(--ink3);font-weight:400}
+.pp-group{grid-column:1/-1;font-size:12.5px;font-weight:600;color:var(--ink2);padding:4px 2px 5px;border-bottom:1px solid var(--line2);overflow-wrap:anywhere}
+.pp-group:not(:first-child){margin-top:6px}
 .pp-foot{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px}
 .pp-foot select{font:inherit;border:1px solid var(--line2);border-radius:7px;padding:6px 9px;background:var(--surface)}
 .att{background:var(--surface);border-radius:7px;padding:8px 9px;margin-bottom:7px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
@@ -3524,10 +3526,12 @@ function rangeText(sel){
   }
   return out.join(', ');
 }
-async function pagePicker({title, mode, count, initial = [], current = -1, getPage, okLabel, note, validate, footer, sizes}){
+// groups: [{label, start, count}] — the pages come from several files, one after another; each gets a heading
+// warn: a warning shown above the note
+async function pagePicker({title, mode, count, initial = [], current = -1, getPage, okLabel, note, warn, validate, footer, sizes, groups = null}){
   const sel = new Set(initial);
   const body = document.createElement('div');
-  body.innerHTML = `${note ? `<div class="note" style="margin-bottom:10px">${esc(note)}</div>` : ''}
+  body.innerHTML = `${warn ? `<div class="note warn" style="margin-bottom:10px">${esc(warn)}</div>` : ''}${note ? `<div class="note" style="margin-bottom:10px;white-space:pre-line">${esc(note)}</div>` : ''}
     <div class="pp-bar">
       <button class="mini" data-b="all">全選</button><button class="mini" data-b="none">全不選</button><button class="mini" data-b="inv">反向選取</button>
       <span class="sep"></span>
@@ -3540,8 +3544,14 @@ async function pagePicker({title, mode, count, initial = [], current = -1, getPa
     <div class="pp-grid ${mode === 'delete' ? 'pp-del' : ''}" id="ppGrid"></div>
     ${footer ? `<div class="pp-foot">${footer}</div>` : ''}`;
   const grid = body.querySelector('#ppGrid');
-  const cards = [];
+  const cards = [], heads = new Map((groups || []).map(g => [g.start, g]));
   for (let i = 0; i < count; i++) {
+    const g = heads.get(i);
+    if (g && g.count) {
+      const h = document.createElement('div'); h.className = 'pp-group';
+      h.textContent = `${g.label} · 第 ${g.start + 1}${g.count > 1 ? '–' + (g.start + g.count) : ''} 頁`;
+      grid.appendChild(h);
+    }
     const c = document.createElement('div'); c.className = 'pp-card' + (i === current ? ' cur' : ''); c.dataset.i = i;
     const ar = sizes && sizes[i] ? sizes[i].h / sizes[i].w : 1.414;
     c.innerHTML = `<span class="ck">✓</span><div class="th" style="aspect-ratio:${1 / ar}">${i + 1}</div><span class="num">第 ${i + 1} 頁</span>`;
@@ -3611,20 +3621,66 @@ $('#fInsert').addEventListener('change', async e => {
   const file = e.target.files[0]; e.target.value = '';
   if (file) insertFromPdf(file);
 });
+// one source of pages for the insert picker: the chosen file, or a PDF inside it. 「限制編輯」 files are decrypted (their
+// pages could not be copied otherwise); one encrypted in a way that cannot be decrypted is refused
+async function insertSource(raw, name){
+  const rd = await readablePdf(raw), bytes = rd.bytes;
+  const src = await pdfjsLib.getDocument({...PDF_OPTS, data:bytes.slice()}).promise;
+  try {
+    if (rd.state === 'unsupported') {
+      const m = await src.getMetadata().catch(() => null);
+      if (m && m.info && m.info.EncryptFilterName) { const e = new Error('encryption'); e.name = 'UnsupportedEncryption'; throw e; }
+    }
+    const sizes = [];
+    for (let i = 1; i <= Math.min(src.numPages, 400); i++) { const pg = await src.getPage(i), v = pg.getViewport({scale:1}); sizes.push({w:v.width, h:v.height}); }
+    return {name, bytes, src, n:src.numPages, sizes};
+  } catch (e) { src.destroy(); throw e; }
+}
+// a dynamic XFA form: its pages are made by Adobe's reader from the form; the PDF only holds a placeholder page
+async function needsRendering(bytes){
+  try { const d = await PDFDocument.load(bytes, {ignoreEncryption:true, updateMetadata:false}), v = d.catalog.lookup(PDFName.of('NeedsRendering')); return v instanceof PDFLib.PDFBool && v.asBoolean(); }
+  catch (_) { return false; }
+}
+const XFA_WARN = '這個檔案是 XFA 動態表單：表單真正的內容要用 Adobe Acrobat 或 Adobe Reader 開啟才看得到，這裡只讀得到預留的頁面。'
+  + '請先用 Adobe Reader 開啟它，按「列印」、印表機選「Microsoft Print to PDF」另存成一般 PDF，再插入存出來的檔案。';
 async function insertFromPdf(file){
   if (!S.pdf) return;
   busy(true, '讀取 PDF…');
-  let bytes, src, sizes = [];
+  // the file's own pages, then the PDFs inside it: a PDF portfolio (PDF 包) keeps its documents as attached files and
+  // shows only a cover page; any PDF can carry attached PDFs
+  const srcs = [], skipped = [];
+  let portfolio = false, xfa = false;
   try {
-    bytes = new Uint8Array(await file.arrayBuffer());
-    src = await pdfjsLib.getDocument({...PDF_OPTS, data:bytes.slice()}).promise;
-    for (let i = 1; i <= Math.min(src.numPages, 400); i++) { const pg = await src.getPage(i), v = pg.getViewport({scale:1}); sizes.push({w:v.width, h:v.height}); }
+    srcs.push(await insertSource(new Uint8Array(await file.arrayBuffer()), file.name));
+    const meta = await srcs[0].src.getMetadata().catch(() => null), info = (meta && meta.info) || {};
+    portfolio = !!info.IsCollectionPresent;
+    xfa = !!info.IsXFAPresent && await needsRendering(srcs[0].bytes);
+    const atts = Object.values((await srcs[0].src.getAttachments().catch(() => null)) || {})
+      .sort((a, b) => String(a.filename).localeCompare(String(b.filename), 'zh-Hant', {numeric:true}));
+    for (const a of atts) {
+      if (!isPdfBytes(a.content)) { skipped.push(`${a.filename}（不是 PDF）`); continue; }
+      try { srcs.push(await insertSource(new Uint8Array(a.content), a.filename)); }
+      catch (e) { skipped.push(`${a.filename}（${e && e.name === 'PasswordException' ? '需要密碼' : e && e.name === 'UnsupportedEncryption' ? '加密方式無法處理' : '讀不到'}）`); }
+    }
   } catch (e) {
-    busy(false);
-    toast(e && e.name === 'PasswordException' ? '此 PDF 受密碼保護，無法匯入' : '無法讀取此 PDF：' + (e.message || e), 'err'); return;
+    busy(false); srcs.forEach(x => x.src.destroy());
+    toast(e && e.name === 'PasswordException' ? '此 PDF 受密碼保護，無法匯入' : e && e.name === 'UnsupportedEncryption' ? '這份 PDF 的加密方式無法處理，不能插入它的頁面'
+      : '無法讀取此 PDF：' + (e.message || e), 'err');
+    return;
   }
   busy(false);
-  const n = src.numPages, cur = S.current + 1, tot = S.pages.length;
+  // every source's pages one after another (the page numbers run on, as in the range box), each under a heading
+  let start = 0;
+  const groups = srcs.map((x, k) => { const g = {label:k ? x.name : portfolio ? `PDF 包的封面（${x.name}）` : x.name, start, count:x.n, x}; start += x.n; return g; });
+  const n = start, inner = srcs.length - 1, cur = S.current + 1, tot = S.pages.length;
+  const where = i => { let k = groups.length - 1; while (k > 0 && groups[k].start > i) k--; return {x:groups[k].x, p:i - groups[k].start}; };
+  // ticked at first: a portfolio's documents (not its cover); otherwise the file's own pages; nothing for an XFA form
+  const initial = [];
+  groups.forEach((g, k) => { if (k ? portfolio : !(portfolio && inner) && !xfa) for (let i = 0; i < g.count; i++) initial.push(g.start + i); });
+  const notes = [portfolio && inner ? `這是 PDF 包：下面依序列出封面和裡面 ${inner} 個 PDF 的頁面，預設勾選 PDF 的頁面（不含封面）。`
+    : inner ? `這個 PDF 附有 ${inner} 個 PDF 檔：它們的頁面列在後面，預設沒有勾選。` : '',
+    `勾選要匯入的頁面${inner || xfa ? '' : '（預設全選'}${inner || xfa ? '（' : '，'}可按住 Shift 連續選取），並選擇要插入的位置。`,
+    skipped.length ? `不能插入：${skipped.join('、')}。` : ''].filter(Boolean);
   const footer = `<span class="flab">插入位置</span>
     <select data-x="pos">
       <option value="after" selected>目前頁（第 ${cur} 頁）之後</option>
@@ -3634,12 +3690,13 @@ async function insertFromPdf(file){
       <option value="at">指定頁碼之後…</option>
     </select>
     <span id="atWrap" style="display:none">第 <input type="text" data-x="at" value="${cur}" style="width:56px;font:inherit;border:1px solid var(--line2);border-radius:7px;padding:5px 8px;text-align:center"> 頁之後（0 = 最前面）</span>
-    <span class="flab" style="margin-left:auto">來源：${esc(file.name)} · 共 ${n} 頁</span>`;
+    <span class="flab" style="margin-left:auto">來源：${esc(file.name)}${portfolio && inner ? `（PDF 包，內含 ${inner} 個 PDF）` : inner ? `（附有 ${inner} 個 PDF）` : ''} · 共 ${n} 頁</span>`;
   const picker = pagePicker({
-    title:'從其他 PDF 插入頁面', mode:'insert', count:n, initial:[...Array(n).keys()],
-    getPage:i => src.getPage(i + 1), sizes,
+    title:'從其他 PDF 插入頁面', mode:'insert', count:n, initial,
+    getPage:i => { const w = where(i); return w.x.src.getPage(w.p + 1); },
+    sizes:groups.flatMap(g => Array.from({length:g.count}, (_, i) => g.x.sizes[i])), groups:groups.length > 1 ? groups : null,
     okLabel:k => k ? `插入 ${k} 頁` : '插入',
-    note:'勾選要匯入的頁面（預設全選，可按住 Shift 連續選取），並選擇要插入的位置。',
+    note:notes.join('\n'), warn:xfa ? XFA_WARN : '',
     validate:sel => sel.length ? '' : '請至少勾選一頁', footer,
   });
   setTimeout(() => {
@@ -3647,7 +3704,7 @@ async function insertFromPdf(file){
     if (ps) ps.onchange = () => { $('#atWrap').style.display = ps.value === 'at' ? '' : 'none'; };
   }, 0);
   const res = await picker;
-  setTimeout(() => src.destroy(), 300);
+  setTimeout(() => srcs.forEach(x => x.src.destroy()), 300);
   if (!res) return;
   const pos = res.extra.pos;
   let at;
@@ -3656,10 +3713,14 @@ async function insertFromPdf(file){
   else if (pos === 'start') at = 0;
   else if (pos === 'end') at = tot;
   else { const k = parseInt(res.extra.at, 10); if (!(k >= 0 && k <= tot)) { toast(`頁碼需介於 0 到 ${tot}`, 'err'); return; } at = k; }
+  const picked = res.sel.map(where);   // in page order, each from its own source
   await mutate(`已從「${file.name}」插入 ${res.sel.length} 頁`, async doc => {
-    const srcDoc = await PDFDocument.load(bytes, {ignoreEncryption:true, updateMetadata:false});
-    const copied = await doc.copyPages(srcDoc, res.sel);
-    copied.forEach((pg, k) => doc.insertPage(at + k, pg));
+    const copies = new Map();
+    for (const x of srcs) {
+      const ks = picked.filter(w => w.x === x).map(w => w.p);
+      if (ks.length) copies.set(x, await doc.copyPages(await PDFDocument.load(x.bytes, {ignoreEncryption:true, updateMetadata:false}), ks));
+    }
+    picked.forEach((w, j) => doc.insertPage(at + j, copies.get(w.x).shift()));
     S.current = clamp(at, 0, doc.getPageCount() - 1);
   }, {scrollToCurrent:true, highlight:{from:at, count:res.sel.length, label:'插入的頁面'}});
 }
