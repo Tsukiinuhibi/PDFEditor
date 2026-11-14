@@ -150,9 +150,10 @@ await fill(`http://someone:secret@127.0.0.1:${deadPort}/a.pdf`); await go(2500);
 const dCred = await dlg();
 check('401: says it needs signing in; no connection: says so in Chinese, without the error code; an address with a password: says so, without the password',
   /登入/.test(d401.err) && /連不上/.test(dRef.err) && /帳號|密碼/.test(dCred.err) && !/ERR_|net::|secret|Error|TypeError/.test(dRef.err + d401.err + dCred.err), {e401:d401.err, eRef:dRef.err, eCred:dCred.err});
-await fill(`${BASE}/404big`); await go(2000);
+const heldGone = async () => { for (let t = 0; t < 25 && held.size; t++) await win.waitForTimeout(200); };   // (the server hears the close within moments, not at a garbage collection)
+await fill(`${BASE}/404big`); await go(1000); await heldGone();
 const after404 = held.size;
-await fill(`${BASE}/huge2.pdf`); await go(2000);
+await fill(`${BASE}/huge2.pdf`); await go(1000); await heldGone();
 check('an error page with a long body, a file too large: the connection is closed at once (not left to garbage collection)', after404 === 0 && held.size === 0, {after404, held:held.size, err:(await dlg()).err});
 check('the progress line: with a compressed download (more received than the size it gave), only what was received', !/ \/ /.test(await Ev(() => window.__pdfapp.urlProgress(12 * 1048576, 3 * 1048576))) && / \/ 3\.0/.test(await Ev(() => window.__pdfapp.urlProgress(1048576, 3 * 1048576))),
   await Ev(() => [window.__pdfapp.urlProgress(12 * 1048576, 3 * 1048576), window.__pdfapp.urlProgress(1048576, 3 * 1048576)]));
