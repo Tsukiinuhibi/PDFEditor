@@ -10639,13 +10639,18 @@ async function openLinkDialog(i, {box = null, link = null} = {}){
 // when it is not there any more
 function linkRef(doc, i, link){
   const ref = findAnnotRef(doc, i, link.id); if (ref) return ref;
-  const ctx = doc.context, annots = doc.getPage(i).node.lookupMaybe(N_('Annots'), PDFArray), want = visToPdf(i, link.box).rect;
+  const ctx = doc.context, annots = doc.getPage(i).node.lookupMaybe(N_('Annots'), PDFArray), want = visToPdf(i, link.box).rect, at = [];
   for (let k = 0; annots && k < annots.size(); k++) {
     const d = annots.get(k); if (!(d instanceof PDFDict) || String(d.get(N_('Subtype'))) !== '/Link') continue;
     const rc = d.lookupMaybe(N_('Rect'), PDFArray), r = rc ? numArr(rc) : null; if (!r) continue;
     const rr = [Math.min(r[0], r[2]), Math.min(r[1], r[3]), Math.max(r[0], r[2]), Math.max(r[1], r[3])];
-    if (rr.every((v, j) => Math.abs(v - want[j]) < 1)) { const nr = ctx.register(d); annots.set(k, nr); return nr; }
+    if (rr.every((v, j) => Math.abs(v - want[j]) < 1)) at.push(k);
   }
+  // more than one in the same box: the one that goes where this link goes (else the upper one, as it is the one clicked)
+  const goes = k => { const d = annots.get(k), a = d.lookupMaybe(N_('A'), PDFDict), u = a && a.lookupMaybe(N_('URI'), PDFString, PDFHexString), dest = d.lookupMaybe(N_('Dest'), PDFArray);
+    if (u && link.url && u.decodeText() === link.url) return true;
+    return link.page != null && !!dest && String(dest.get(0)) === String(doc.getPage(link.page).ref); };
+  if (at.length) { const k = at.length > 1 ? (at.filter(goes).pop() ?? at[at.length - 1]) : at[0], nr = ctx.register(annots.get(k)); annots.set(k, nr); return nr; }
   toast('找不到這個連結（可能已經被刪除）', 'err'); return null;
 }
 // where a link goes, as PDF entries (strings become names in ctx.obj). An address is written as printable ASCII (the rest

@@ -170,16 +170,6 @@ const busySeen = await Ev(() => window.__busySeen);
 await openUrl(`${BASE}/locked.pdf`); await go();
 const tLocked = await toasts();
 check('opening a downloaded PDF shows the busy sign; one that needs a password says so', busySeen && tLocked.some(x => /密碼/.test(x)) && (await tabs()).length === nT4 + 1, {busySeen, tLocked, tabs:(await tabs()).length});
-// Esc while downloading, and the window opened again at once: 〔開啟〕 works although the stopped download has not wound down
-await app.evaluate(({ipcMain}) => { ipcMain.removeHandler('url:cancel'); ipcMain.handle('url:cancel', () => {}); });   // (the stop is slow here: it never comes)
-await openUrl(`${BASE}/slow.pdf`); await win.click('#urlGo'); await win.waitForTimeout(1200);
-await win.keyboard.press('Escape'); await win.waitForTimeout(300);
-await openUrl(`${BASE}/files/a.pdf`);
-const again = await dlg(), nAgain = (await tabs()).length;
-if (!again.go) await go(); else await win.waitForTimeout(1500);
-check('closed with Esc during a download and opened again at once: 〔開啟〕 works and opens the new address', again.open && !again.go && (await tabs()).length === nAgain + 1, {again, before:nAgain, after:(await tabs()).length});
-slow.forEach(r => r.destroy()); await win.waitForTimeout(800);
-if ((await dlg()).open) { await win.keyboard.press('Escape'); await win.waitForTimeout(400); }
 // Ctrl+Shift+O pressed twice quickly: one window; Esc closes it and nothing is left behind
 await win.keyboard.press('Control+Shift+O'); await win.keyboard.press('Control+Shift+O'); await win.waitForTimeout(800);
 const twice = await dlg(); await win.keyboard.press('Escape'); await win.waitForTimeout(500);
@@ -191,6 +181,17 @@ await win.reload(); await win.waitForFunction(() => !!(window.__pdfapp && window
 const tKeys = await toasts(), keysNow = await Ev(k => localStorage.getItem(k), 'pdfeditor.bindings.v1');
 check('a custom shortcut on Ctrl+Shift+O (taken by 從網址開啟): the person is told, and it is taken off', tKeys.some(x => /Ctrl \+ Shift \+ O/.test(x) && /第一頁/.test(x)) && !/KeyO/.test(keysNow || ''), {tKeys, keysNow});
 await app.evaluate(({clipboard}, t) => clipboard.writeText(t), clip0);
+// (last: url:cancel stays replaced by a no-op after it)
+// Esc while downloading, and the window opened again at once: 〔開啟〕 works although the stopped download has not wound down
+await app.evaluate(({ipcMain}) => { ipcMain.removeHandler('url:cancel'); ipcMain.handle('url:cancel', () => {}); });   // (the stop is slow here: it never comes)
+await openUrl(`${BASE}/slow.pdf`); await win.click('#urlGo'); await win.waitForTimeout(1200);
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+await openUrl(`${BASE}/files/a.pdf`);
+const again = await dlg(), nAgain = (await tabs()).length;
+if (!again.go) await go(); else await win.waitForTimeout(1500);
+check('closed with Esc during a download and opened again at once: 〔開啟〕 works and opens the new address', again.open && !again.go && (await tabs()).length === nAgain + 1, {again, before:nAgain, after:(await tabs()).length});
+slow.forEach(r => r.destroy()); await win.waitForTimeout(800);
+if ((await dlg()).open) { await win.keyboard.press('Escape'); await win.waitForTimeout(400); }
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 slow.forEach(r => r.destroy()); held.forEach(r => r.destroy()); server.close();

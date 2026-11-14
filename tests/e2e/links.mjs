@@ -186,6 +186,8 @@ q1.node.set(N('Annots'), c4.obj([
   c4.register(c4.obj({Type:'Annot', Subtype:'Link', Rect:[100, 400, 300, 430], Border:[0, 0, 0], Dest:[q2.ref, N('Fit')]})),
   c4.register(c4.obj({Type:'Annot', Subtype:'Link', Rect:[100, 300, 300, 330], Border:[0, 0, 0], A:{S:'URI', URI:PDFString.of('https://old.example.com')}, PA:{S:'URI', URI:PDFString.of('https://old.example.com')}})),
   c4.register(c4.obj({Type:'Annot', Subtype:'Link', Rect:[100, 200, 300, 230], Border:[0, 0, 0], A:{S:'URI', URI:PDFString.of('https://long.example.com/' + 'a'.repeat(600))}})),   // (fix pass) a very long address
+  c4.obj({Type:'Annot', Subtype:'Link', Rect:[350, 700, 550, 730], Border:[0, 0, 0], A:{S:'URI', URI:PDFString.of('https://under.example.com')}}),   // (v1.0.49) two direct dictionaries with the same box
+  c4.obj({Type:'Annot', Subtype:'Link', Rect:[350, 700, 550, 730], Border:[0, 0, 0], A:{S:'URI', URI:PDFString.of('https://over.example.com')}}),
 ]));
 const PDF4 = path.join(TMP, 'links4.pdf'); fs.writeFileSync(PDF4, await d4.save());
 await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), PDF4);
@@ -203,6 +205,11 @@ if (await dlg()) { await win.click('#lkDel'); await win.waitForTimeout(2200); }
 const afterDel = (await rawLinks()).map(l => l.url);
 check('a link written straight into /Annots (no object of its own): 〔儲存〕 changes it, 〔刪除連結〕 deletes it',
   !!dd1 && afterSave.includes('https://direct2.example.com') && !afterSave.includes('https://direct.example.com') && !afterDel.some(u => /direct/.test(u || '')), {dd1:!!dd1, afterSave, afterDel});
+// (v1.0.49) two links written straight into /Annots with the same box: the one clicked (the upper one) is the one changed
+await see(0, 450, 127); await win.mouse.click(...(await P(0, 450, 127))); await win.waitForTimeout(500);
+const dTwin = await dlg(); if (dTwin) { await setF('#lkUrl', 'https://changed.example.com'); await win.click('#lkGo'); await win.waitForTimeout(2200); }
+const twin = (await rawLinks()).map(l => l.url);
+check('two links written straight into /Annots with the same box: the clicked (upper) one is changed, the other kept', !!dTwin && /over\.example/.test(dTwin.url) && twin.includes('https://under.example.com') && twin.includes('https://changed.example.com') && !twin.includes('https://over.example.com'), {dTwin:dTwin && dTwin.url, twin});
 // a frame another program drew (/Border 1, no appearance): 維持原樣, not 細藍框
 await see(0, 200, 227); await win.mouse.click(...(await P(0, 200, 227))); await win.waitForTimeout(500);
 const dFr = await dlg(); await win.keyboard.press('Escape'); await win.waitForTimeout(400);
