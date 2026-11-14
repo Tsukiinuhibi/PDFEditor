@@ -50,6 +50,7 @@
       "preload.js",
       "word.js",
       "claude.js",
+      "pdfcrypt.js",
       "app/**/*",
       "!**/*.map",
       "!node_modules/pdfjs-dist/legacy/**",
