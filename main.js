@@ -14,7 +14,7 @@ const { pathToFileURL } = require('url');
 const isDev = !app.isPackaged;
 let win = null;
 let pendingOpen = [];          // PDF paths waiting for the renderer
-let rendererReady = false;
+let rendererReady = false, pageLoading = false, pageGone = false;   // (pageLoading / pageGone: for Claude's calls)
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'app',
@@ -86,8 +86,9 @@ function createWindow() {
   win.on('app-command', (_e, cmd) => send('app-command', cmd));
   win.on('closed', () => { win = null; rendererReady = false; });
   // a Claude call waiting for the page: answered at once if the page reloads or stops (it would never answer)
-  win.webContents.on('did-start-loading', () => dropClaudeCalls('PDF 工作台的畫面重新載入了，這個呼叫沒有完成'));
-  win.webContents.on('render-process-gone', () => dropClaudeCalls('PDF 工作台的畫面停止回應了，這個呼叫沒有完成'));
+  win.webContents.on('did-start-loading', () => { pageLoading = true; dropClaudeCalls('PDF 工作台的畫面重新載入了，這個呼叫沒有完成'); });
+  win.webContents.on('did-stop-loading', () => { pageLoading = false; });
+  win.webContents.on('render-process-gone', () => { pageGone = true; dropClaudeCalls('PDF 工作台的畫面停止回應了，這個呼叫沒有完成'); });
 }
 
 /* ---------------- IPC: files ---------------- */
@@ -95,7 +96,7 @@ const send = (ch, payload) => { if (win && !win.isDestroyed()) win.webContents.s
 const toBuf = data => Buffer.from(data.buffer ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : data);
 
 ipcMain.handle('renderer-ready', () => {
-  rendererReady = true;
+  rendererReady = true; pageLoading = false; pageGone = false;
   const list = pendingOpen; pendingOpen = [];
   return list;
 });
@@ -197,6 +198,8 @@ const bridge = CL.createBridge({
   onCall: () => { claudeLast = Date.now(); },
   handle: (tool, args) => new Promise(resolve => {
     if (!win || win.isDestroyed()) return resolve({ error: 'PDF 工作台的視窗沒有開著' });
+    if (pageGone) return resolve({ error: 'PDF 工作台的畫面停止回應了。請關閉並重新開啟 PDF 工作台，再試一次。' });
+    if (pageLoading || !rendererReady) return resolve({ error: 'PDF 工作台的畫面正在載入，請稍後再試一次。' });
     const id = ++claudeSeq, t = setTimeout(() => { claudeWait.delete(id); resolve({ error: 'PDF 工作台太久沒有完成（它可能正在等使用者處理某個視窗）' }); }, 170000);
     claudeWait.set(id, r => { clearTimeout(t); resolve(r); });
     win.webContents.send('claude:call', id, tool, args);

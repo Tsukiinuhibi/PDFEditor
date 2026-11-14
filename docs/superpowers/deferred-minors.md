@@ -9,6 +9,11 @@ For each batch: read the items, fix the ones that still hold with a test that fa
 (test-only, docs-only, obsolete, or a deliberate choice) as rulings in the batch's ledger. Take a release's
 section out of this file when its batch ships.
 
+## v1.0.47 (batch v1.0.48)
+
+- 轉存 Word: 「取消中…（正在停止 Word）」 shows during 準備中, before Word has started (wording only)
+- file:write leaves a partial .pdfeditor-tmp when writing the temporary file itself fails (a full disk); the rename/copy failure path already removes it
+
 ## v1.0.41 (batch v1.0.48)
 
 - a link that is a direct dictionary in /Annots (no NNR id) can be "saved" or "deleted" with nothing happening and no message

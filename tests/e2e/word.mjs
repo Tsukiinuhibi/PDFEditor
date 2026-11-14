@@ -369,6 +369,11 @@ const anns5 = [
   c5.register(c5.obj({Type:'Annot', Subtype:'Highlight', Rect:[70, 500, 330, 520], QuadPoints:[70, 520, 330, 520, 70, 500, 330, 500], F:2})),   // hidden: not counted
 ];
 p51.node.set(PDFName.of('Annots'), c5.obj(anns5));
+// (fix pass) an article thread across both pages (a bead on each) and a page action that goes to page 2: still a small copy
+const bead1 = c5.register(c5.obj({Type:'Bead', P:p51.ref, R:[72, 600, 520, 760]})), bead2 = c5.register(c5.obj({Type:'Bead', P:p52.ref, R:[72, 600, 520, 760]}));
+for (const [a, b] of [[bead1, bead2], [bead2, bead1]]) { c5.lookup(a).set(PDFName.of('N'), b); c5.lookup(a).set(PDFName.of('V'), b); }
+p51.node.set(PDFName.of('B'), c5.obj([bead1])); p52.node.set(PDFName.of('B'), c5.obj([bead2]));
+p51.node.set(PDFName.of('AA'), c5.obj({C:{S:'GoTo', D:[p52.ref, PDFName.of('Fit')]}}));
 d5.catalog.set(PDFName.of('AcroForm'), c5.obj({Fields:[field], NeedAppearances:true}));
 const PDF5 = path.join(TMP, 'word5.pdf'); fs.writeFileSync(PDF5, await d5.save());
 await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), PDF5);
@@ -383,6 +388,16 @@ await Ev(() => { const h = document.querySelector('#wdHow'); h.value = 'builtin'
 await win.click('#wdGo'); const okSk = await waitFile(OUT10, 60000); await waitSt(/已轉存/);
 const sk = await wdState(), zsk = okSk ? unzip(fs.readFileSync(OUT10)) : null;
 check('the finished message says how many annotations were left out', /2 個註解/.test(sk.st) && !!zsk && /Annotations without an appearance/.test(zsk['word/document.xml'].toString('utf8')), sk);
+await closeWord();
+// (fix pass) 取消 while the built-in converter writes the .docx (the writing is slowed down here): it is written, and it says so
+await app.evaluate(({ipcMain}) => { ipcMain.removeHandler('file:write'); ipcMain.handle('file:write', () => new Promise(res => setTimeout(() => res(true), 2000))); });
+await openWord(path.join(TMP, 'late-builtin.docx'));
+await Ev(() => { const h = document.querySelector('#wdHow'); h.value = 'builtin'; h.dispatchEvent(new Event('change', {bubbles:true}));
+  const s = document.querySelector('#wdScope'); s.value = 'range'; s.dispatchEvent(new Event('change', {bubbles:true})); const r = document.querySelector('#wdRange'); r.value = '1'; r.dispatchEvent(new Event('input', {bubbles:true})); });
+await win.click('#wdGo'); await waitSt(/存檔中/, 60000);
+const writing = await wdState(); if (await wdShown()) await win.click('#wdCancel');
+await waitSt(/轉好了|已轉存|已取消/); const lateB = await wdState();
+check('取消 while the built-in converter writes the .docx: it says the .docx was made anyway', /存檔中/.test(writing.st) && /按取消時已經轉好了/.test(lateB.st) && lateB.go === '開啟', {writing, lateB});
 await closeWord();
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');

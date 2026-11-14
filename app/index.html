@@ -2689,7 +2689,7 @@ async function mutate(label, fn, opts = {}){
     if (res === false) return false;
     const out = await doc.save();
     const was = {redo:S.redo, signed:S.signed, dirty:S.dirty};
-    S.undo.push({bytes:S.bytes, signed:S.signed, cur:S.current, label, by:CL_RUN ? 'claude' : ''});
+    S.undo.push({bytes:S.bytes, signed:S.signed, cur:S.current, label, by:opts.by === 'claude' ? 'claude' : ''});   // (Claude's own changes say so)
     S.redo = []; S.signed = false; S.dirty = true;
     try { await loadDoc(out, {keepView:true, scrollToCurrent:!!opts.scrollToCurrent}); }
     catch (e) {   // the result cannot be shown: the document stays as it was, with no undo step and not marked changed
@@ -6192,14 +6192,14 @@ function addPopupAnnot(doc, i, parentRef, box){
   doc.context.lookup(parentRef, PDFDict).set(PDFName.of('Popup'), pref);
   return pref;
 }
-async function createNote(i, icon, text, box, {author = AUTHOR, label = '已新增註解'} = {}){
+async function createNote(i, icon, text, box, {author = AUTHOR, label = '已新增註解', by = ''} = {}){
   return mutate(label, doc => {
     const g = visToPdf(i, icon), now = nowStr();
     const ap = formAP(doc, NOTE_ICON_OPS, 20, 20, g.rot);
     const ref = addAnnot(doc, i, {Type:'Annot', Subtype:'Text', Rect:g.rect, Contents:PDFHexString.fromText(text), T:PDFHexString.fromText(author),
       M:now, CreationDate:now, Name:'Comment', Subj:PDFHexString.fromText('便利貼'), C:[1, 0.92, 0.23], F:4, Open:false, AP:{N:ap}});
     addPopupAnnot(doc, i, ref, box);
-  });
+  }, {by});
 }
 function findAnnotRef(doc, i, id){
   const num = parseInt(id, 10), annots = doc.getPage(i).node.lookupMaybe(PDFName.of('Annots'), PDFArray);
@@ -10249,7 +10249,7 @@ async function replaceHits(list, repl){
   REPLACING = true;
   try { return await replaceNow(list, repl); } finally { REPLACING = false; }
 }
-async function replaceNow(list, repl, o = {...FIND.opts}, q = FIND.q, {prefix = ''} = {}){   // → how many were replaced, or false
+async function replaceNow(list, repl, o = {...FIND.opts}, q = FIND.q, {prefix = '', by = ''} = {}){   // → how many were replaced, or false
   const scans = list.filter(h => h.ocr).length, todo = list.filter(h => !h.ocr);
   if (!todo.length) { toast(prefix + (scans ? '掃描頁的文字不能取代' : '沒有可以取代的文字'), 'err'); return false; }
   if (!(await settleEdits())) return false;
@@ -10266,7 +10266,7 @@ async function replaceNow(list, repl, o = {...FIND.opts}, q = FIND.q, {prefix = 
   finally { busy(false); }
   const n = jobs.reduce((a, j) => a + j.n, 0);
   if (!n) { toast(prefix + '這些文字無法取代', 'err'); return false; }
-  const ok = await mutate(`${prefix}已取代 ${n} 處`, async doc => { for (const j of jobs) await applyPageText(doc, j.i, j.x, j.y, j.prep, j.box, j.edit, j.empty, j.strut); });
+  const ok = await mutate(`${prefix}已取代 ${n} 處`, async doc => { for (const j of jobs) await applyPageText(doc, j.i, j.x, j.y, j.prep, j.box, j.edit, j.empty, j.strut); }, {by});
   if (ok && scans) toast(`${prefix}掃描頁的 ${scans} 處沒有取代`);
   return ok ? n : false;
 }
@@ -10630,6 +10630,7 @@ function trimCopy(doc){
   const ctx = doc.context;
   if (ctx.trailerInfo.Encrypt || hasUnreadable(doc)) return;
   ['Outlines', 'AcroForm', 'StructTreeRoot', 'MarkInfo', 'Names', 'Dests', 'OpenAction', 'AA', 'Threads'].forEach(k => doc.catalog.delete(N_(k)));
+  doc.getPages().forEach(p => { p.node.delete(N_('B')); p.node.delete(N_('AA')); });   // (article beads, page actions)
   const live = reachableRefs(doc);
   ctx.enumerateIndirectObjects().forEach(([ref]) => { if (!live.has(ref.toString())) ctx.delete(ref); });
 }
@@ -11044,12 +11045,14 @@ async function openWordDialog(){
         const out = await builtinDocx(flat, {job, ocr:$b('#wdOcr').checked, step:(k, m, note = '') => { if (!job.cancel) setSt(`轉換中：第 ${k}／${m} 頁${note}`); }});
         if (job.cancel) throw new Error('cancel');
         if (DESK) {
+          setSt('存檔中…');
           try { await DESK.writeFile(where, new Uint8Array(await out.arrayBuffer())); }   // (makeZip gives a Blob)
           catch (e) { throw /EBUSY|EPERM|EACCES|EISDIR|EROFS/.test(String(e && e.message || e)) ? Object.assign(new Error(lockedDocx(name)), {locked:true}) : e; }
         } else if (!(await saveFile(fn, new Blob([out], {type:DOCX_MIME})))) throw new Error('cancel');
+        late = job.cancel;
       }
       const left = flat.skipped ? `。有 ${flat.skipped} 個註解沒有轉進去（它們沒有可以顯示的外觀，例如其他程式加的標示）` : '';
-      done = {path:where, name}; setSt((late ? '按取消時 Word 已經轉好了：' : '已轉存成 Word：') + name + left);
+      done = {path:where, name}; setSt((late ? (byWord ? '按取消時 Word 已經轉好了：' : '按取消時已經轉好了：') : '已轉存成 Word：') + name + left);
       toast((late ? 'Word 已經轉好了：' : '已轉存成 Word：') + name + left, left ? 'long' : undefined);
       if (!DESK) return null;
       $('#wdGo').textContent = '開啟'; $('#wdGo').disabled = false; $('#wdCancel').textContent = '關閉';
@@ -11171,10 +11174,11 @@ const CLAUDE_TOOLS = {
   },
   async pdf_replace(a){
     const repl = String(a.replacement ?? ''), {hits, o, q} = await clSearch(a);
+    if (clBusy()) throw new Error(CL_BUSY);   // (the person started something during the search: their work is not closed under them)
     if (!hits.length) return {text:`找不到「${q}」，沒有取代`};
     if (REPLACING) throw new Error('PDF 工作台正在取代別的文字，請稍後再試');
     REPLACING = true; let n;
-    try { n = await replaceNow(hits, repl, o, q, {prefix:'Claude：'}); } finally { REPLACING = false; }
+    try { n = await replaceNow(hits, repl, o, q, {prefix:'Claude：', by:'claude'}); } finally { REPLACING = false; }
     if (!n) throw new Error(hits.every(h => h.ocr) ? '這些是掃描頁上的文字，不能取代' : '這些文字沒有取代：無法取代，或使用者取消了（例如數位簽署過的文件會先問）');
     const done = hits.filter(h => !h.ocr), skipped = hits.length - done.length;
     scrollToPage(done[0].i);
@@ -11183,9 +11187,10 @@ const CLAUDE_TOOLS = {
   },
   async pdf_highlight(a){
     const color = /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : '#ffd43b', {hits, q} = await clSearch(a);
+    if (clBusy()) throw new Error(CL_BUSY);
     if (!hits.length) return {text:`找不到「${q}」，沒有標示`};
     const marks = hits.flatMap(h => h.boxes.filter(b => b && b.w > 0.5 && b.h > 0.5).map(b => [h.i, b]));
-    clDone(await mutate(`Claude：已標示「${q}」${hits.length} 處`, doc => { marks.forEach(([i, b]) => highlightAnnot(doc, i, b, color)); }));
+    clDone(await clMutate(`Claude：已標示「${q}」${hits.length} 處`, doc => { marks.forEach(([i, b]) => highlightAnnot(doc, i, b, color)); }));
     scrollToPage(hits[0].i);
     return {text:`已用螢光筆標示「${q}」共 ${hits.length} 處（第 ${[...new Set(hits.map(h => h.i + 1))].join('、')} 頁）。`};
   },
@@ -11197,12 +11202,13 @@ const CLAUDE_TOOLS = {
     const color = /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color.toLowerCase() : '#000000';
     const run = {text:'', size, color, bold:!!a.bold, italic:false, underline:false, bg:'', font:''}, box = {boxBg:'', border:false};
     // lines too long for the room to the page's right edge (or for the width asked) are wrapped
-    const x0 = clCoord(a.x, 'x', Math.max(0, pg.w - size * 3)), room = a.width == null ? pg.w - x0 - 12 : Number(a.width);
-    if (!(room >= 20)) throw new Error('width 要是 20 以上的數字（單位 pt）');
+    const x0 = clCoord(a.x, 'x', Math.max(0, pg.w - size * 3)), want = a.width == null ? Infinity : Number(a.width);
+    if (!(want >= 20)) throw new Error('width 要是 20 以上的數字（單位 pt）');
+    const room = Math.min(want, Math.max(pg.w - x0 - 12, Math.min(pg.w - 24, size * 10)));   // (at the very edge: ten letters wide, moved left below)
     const m = document.createElement('canvas').getContext('2d'); m.font = runFont(run, 1);
     const lines = wrapText(m, text, Math.max(size * 2, room)).map(t => [{...run, text:t}]);
     const r = await renderTextBox(lines, box), x = Math.min(x0, Math.max(0, pg.w - r.w)), y = clCoord(a.y, 'y', Math.max(0, pg.h - r.h));
-    clDone(await mutate('Claude：已加上文字方塊', async doc => {
+    clDone(await clMutate('Claude：已加上文字方塊', async doc => {
       addAnnot(doc, i, {Type:'Annot', Subtype:'FreeText', T:PDFHexString.fromText(AUTHOR), CreationDate:nowStr(), Subj:PDFHexString.fromText('文字方塊'), F:4,
         ...(await textBoxFields(doc, i, lines, box, r, {x, y, w:r.w, h:r.h}))});
     }));
@@ -11214,7 +11220,7 @@ const CLAUDE_TOOLS = {
     const i = clPage(a.page), pg = S.pages[i], text = String(a.text ?? '');
     if (!text.trim()) throw new Error('便利貼的文字是空的');
     const x = clCoord(a.x, 'x', pg.w - 20), y = clCoord(a.y, 'y', pg.h - 20);
-    clDone(await createNote(i, {x, y, w:20, h:20}, text, {x:Math.min(x + 24, Math.max(0, pg.w - 220)), y:Math.min(y, Math.max(0, pg.h - 140)), w:200, h:120}, {label:'Claude：已新增便利貼'}));
+    clDone(await createNote(i, {x, y, w:20, h:20}, text, {x:Math.min(x + 24, Math.max(0, pg.w - 220)), y:Math.min(y, Math.max(0, pg.h - 140)), w:200, h:120}, {label:'Claude：已新增便利貼', by:'claude'}));
     scrollToPage(i);
     return {text:`已在第 ${i + 1} 頁 (${x.toFixed(0)}, ${y.toFixed(0)}) 加上便利貼。`};
   },
@@ -11224,7 +11230,7 @@ Object.assign(CLAUDE_TOOLS, {
     clNeed();
     const list = clPages(a.pages), deg = Number(a.degrees);
     if (![90, 180, 270].includes(deg)) throw new Error('角度要是 90、180 或 270（順時針）');
-    clDone(await mutate(`Claude：第 ${rangeText(list)} 頁已旋轉 ${deg}°`, doc => { list.forEach(i => { const p = doc.getPage(i); p.setRotation(degrees((p.getRotation().angle + deg) % 360)); }); }));
+    clDone(await clMutate(`Claude：第 ${rangeText(list)} 頁已旋轉 ${deg}°`, doc => { list.forEach(i => { const p = doc.getPage(i); p.setRotation(degrees((p.getRotation().angle + deg) % 360)); }); }));
     scrollToPage(list[0]);
     return {text:`已把第 ${rangeText(list)} 頁順時針旋轉 ${deg}°。`};
   },
@@ -11232,7 +11238,7 @@ Object.assign(CLAUDE_TOOLS, {
     clNeed();
     const list = clPages(a.pages);
     if (list.length >= S.pages.length) throw new Error('不能刪除全部頁面，文件至少要留一頁');
-    clDone(await mutate(`Claude：已刪除第 ${rangeText(list)} 頁`, doc => {
+    clDone(await clMutate(`Claude：已刪除第 ${rangeText(list)} 頁`, doc => {
       [...list].sort((x, y) => y - x).forEach(i => doc.removePage(i));
       S.current = clamp(S.current - list.filter(i => i < S.current).length, 0, doc.getPageCount() - 1);
     }));
@@ -11242,7 +11248,7 @@ Object.assign(CLAUDE_TOOLS, {
     clNeed();
     const n = S.pages.length, after = Number(a.after);
     if (!Number.isInteger(after) || after < 0 || after > n) throw new Error(`after 要在 0～${n} 之間（0 表示加在最前面）`);
-    clDone(await mutate(`Claude：已加上空白頁`, doc => {   // as large and as turned as the page it follows (the first page when it goes first)
+    clDone(await clMutate(`Claude：已加上空白頁`, doc => {   // as large and as turned as the page it follows (the first page when it goes first)
       const ref = doc.getPage(Math.max(0, after - 1)), {width, height} = ref.getSize();
       doc.insertPage(after, [width, height]).setRotation(degrees(ref.getRotation().angle));
     }));
@@ -11293,6 +11299,8 @@ async function clSearch({query, match_case, whole_word, pages}){
 const clContext = h => { const a = Math.max(0, h.s - 20), b = Math.min(h.ctx.length, h.e + 20); return (a ? '…' : '') + h.ctx.slice(a, h.s) + '【' + h.ctx.slice(h.s, h.e) + '】' + h.ctx.slice(h.e, b) + (b < h.ctx.length ? '…' : ''); };
 // busy for a change: a window open (the 另存新檔 window too), the program working on a change, a text box, note, pen
 // stroke or shape being drawn
+const clMutate = (label, fn) => mutate(label, fn, {by:'claude'});   // a change Claude makes: only these can pdf_undo take back
+const CL_BUSY = 'PDF 工作台正在忙（有視窗開著、正在存檔，或使用者正在編輯）。請使用者先完成或關掉它，再試一次。';
 const clBusy = () => $('#mask').classList.contains('show') || $('#busy').classList.contains('show') || CL_SAVING || !!TBE || !!NP
   || !!POLY || !!FPOLY || PEN.busy || PEN.strokes.length > 0;
 let CL_QUEUE = Promise.resolve(), CL_SAVING = false, CL_RUN = false;   // (CL_RUN: a Claude call is being carried out)
@@ -11301,8 +11309,7 @@ let CL_QUEUE = Promise.resolve(), CL_SAVING = false, CL_RUN = false;   // (CL_RU
 function runClaudeTool(tool, args){
   const run = async () => {
     const f = CLAUDE_TOOLS[tool]; if (!f) return {error:'PDF 工作台還沒有這個工具：' + tool};
-    if (CL_EDIT.has(tool) && clBusy())
-      return {error:'PDF 工作台正在忙（有視窗開著、正在存檔，或使用者正在編輯）。請使用者先完成或關掉它，再試一次。'};
+    if (CL_EDIT.has(tool) && clBusy()) return {error:CL_BUSY};
     CL_RUN = true;
     try { return await f(args && typeof args === 'object' ? args : {}); } catch (e) { return {error:String((e && e.message) || e)}; }
     finally { CL_RUN = false; }
@@ -11920,6 +11927,7 @@ window.__pdfapp = {
   flatten:pages => flattenForExport(pages),   // (tests) the copy that 轉存 Word converts
   findWorker:() => !!FIND.worker,   // (tests) whether 尋找's OCR worker is still kept
   wordJob:() => !!WORDJOB,   // (tests) whether a 轉存 Word conversion is under way
+  clRun:() => CL_RUN,   // (tests) whether a Claude call is being carried out
   claudeSaveWait:ms => { CL_SAVE_WAIT = ms; },   // (tests) pdf_save_as answers sooner
   wordFonts,
   links:async i => {   // (tests) page i's links: on screen, where they go, how they look

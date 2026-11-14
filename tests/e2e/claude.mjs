@@ -278,6 +278,14 @@ const ft5 = (await Ev(async () => (await window.__pdfapp.getAnns(0)).filter(a =>
 check('pdf_add_text with a long line: wrapped to stay on the page (several lines, within the right edge)', !w5.isError && !!ft5 && ft5.x + ft5.w <= pw5 + 0.5 && ft5.h > 14 * 2.5, {w:w5.text, ft5, pw5});
 const neg = await tool(s5, 'pdf_add_text', {page:1, x:-5, y:40, text:'x'}), empty = await tool(s5, 'pdf_add_text', {page:1, x:5, y:40, text:'   '});
 check('pdf_add_text with a negative x, or nothing to write: an error, nothing added', neg.isError && /0 以上/.test(neg.text) && empty.isError, {neg:neg.text, empty:empty.text});
+// (fix pass) a width wider than the page still wraps at the page's right edge; a small box right at the edge moves left, no error
+const lastBox = async () => (await Ev(async () => (await window.__pdfapp.getAnns(0)).filter(a => a.subtype === 'FreeText').map(a => ({x:a.x, y:a.y, w:a.w, h:a.h})))).pop();
+const wBig = await tool(s5, 'pdf_add_text', {page:1, x:72, y:600, size:12, width:2000, text:'A long sentence given a width far wider than the page, which must still wrap at the right edge of the page and stay on it.'});
+const ftBig = await lastBox();
+const wEdge = await tool(s5, 'pdf_add_text', {page:1, x:pw5 - 15, y:680, size:8, text:'at the edge'}), ftEdge = await lastBox();
+check('pdf_add_text with a width wider than the page: still wrapped within the page; a small box at the very edge: moved left to fit, no error',
+  !wBig.isError && !!ftBig && ftBig.x + ftBig.w <= pw5 + 0.5 && ftBig.h > 12 * 1.5 && !wEdge.isError && !!ftEdge && ftEdge.x + ftEdge.w <= pw5 + 0.5 && ftEdge.y > 600,
+  {wBig:wBig.text, ftBig, wEdge:wEdge.text, ftEdge});
 // pdf_go_to_page while the person is typing in a text box: refused as busy
 await Ev(() => window.__pdfapp.setTool('textbox')); await win.waitForTimeout(300);
 { const bx = await Ev(() => { const r = window.__pdfapp.S.els[window.__pdfapp.S.current].getBoundingClientRect(); return [r.left + 200, r.top + 520]; });
@@ -285,6 +293,32 @@ await Ev(() => window.__pdfapp.setTool('textbox')); await win.waitForTimeout(300
 const g5 = await tool(s5, 'pdf_go_to_page', {page:2}), tbe5 = !!(await Ev(() => window.__pdfapp.TBE()));
 await win.keyboard.press('Escape'); await win.waitForTimeout(500); await Ev(() => window.__pdfapp.setTool('select'));
 check('pdf_go_to_page while a text box is being typed in: refused as busy', tbe5 && g5.isError && /正在忙/.test(g5.text), {g:g5.text, tbe5});
+// (fix pass) a change the person makes while a Claude call is under way stays the person's
+const longPdf = async name => { const d = await PDFDocument.create(), f = await d.embedFont(StandardFonts.Helvetica);
+  for (let k = 0; k < 300; k++) { const pg = d.addPage([595, 842]); for (let r = 0; r < 45; r++) pg.drawText(`Page ${k + 1} line ${r + 1}: words to look through, needle${k % 7}.`, {x:40, y:800 - r * 17, size:10, font:f}); }
+  d.getPage(299).drawText('The one place to change: targetword.', {x:40, y:20, size:10, font:f});   // (a search through every page finds it once)
+  const p = path.join(TMP, name); fs.writeFileSync(p, await d.save()); return p; };
+const BIG1 = await longPdf('long find.pdf'), BIG2 = await longPdf('long replace.pdf');
+await tool(s5, 'pdf_open', {path:BIG1});
+const tFind = Date.now(), slowFind = tool(s5, 'pdf_find', {query:'needle3'});
+await win.waitForFunction(() => window.__pdfapp.clRun(), null, {timeout:15000, polling:10});
+await Ev(() => window.__pdfapp.mutate('已加入矩形', doc => { doc.getPage(0).drawRectangle({x:50, y:50, width:80, height:40}); }));
+const during7 = await Ev(() => window.__pdfapp.clRun()), msMine = Date.now() - tFind;
+await slowFind; const msFind = Date.now() - tFind;
+const uMid = await undos(), u7 = await tool(s5, 'pdf_undo');
+check('a change the person makes while Claude is searching stays the person\'s: pdf_undo refuses to undo it', !u7.isError && /使用者/.test(u7.text) && (await undos()) === uMid,
+  {u:u7.text, before:uMid, after:await undos(), during7, msMine, msFind});
+// … and a text box the person starts typing in while Claude searches to replace: Claude is told it is busy, the box stays open
+await tool(s5, 'pdf_open', {path:BIG2});
+await Ev(() => window.__pdfapp.setTool('textbox')); await win.waitForTimeout(300);
+const slowRep = tool(s5, 'pdf_replace', {query:'targetword', replacement:'changed'});
+await win.waitForFunction(() => window.__pdfapp.clRun(), null, {timeout:15000, polling:10});
+{ const bx = await Ev(() => { const r = window.__pdfapp.S.els[window.__pdfapp.S.current].getBoundingClientRect(); return [r.left + 200, r.top + 300]; });
+  await win.mouse.click(...bx); await win.waitForTimeout(300); await win.keyboard.type('mine'); }
+const typing7 = !!(await Ev(() => window.__pdfapp.TBE())), rep7 = await slowRep, tbe7 = !!(await Ev(() => window.__pdfapp.TBE()));
+await win.keyboard.press('Escape'); await win.waitForTimeout(500); await Ev(() => window.__pdfapp.setTool('select'));
+check('the person starts typing in a text box while Claude searches to replace: Claude is told it is busy; the box is not closed under them',
+  typing7 && rep7.isError && /正在忙/.test(rep7.text) && tbe7, {r:rep7.text, typing7, tbe7});
 // pdf_open: a file that needs a password, and a broken file named like an open one
 const LOCKED = path.join(TMP, 'locked.pdf'); fs.copyFileSync(path.join(ROOT, 'tests', 'e2e', 'fixtures', 'encrypted', 'r6-userpw.pdf'), LOCKED);
 const pw = await tool(s5, 'pdf_open', {path:LOCKED});
@@ -302,6 +336,22 @@ await win.waitForTimeout(1500);
 await win.reload().catch(() => {});
 const rp = await Promise.race([pend, new Promise(res => setTimeout(() => res({text:'(no answer in 20 s)', isError:true, late:true}), 20000))]);
 check('a call still waiting when the window reloads: answered at once with an error', rp.isError && !rp.late && Date.now() - tReload < 15000 && /重新載入/.test(rp.text), {r:rp.text, ms:Date.now() - tReload});
+// (fix pass) a call that comes while the page is loading again: answered at once; when it is up, calls work again
+const pageUp = () => win.waitForFunction(() => !!(window.__pdfapp && window.__pdfapp.S), null, {timeout:30000}).catch(() => {});
+await pageUp(); await win.waitForTimeout(2000);
+await app.evaluate(({BrowserWindow}) => { const wc = BrowserWindow.getAllWindows()[0].webContents; global.__loading = false; wc.once('did-navigate', () => { global.__loading = true; }); wc.reload(); });   // (the new page is in, not yet listening)
+{ const t0 = Date.now(); while (!(await app.evaluate(() => global.__loading)) && Date.now() - t0 < 10000) await new Promise(res => setTimeout(res, 20)); }
+const tLoad = Date.now(), early = await Promise.race([tool(s5, 'pdf_status'), new Promise(res => setTimeout(() => res({text:'(no answer in 15 s)', isError:true, late:true}), 15000))]);
+const msEarly = Date.now() - tLoad;
+await pageUp(); await win.waitForTimeout(2000);
+const again = await tool(s5, 'pdf_status');
+check('a call that comes while the page is loading again: answered at once; once it is up, calls work again', early.isError && !early.late && /載入/.test(early.text) && !again.isError,
+  {early:early.text, ms:msEarly, again:again.text.slice(0, 60)});
+// (fix pass, last: the page is gone after it) the page crashes: a call is answered at once, not after 170 s
+await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].webContents.forcefullyCrashRenderer());
+await new Promise(res => setTimeout(res, 1500));
+const tCrash = Date.now(), crashed = await Promise.race([tool(s5, 'pdf_status'), new Promise(res => setTimeout(() => res({text:'(no answer in 15 s)', isError:true, late:true}), 15000))]);
+check('after the page crashes, a call is answered at once with an error', crashed.isError && !crashed.late && /停止回應/.test(crashed.text), {r:crashed.text, ms:Date.now() - tCrash});
 s5.close();
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
