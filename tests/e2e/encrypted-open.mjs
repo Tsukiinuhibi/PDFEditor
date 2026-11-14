@@ -3,7 +3,7 @@
 // as it is; a change to it says plainly why it cannot be made and leaves no undo step behind. A file that needs a
 // password says so. The attachments tab opens a PDF attachment in a new tab; a PDF portfolio says where its files are.
 import { launch, TMP, ROOT } from './_env.mjs';
-import { PDFDocument, PDFName, StandardFonts } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFString, StandardFonts } from 'pdf-lib';
 import fs from 'fs';
 import path from 'path';
 
@@ -94,10 +94,12 @@ check('saved as a new file: no encryption, the rectangle in it; the original fil
 
 // ---- RC4 40-bit and AES-256 ------------------------------------------------------------------------------------------
 for (const f of ['r2-rc4-40.pdf', 'r6-aes256.pdf']) {
-  await open(copy(f)); await toasts();
+  const p = copy(f);
+  await open(p); await toasts();
+  const m = await sameAsFile(p);
   await drawRect();
   t = await toasts(); s = await S();
-  check(`${f}: opened decrypted, a rectangle made`, s.name === f && !s.encrypted && s.undo === 1 && t.some(x => x.includes('已加入矩形')), {t, s});
+  check(`${f}: opened decrypted, its pages look exactly as the file does, a rectangle made`, s.name === f && !s.encrypted && m.diff < 0.01 && m.ink > 500 && s.undo === 1 && t.some(x => x.includes('已加入矩形')), {t, s, m});
 }
 
 // ---- signed: left encrypted; a change says why it cannot be made and leaves nothing behind ------------------------------
@@ -140,6 +142,20 @@ n0 = await tabs();
 await win.click('#p-atts .att:has(.nm:text-is("A.pdf")) [data-x=open]'); await win.waitForTimeout(2200);
 s = await S();
 check('〔開啟〕 on A.pdf: a new tab with its 2 pages', (await tabs()) === n0 + 1 && s.name === 'A.pdf' && s.pages === 2, s);
+
+// ---- a plain PDF that happens to hold the bytes "/Encrypt": a failed change says what went wrong, not 「有加密保護」 --------
+{
+  const d = await PDFDocument.create(); d.addPage([595, 842]); d.catalog.set(PDFName.of('Note'), PDFString.of('/Encrypt is only a word here'));
+  const p = path.join(TMP, 'plain-words.pdf'), out = await d.save({useObjectStreams:false}); fs.writeFileSync(p, out);
+  check('(the test file holds the bytes "/Encrypt" and is not encrypted)', Buffer.from(out).includes('/Encrypt is only') && !(await PDFDocument.load(out)).isEncrypted);
+  await open(p); await toasts();
+  expectErrors = true;
+  await Ev(() => window.__pdfapp.mutate('x', async () => { throw new Error('boom'); }));
+  await win.waitForTimeout(600);
+  expectErrors = false;
+  t = await toasts(); s = await S();
+  check('a plain PDF holding the bytes "/Encrypt": a change that fails says 「操作失敗：boom」, not 「有加密保護」', s.name === 'plain-words.pdf' && t.some(x => x.includes('操作失敗：boom')) && !t.some(x => x.includes('有加密保護')), t);
+}
 
 // ---- a decryption that does not read like the original (here: another document altogether) is not used -------------------
 const SAMPLE = fs.readFileSync(path.join(ROOT, 'tests', 'e2e', 'fixtures', 'sample.pdf'));

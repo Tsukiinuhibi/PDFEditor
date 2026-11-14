@@ -102,14 +102,22 @@ function fileKey(enc, id0){
   return rc4(key, PAD).equals(U.subarray(0, 32)) ? key : null;
 }
 
+// signed: some signature field has a value (a signature). Usage rights (/Perms /UR3, Reader extensions) are not a
+// signature of the document's content and do not count; every object is looked at, those in object streams too
+function hasSignedField(ctx){
+  for (const [, o] of ctx.enumerateIndirectObjects()) if (o instanceof PDFDict && o.get(N('FT')) === N('Sig') && o.get(N('V'))) return true;
+  return false;
+}
+
 async function decryptPdf(input){
-  const bytes = Buffer.from(input.buffer ? new Uint8Array(input.buffer, input.byteOffset, input.byteLength) : input);
+  // (views on the bytes that came in, not copies: a big file is held only once)
+  const u8 = input instanceof Uint8Array ? input : new Uint8Array(input), bytes = Buffer.from(u8.buffer, u8.byteOffset, u8.byteLength);
   if (bytes.indexOf('/Encrypt') < 0) return {state:'plain'};
   try {
     // read every object as it is in the file, in file order; object streams are kept for later (they are encrypted
     // as a whole, so their objects can only be read once the stream is decrypted). Every 1000 objects the reading
     // gives way to the rest of the program (this runs in the main process).
-    const u8 = new Uint8Array(bytes), parser = PDFParser.forBytesWithOptions(u8, 1000, false, false), events = [], loose = [];
+    const parser = PDFParser.forBytesWithOptions(u8, 1000, false, false), events = [], loose = [];
     parser.maybeRecoverRoot = () => {};
     // a stream whose /Length is not a number in its dictionary (e.g. "/Length 12 0 R"): pdf-lib finds the end by looking
     // for "endstream" and takes a CR or CR LF before it for the line end, which may be the last byte of the encrypted
@@ -192,13 +200,11 @@ async function decryptPdf(input){
       return m === 'aes' ? aesDecrypt(k, data) : rc4(k, data);
     };
 
-    let signed = false;
     const walk = (o, ref) => {
       if (o instanceof PDFString || o instanceof PDFHexString) return strM ? PDFHexString.of(run(strM, ref, bytesOf(o)).toString('hex').toUpperCase()) : o;
       if (o instanceof PDFArray) { for (let i = 0; i < o.size(); i++) { const x = o.get(i), y = walk(x, ref); if (y !== x) o.set(i, y); } return o; }
       if (o instanceof PDFDict) {
         const t = o.get(N('Type')), isSig = o.has(N('ByteRange')) || t === N('Sig') || t === N('DocTimeStamp');
-        if (isSig) signed = true;
         for (const [k, x] of o.entries()) { if (isSig && k === N('Contents')) continue; const y = walk(x, ref); if (y !== x) o.set(k, y); }
         return o;
       }
@@ -249,7 +255,7 @@ async function decryptPdf(input){
     // (no object streams: pdf-lib then gives way every 1000 objects while writing; with them it counts in steps of a
     // whole stream and may never land on a multiple of 1000. The next change saves with object streams again.)
     const out = await doc.save({updateFieldAppearances:false, addDefaultPage:false, useObjectStreams:false, objectsPerTick:1000});
-    return {state:'decrypted', bytes:out, signed};
+    return {state:'decrypted', bytes:out, signed:hasSignedField(ctx)};
   } catch (e) {
     return {state:'unsupported', reason:String((e && e.message) || e)};
   }

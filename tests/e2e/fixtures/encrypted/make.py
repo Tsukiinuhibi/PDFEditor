@@ -14,7 +14,7 @@ def page_text(pdf, text):
     return pdf.make_stream(('BT /F1 36 Tf 72 700 Td (%s) Tj ET' % text).encode('ascii'))
 
 
-def source(pages=2, signed=False, notes=0):
+def source(pages=2, signed=False, notes=0, ur3=False):
     pdf = Pdf.new()
     font = pdf.make_indirect(Dictionary(Type=Name.Font, Subtype=Name.Type1, BaseFont=Name.Helvetica))
     for k in range(1, pages + 1):
@@ -37,6 +37,10 @@ def source(pages=2, signed=False, notes=0):
                                           Rect=Array([0, 0, 0, 0]), P=p1.obj, F=132))
         annots.append(sf)
         fields.append(sf)
+    if ur3:   # usage rights (Reader extensions): a signature in /Perms, not a signature field
+        pdf.Root.Perms = Dictionary(UR3=pdf.make_indirect(Dictionary(Type=Name.Sig, Filter=Name('/Adobe.PPKLite'), SubFilter=Name('/adbe.pkcs7.detached'),
+            ByteRange=Array([0, 10, 20, 30]), Contents=String(bytes(range(48, 112))),
+            Reference=Array([Dictionary(Type=Name.SigRef, TransformMethod=Name.UR3, TransformParams=Dictionary(Type=Name.TransformParams, V=Name('/2.2')))]))))
     p1.obj.Annots = Array(annots)
     pdf.Root.AcroForm = Dictionary(Fields=Array(fields))
     pdf.docinfo['/Title'] = '測試文件'
@@ -81,6 +85,8 @@ save('r4-aes128-nometa', Encryption(owner='owner-pw', user='', R=4, aes=True, me
 save('r6-aes256', Encryption(owner='owner-pw', user='', R=6), objstm=True)
 save('r6-userpw', Encryption(owner='owner-pw', user='secret', R=6))
 save('signed-aes128', Encryption(owner='owner-pw', user='', R=4, aes=True), signed=True)
+save('signed-aes128-objstm', Encryption(owner='owner-pw', user='', R=4, aes=True), objstm=True, signed=True)   # (the signature in an object stream)
+save('ur3-aes128', Encryption(owner='owner-pw', user='', R=4, aes=True), ur3=True)
 save('big-aes128', Encryption(owner='owner-pw', user='', R=4, aes=True), objstm=True, pages=100)
 # linearized ("Fast Web View") with object streams, as Acrobat saves by default: the trailer is in the first xref stream
 save('lin-aes128', Encryption(owner='owner-pw', user='', R=4, aes=True), objstm=True, linearize=True)

@@ -2680,6 +2680,7 @@ async function mutate(label, fn, opts = {}){
     try { await loadDoc(out, {keepView:true, scrollToCurrent:!!opts.scrollToCurrent}); }
     catch (e) {   // the result cannot be shown: the document stays as it was, with no undo step and not marked changed
       S.undo.pop(); S.redo = was.redo; S.signed = was.signed; S.dirty = was.dirty; S.current = cur0; updateUI();
+      scheduleRender(0);   // (loadDoc stopped the pages being drawn; draw them again)
       throw e;
     }
     if (S.undo.length > 30) S.undo.shift();
@@ -2688,8 +2689,11 @@ async function mutate(label, fn, opts = {}){
     return true;
   } catch (e) {
     console.error(e);
-    // still encrypted (a signed 「限制編輯」 file, or one that could not be decrypted): pdf-lib cannot change it
-    if (e && e.name === 'PasswordException' || hasText(S.bytes, '/Encrypt')) toast('這份 PDF 有加密保護，PDF 工作台無法修改它', 'err');
+    // still encrypted (a signed 「限制編輯」 file, or one that could not be decrypted): pdf-lib cannot change it. Whether it
+    // is, pdf.js knows (EncryptFilterName); the bytes "/Encrypt" may be anywhere in a plain file
+    const locked = e && e.name === 'PasswordException'
+      || await S.pdf.getMetadata().then(m => !!(m && m.info && m.info.EncryptFilterName), () => false);
+    if (locked) toast('這份 PDF 有加密保護，PDF 工作台無法修改它', 'err');
     else toast('操作失敗：' + (e.message || e), 'err');
     S.current = cur0;
     return false;
@@ -11792,6 +11796,7 @@ if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyThem
 paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {
   setNoDecrypt:v => { NO_DECRYPT = !!v; },
+  mutate:(label, fn) => mutate(label, fn),   // (tests) a change made by the test itself
   people:() => ({names:PEOPLE ? [...PEOPLE.names] : [], def:PEOPLE ? PEOPLE.def : '', author:AUTHOR}),
   settingsSnapshot, parseSettingsFile, presets:k => PRESETS[k],
   apText:async (i, id) => {   // (tests) the drawing an object shows: its upright one when turned, else its normal appearance

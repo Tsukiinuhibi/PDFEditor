@@ -165,7 +165,7 @@ ipcMain.handle('file:save-as', async (_e, suggested, data, opts) => {
 });
 // PDFs encrypted with only a permissions password (no password to open them): the window gets them decrypted, so they
 // can be edited and their pages copied (pdfcrypt.js; loaded when first needed)
-ipcMain.handle('pdf:decrypt', async (_e, bytes) => require('./pdfcrypt').decryptPdf(toBuf(bytes)));
+ipcMain.handle('pdf:decrypt', async (_e, bytes) => require('./pdfcrypt').decryptPdf(bytes));
 // 轉存 Word with Microsoft Word: see word.js (it runs Word through PowerShell; kept apart so it can be tested without Word)
 const W = require('./word');
 const { execFile } = require('child_process');

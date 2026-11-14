@@ -64,6 +64,17 @@ for (const f of ['r2-rc4-40', 'r3-rc4-128', 'r4-rc4-128', 'r4-aes128', 'r4-aes12
     r.state === 'decrypted' && r.signed === true && !!o && same(o) && JSON.stringify(o.sig) === JSON.stringify(want), o ? {sig:o.sig && o.sig.slice(0, 8), signed:r.signed} : r);
 }
 {
+  const r = await decryptPdf(read('signed-aes128-objstm.pdf'));
+  check('a signed file whose signature field and signature sit in an object stream: still said to be signed', r.state === 'decrypted' && r.signed === true, {state:r.state, signed:r.signed});
+}
+{
+  const r = await decryptPdf(read('ur3-aes128.pdf'));
+  let ur = null;
+  if (r.state === 'decrypted') { const d = await PDFDocument.load(r.bytes, {updateMetadata:false}); ur = [...d.catalog.lookup(N('Perms'), PDFDict).lookup(N('UR3'), PDFDict).lookup(N('Contents')).asBytes()]; }
+  check('usage rights only (/Perms /UR3: a Reader-extended form, no signature field): not said to be signed; its /Contents left as it was',
+    r.state === 'decrypted' && r.signed === false && JSON.stringify(ur) === JSON.stringify([...Array(64).keys()].map(k => 48 + k)), {state:r.state, signed:r.signed, ur:ur && ur.slice(0, 4)});
+}
+{
   const t0 = Date.now(), r = await decryptPdf(read('big-aes128.pdf')), ms = Date.now() - t0;
   let o = null; if (r.state === 'decrypted') o = await contents(r.bytes);
   check('100 pages (AES-128, object streams): decrypted in under 5 s', r.state === 'decrypted' && !!o && same(o, 100) && ms < 5000, {ms, pages:o && o.pages});
