@@ -143,9 +143,10 @@ ipcMain.handle('file:read', async (_e, p, opts) => {
 ipcMain.handle('file:write', async (_e, p, data) => {
   // write to a temp file first, then replace, so a crash never leaves a half-written PDF
   const tmp = p + '.pdfeditor-tmp';
-  await fs.writeFile(tmp, toBuf(data));
-  try { await fs.rename(tmp, p); }
-  catch (err) { try { await fs.copyFile(tmp, p); } finally { await fs.unlink(tmp).catch(() => {}); } }   // (failed: the temp file goes too)
+  try {
+    await fs.writeFile(tmp, toBuf(data));
+    try { await fs.rename(tmp, p); } catch (err) { await fs.copyFile(tmp, p); }
+  } finally { await fs.unlink(tmp).catch(() => {}); }   // (renamed: nothing there; failed anywhere, a full disk too: the temp file goes)
   return true;
 });
 ipcMain.handle('file:save-as', async (_e, suggested, data, opts) => {
@@ -302,44 +303,59 @@ ipcMain.handle('app:open-external', (_e, url) => { if (/^(https?:\/\/|mailto:)/i
 // a PDF downloaded into memory through Chromium's network (redirects, the system's proxy and certificates); the page sees
 // the progress and can stop it. Only http / https, at most 500 MB, stopped after 60 s without data; it must start %PDF.
 const URL_MAX = 500 * 1024 * 1024, downloads = new Map();
-// the file name: the server's (filename*=UTF-8'' first, then filename), else the address's last part; always .pdf
+// the file name: the server's (filename*=UTF-8'' first, then filename), else the address's last part; always .pdf. A name
+// that cleans up to nothing (only dots or spaces) counts as no name.
+// filename="…": Chromium hands a header over as its UTF-8 bytes, one character each, and bytes that were not UTF-8 (a Latin-1
+// or Big5 name) have become U+FFFD on the way, the bytes themselves lost: such a name is no name (the address's own is used)
+function headerName(raw) {
+  if ([...raw].some(c => c.charCodeAt(0) > 0xff)) return raw.includes('\ufffd') ? '' : raw;   // (already decoded)
+  const t = Buffer.from(raw, 'latin1').toString('utf8');
+  return t.includes('\ufffd') ? '' : t;
+}
+const cleanName = n => String(n || '').replace(/[\x00-\x1f\\/:*?"<>|]/g, '_').replace(/[. ]+$/, '').trim();
 function urlFileName(cd, href) {
-  let n = '';
   const star = /filename\*\s*=\s*([^']*)'[^']*'([^;]+)/i.exec(cd || ''), plain = /filename\s*=\s*("([^"]*)"|[^;]+)/i.exec(cd || '');
-  try { if (star) n = decodeURIComponent(star[2].trim().replace(/^"|"$/g, '')); } catch (_) {}
-  if (!n && plain) { n = (plain[2] != null ? plain[2] : plain[1]).trim(); try { n = Buffer.from(n, 'latin1').toString('utf8'); } catch (_) {} }   // raw UTF-8 bytes come as latin1
-  if (!n) { try { n = decodeURIComponent(new URL(href).pathname.split('/').filter(Boolean).pop() || ''); } catch (_) {} }
-  n = safeName(path.basename(n || 'download'));
+  const names = [];
+  try { if (star) names.push(decodeURIComponent(star[2].trim().replace(/^"|"$/g, ''))); } catch (_) {}
+  if (plain) names.push(headerName((plain[2] != null ? plain[2] : plain[1]).trim()));
+  try { names.push(decodeURIComponent(new URL(href).pathname.split('/').filter(Boolean).pop() || '')); } catch (_) {}
+  const n = safeName(path.basename(names.find(x => cleanName(path.basename(x))) || 'download'));
   return /\.pdf$/i.test(n) ? n : n + '.pdf';
 }
 ipcMain.handle('url:fetch', async (e, id, url) => {
   let u; try { u = new URL(String(url)); } catch (_) { return { ok: false, why: 'bad' }; }
   if (!/^https?:$/.test(u.protocol)) return { ok: false, why: 'bad' };
+  if (u.username || u.password) return { ok: false, why: 'creds' };   // (fetch refuses them, and its message repeats the password)
   const ctl = new AbortController(); downloads.set(id, ctl);
   let idle = null; const wake = () => { clearTimeout(idle); idle = setTimeout(() => ctl.abort('idle'), 60000); };
   try {
     wake();
     const res = await net.fetch(u.href, { signal: ctl.signal, redirect: 'follow' });
-    if (!res.ok) return { ok: false, why: 'status', status: res.status };
-    const total = +res.headers.get('content-length') || 0;
-    if (total > URL_MAX) return { ok: false, why: 'big' };
-    const reader = res.body.getReader(), parts = []; let got = 0, last = 0;
+    const drop = r => { ctl.abort('drop'); return r; };   // an early answer: the request is stopped and its connection closed now, not at some garbage collection
+    if (res.url && !/^https?:/i.test(res.url)) return drop({ ok: false, why: 'bad' });   // (where the redirects ended)
+    if (!res.ok) return drop({ ok: false, why: 'status', status: res.status });
+    const total = +res.headers.get('content-length') || 0, plainBody = !res.headers.get('content-encoding');
+    if (total > URL_MAX) return drop({ ok: false, why: 'big' });
+    // a size given for the body as it comes (not compressed): one buffer filled as it arrives, no second copy at the end
+    const reader = res.body.getReader(), parts = []; let got = 0, last = 0, one = plainBody && total ? Buffer.allocUnsafe(total) : null;
     for (;;) {
       const { done, value } = await reader.read(); if (done) break;
-      wake(); parts.push(Buffer.from(value)); got += value.length;
+      wake();
+      if (one && got + value.length <= total) one.set(value, got); else { if (one) { parts.push(one.subarray(0, got)); one = null; } parts.push(Buffer.from(value)); }
+      got += value.length;
       if (got > URL_MAX) { ctl.abort('big'); return { ok: false, why: 'big' }; }
       if (Date.now() - last > 150) { last = Date.now(); if (!e.sender.isDestroyed()) e.sender.send('url:progress', id, got, total); }
     }
-    const data = Buffer.concat(parts);
+    const data = one ? one.subarray(0, got) : Buffer.concat(parts);
     if (!data.subarray(0, 1024).includes('%PDF')) return { ok: false, why: 'notpdf' };
     return { ok: true, data, name: urlFileName(res.headers.get('content-disposition'), res.url || u.href), url: res.url || u.href };
   } catch (err) {
-    const r = ctl.signal.aborted ? String(ctl.signal.reason || 'cancel') : '';
-    return { ok: false, why: r === 'idle' ? 'idle' : r === 'big' ? 'big' : r ? 'cancel' : 'net', msg: String((err && err.message) || err) };
+    const r = ctl.signal.aborted ? String(ctl.signal.reason || 'cancel') : '', m = /\b(ERR_[A-Z0-9_]+)/.exec(String((err && err.message) || err));
+    return { ok: false, why: r === 'idle' ? 'idle' : r === 'big' ? 'big' : r ? 'cancel' : 'net', code: m ? m[1] : '' };   // (the code only: the message may hold the address)
   } finally { clearTimeout(idle); downloads.delete(id); }
 });
 ipcMain.handle('url:cancel', (_e, id) => { const c = downloads.get(id); if (c) c.abort('cancel'); });
-ipcMain.handle('app:clipboard-text', () => clipboard.readText());
+ipcMain.handle('app:clipboard-text', async () => { const t = String((await clipboard.readText()) || '').trim(); return t.length <= 4096 && /^https?:\/\/\S+$/i.test(t) ? t : ''; });   // (only a web address reaches the page)
 
 /* ---------------- 列印 ---------------- */
 // the printers (the page lists 「系統預設印表機」 first: Electron does not say which one is the default) and printing this

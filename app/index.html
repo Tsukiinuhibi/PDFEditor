@@ -10354,15 +10354,27 @@ function closeFind(){
    the window stays. Closing the window stops the download.
    ==================================================================== */
 let URLJOB = null;   // {id, set}: the download under way and how it reports
-if (DESK && DESK.url) DESK.url.onProgress((id, got, total) => { if (URLJOB && URLJOB.id === id) URLJOB.set(`下載中…（${(got / 1048576).toFixed(1)}${total ? ' / ' + (total / 1048576).toFixed(1) : ''} MB）`); });
+// (a compressed download: Content-Length is the compressed size, and more than that arrives — then only what arrived)
+const urlProgressText = (got, total) => `下載中…（${(got / 1048576).toFixed(1)}${total && got <= total ? ' / ' + (total / 1048576).toFixed(1) : ''} MB）`;
+if (DESK && DESK.url) DESK.url.onProgress((id, got, total) => { if (URLJOB && URLJOB.id === id) URLJOB.set(urlProgressText(got, total)); });
 const URL_OK = u => /^https?:\/\/[^\s/?#]+/i.test(String(u || '').trim());
 function urlWhy(r){
   if (r.why === 'notpdf') return '這個網址下載到的不是 PDF 檔（可能需要登入，或是一個網頁）';
-  if (r.why === 'status') return `下載失敗（${r.status}）`;
+  if (r.why === 'status') return r.status === 401 || r.status === 403 ? `這個網址需要登入，或沒有權限（${r.status}）。請先在瀏覽器登入並下載，再用「開啟」開啟下載的檔案`
+    : r.status === 404 || r.status === 410 ? `找不到這個檔案（${r.status}）` : `下載失敗（伺服器回應 ${r.status}）`;
   if (r.why === 'big') return '檔案太大（超過 500 MB）';
   if (r.why === 'idle') return '太久沒有收到資料，已停止下載';
   if (r.why === 'bad') return '網址要以 http:// 或 https:// 開頭';
-  return '無法連線：' + (r.msg || '');
+  if (r.why === 'creds') return '網址裡不能有帳號或密碼。請先在瀏覽器登入並下載，再用「開啟」開啟下載的檔案';
+  const c = r.code || '';   // (net::ERR_…: Chromium's own words stay out of the window)
+  if (/NAME_NOT_RESOLVED|NAME_RESOLUTION_FAILED/.test(c)) return '找不到這個網站，請檢查網址';
+  if (/INTERNET_DISCONNECTED|NETWORK_CHANGED/.test(c)) return '沒有網路連線';
+  if (/CERT_|SSL_/.test(c)) return '這個網站的安全憑證有問題，無法安全連線';
+  if (/PROXY|TUNNEL/.test(c)) return '透過 Proxy 連線失敗';
+  if (/TOO_MANY_REDIRECTS/.test(c)) return '這個網址轉址太多次';
+  if (/UNSAFE_PORT/.test(c)) return '這個網址的連接埠不能使用';
+  if (/CONNECTION_|ADDRESS_|TIMED_OUT|EMPTY_RESPONSE/.test(c)) return '連不上這個網站，請稍後再試，或檢查網址';
+  return c ? `下載失敗（${c.replace(/^ERR_/, '').toLowerCase()}）` : '下載失敗';
 }
 let URLOPEN = false;   // the window is up or coming up
 async function openUrlDialog(pre = '', {auto = false} = {}){
@@ -10385,8 +10397,8 @@ async function urlDialog(pre, auto){
     const id = 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     URLJOB = {id, set:setSt}; setErr(''); setSt('下載中…'); $('#urlGo').disabled = true; $b('#urlIn').disabled = true;
     let r;
-    try { r = await DESK.url.fetch(id, url); } catch (e) { r = {ok:false, why:'net', msg:e.message}; }
-    finally { URLJOB = null; }
+    try { r = await DESK.url.fetch(id, url); } catch (e) { r = {ok:false, why:'net'}; }
+    finally { if (URLJOB && URLJOB.id === id) URLJOB = null; }   // (a window opened since has its own)
     if (!alive) return undefined;   // the window was closed meanwhile: nothing more
     setSt(''); $b('#urlIn').disabled = false; check();
     if (r.ok) return r;
@@ -10403,10 +10415,12 @@ async function urlDialog(pre, auto){
     if (auto && URL_OK(pre)) setTimeout(() => $('#urlGo').click(), 0);
   }});
   alive = false;
-  if (URLJOB) DESK.url.cancel(URLJOB.id);   // closed (Esc, the mask) while downloading: stop
+  if (URLJOB) { DESK.url.cancel(URLJOB.id); URLJOB = null; }   // closed (Esc, the mask) while downloading: stop (it winds down on its own)
   if (!res || !res.ok) return;
-  try { await openInNewTab(new Uint8Array(res.data), res.name, null); toast(`已從網址開啟「${res.name}」`); }
-  catch (e) { toast('無法開啟這個 PDF：' + (e.message || e), 'err'); }
+  busy(true, '開啟中…');
+  try { await openInNewTab(res.data instanceof Uint8Array ? res.data : new Uint8Array(res.data), res.name, null); toast(`已從網址開啟「${res.name}」`); }   // (no copy)
+  catch (e) { toast(e && e.name === 'PasswordException' ? `「${res.name}」需要密碼才能開啟，PDF 工作台目前不支援` : '無法開啟這個 PDF：' + (e.message || e), 'err'); }
+  finally { busy(false); }
 }
 
 /* ====================================================================
@@ -11477,6 +11491,15 @@ const RESERVED = [K('KeyO', 'O', {ctrl:1}), K('KeyO', 'O', {ctrl:1, shift:1}), K
   K('Space', '空白鍵'), K('Escape', 'Esc'), K('Delete', 'Delete'), K('KeyR', 'R', {ctrl:1}), K('Enter', 'Enter'), K('KeyF', 'F', {ctrl:1}), K('F3', 'F3'), K('F3', 'F3', {shift:1}),
   K('BracketRight', ']', {ctrl:1}), K('BracketRight', ']', {ctrl:1, shift:1}), K('BracketLeft', '[', {ctrl:1}), K('BracketLeft', '[', {ctrl:1, shift:1})];
 const isReserved = b => b.type === 'key' && RESERVED.some(r => sameBind(r, b));
+// a shortcut set before the program took that key for itself (Ctrl+Shift+O, 從網址開啟, since v1.0.40) would never work: it is
+// taken off and the person told once
+setTimeout(() => {
+  const gone = [];
+  for (const a of BIND_ACTIONS) { const l = BINDS[a.id] || [], keep = l.filter(b => !isReserved(b)); if (keep.length < l.length) { gone.push(...l.filter(isReserved).map(b => `${bindLabel(b)}（${a.label}）`)); BINDS[a.id] = keep; } }
+  if (!gone.length) return;
+  try { localStorage.setItem(BIND_KEY, JSON.stringify(BINDS)); } catch (_) {}
+  toast(`自訂的快捷鍵 ${gone.join('、')} 跟程式內建的快捷鍵重複，已經取消，可以到「設定 → 快捷鍵」重新設定`, 'long');
+}, 0);
 function findBinding(b){ for (const a of BIND_ACTIONS) if ((BINDS[a.id] || []).some(x => sameBind(x, b))) return a; return null; }
 const mouseBound = button => !!findBinding(MB(button));
 
@@ -11929,6 +11952,7 @@ window.__pdfapp = {
   findWorker:() => !!FIND.worker,   // (tests) whether 尋找's OCR worker is still kept
   wordJob:() => !!WORDJOB,   // (tests) whether a 轉存 Word conversion is under way
   clRun:() => CL_RUN,   // (tests) whether a Claude call is being carried out
+  urlProgress:urlProgressText,   // (tests) the download's progress line
   claudeSaveWait:ms => { CL_SAVE_WAIT = ms; },   // (tests) pdf_save_as answers sooner
   wordFonts,
   links:async i => {   // (tests) page i's links: on screen, where they go, how they look

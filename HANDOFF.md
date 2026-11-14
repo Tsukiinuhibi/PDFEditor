@@ -233,10 +233,10 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 
 ### 3.9.13 從網址開啟（v1.0.40）
 - 入口：工具列「開啟」是分段按鈕 `ACTION_MENUS.openm`（〔開啟檔案…〕〔從網址開啟…〕；`FIXED_MENUS`：按鈕本體永遠是開啟檔案，不記上次用的）、Ctrl+Shift+O（`RESERVED`）、歡迎畫面的〔從網址開啟〕、把瀏覽器裡的連結（`text/uri-list`，沒有檔案時）拖進視窗。
-- `openUrlDialog(url?, {auto})`：輸入框（剪貼簿裡是 http／https 網址就先填好，經主程式 `app:clipboard-text` 讀）、進度（`url:progress`）、〔取消〕停止下載；關掉視窗（Esc、點遮罩）也會停（`alive`，之後不會開出分頁）。成功就 `openInNewTab(bytes, name, null)`（沒有原檔，存檔時選位置）。
-- 主程式 `url:fetch(id, url)`：`net.fetch`（Chromium 網路：轉址、Proxy、憑證），只收 http／https，上限 500 MB，60 秒沒有資料就停，開頭 1 KB 要有 `%PDF`；檔名 `urlFileName`：`filename*=UTF-8''…`、`filename="…"`（原始 UTF-8 位元組以 latin1 讀進來的要轉回）、否則網址最後一段，一律 `.pdf`、`safeName`。`url:cancel(id)` 中止。
-- 一次只會有一個「從網址開啟」：`URLOPEN`（視窗開著或正在開）或已有其他視窗開著（`#mask` 有 `show`，例如列印、設定、匯出）時，拖進來的連結不處理，提示「請先關掉目前的視窗，再拖入連結」；再按一次 Ctrl+Shift+O 也不會開第二個（`openUrlDialog` 包住 `urlDialog`）。
-- 測試 `open-url.mjs` 在測試裡開本機 HTTP 伺服器（轉址、中文檔名（`filename*` 與原始 UTF-8 的 `filename="…"`）、非法字元、網址裡的 %E5…、沒有副檔名、HTML、404、慢慢送、超過 500 MB、下載中或其他視窗開著時拖入連結）。
+- `openUrlDialog(url?, {auto})`：輸入框（剪貼簿裡是 http／https 網址就先填好，經主程式 `app:clipboard-text` 讀；主程式只把網址交給畫面，別的文字一律回空字串）、進度（`url:progress`）、〔取消〕停止下載；關掉視窗（Esc、點遮罩）也會停（`alive`，之後不會開出分頁），而且立刻清掉 `URLJOB`：馬上再開的視窗不用等舊的下載收尾（舊的下載結束時只清自己的 `URLJOB`）。成功就在忙碌提示下 `openInNewTab(bytes, name, null)`（沒有原檔，存檔時選位置；要密碼的 PDF 說要密碼）。錯誤訊息 `urlWhy` 都是中文：401／403 說要先在瀏覽器登入並下載、404 說找不到、網路錯誤依 `ERR_…` 代碼對照（找不到網站、沒有網路、憑證、Proxy、轉址太多、連不上），不顯示 Chromium 的原文（裡面可能有網址）。進度 `urlProgressText`：壓縮傳送時（收到的比 Content-Length 多）只顯示已收到的量。
+- 主程式 `url:fetch(id, url)`：`net.fetch`（Chromium 網路：轉址、Proxy、憑證），只收 http／https（轉址後的網址也要是），網址裡有帳號密碼就不下載（`why:'creds'`），上限 500 MB，60 秒沒有資料就停，開頭 1 KB 要有 `%PDF`。提早結束（狀態不是 2xx、太大）時 `ctl.abort` 立刻關掉連線。知道大小又沒有壓縮時，預先配置一塊記憶體邊收邊放，不再最後合併一次。錯誤只回 `ERR_…` 代碼（`code`）。檔名 `urlFileName`：`filename*=UTF-8''…`、`filename="…"`（`headerName`：Chromium 給的是 UTF-8 位元組、一個字元一個位元組，轉回 UTF-8；不是 UTF-8 的位元組（Latin-1、Big5 的檔名）在路上已經變成 U+FFFD、原本的位元組拿不回來，這種名稱當作沒有）、否則網址最後一段；清理後是空的（例如 `...`）也當作沒有。一律 `.pdf`、`safeName`。`url:cancel(id)` 中止。
+- 一次只會有一個「從網址開啟」：`URLOPEN`（視窗開著或正在開）或已有其他視窗開著（`#mask` 有 `show`，例如列印、設定、匯出）時，拖進來的連結不處理，提示「請先關掉目前的視窗，再拖入連結」；再按一次 Ctrl+Shift+O 也不會開第二個（`openUrlDialog` 包住 `urlDialog`）。Ctrl+Shift+O 是 v1.0.40 才保留的快捷鍵：以前自訂在這個鍵上的動作，啟動時會被取消並提示一次（`isReserved`）。
+- 測試 `open-url.mjs` 在測試裡開本機 HTTP 伺服器（轉址、中文檔名（`filename*` 與原始 UTF-8 的 `filename="…"`）、非法字元、網址裡的 %E5…、沒有副檔名、HTML、404、慢慢送、超過 500 MB、下載中或其他視窗開著時拖入連結）；第 4 部分（v1.0.48）：Latin-1／Big5 與只有點的檔名、401、連不上、網址有密碼、提早結束時立刻關連線、壓縮時的進度、剪貼簿只交網址、開啟時的忙碌提示、要密碼的 PDF、Esc 後馬上再開、連按兩次 Ctrl+Shift+O、跟內建重複的自訂快捷鍵。測試結束時把剪貼簿還原。
 
 ### 3.9.14 連結工具（v1.0.41）
 - 入口：「註解」群組的〔插入圖片〕改成分段按鈕 `ACTION_MENUS.insert`（〔插入圖片…〕`{tool:'image'}`、〔連結〕`{tool:'link'}`）；工具名 `link`，`HINTS.link`。
