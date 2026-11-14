@@ -12,7 +12,11 @@
  */
 const crypto = require('crypto');
 const PDFLib = require('pdf-lib/dist/pdf-lib.min.js');   // the build the window uses too: the installer leaves pdf-lib/cjs out
-const ENDOBJ = [...'endobj'].map(c => c.charCodeAt(0));
+const kw = t => [...t].map(c => c.charCodeAt(0));
+const ENDOBJ = kw('endobj'), STREAM = kw('stream'), ENDSTREAM = kw('endstream');
+const STREAM_EOL = [kw('stream \r\n'), kw('stream\r\n'), kw('stream\r'), kw('stream\n')];
+const isSpace = b => b === 0x20 || b === 0x0A || b === 0x0D || b === 0x09 || b === 0x0C || b === 0x00;
+const tick = () => new Promise(res => setImmediate(res));   // let the rest of the program run (a big file takes a while)
 const { PDFParser, PDFObjectStreamParser, PDFXRefStreamParser, PDFDocument, PDFRawStream, PDFDict, PDFArray, PDFName, PDFRef,
   PDFString, PDFHexString, PDFNumber, PDFBool } = PDFLib;
 
@@ -103,9 +107,31 @@ async function decryptPdf(input){
   if (bytes.indexOf('/Encrypt') < 0) return {state:'plain'};
   try {
     // read every object as it is in the file, in file order; object streams are kept for later (they are encrypted
-    // as a whole, so their objects can only be read once the stream is decrypted)
-    const parser = PDFParser.forBytesWithOptions(new Uint8Array(bytes), Infinity, false, false), events = [];
+    // as a whole, so their objects can only be read once the stream is decrypted). Every 1000 objects the reading
+    // gives way to the rest of the program (this runs in the main process).
+    const u8 = new Uint8Array(bytes), parser = PDFParser.forBytesWithOptions(u8, 1000, false, false), events = [], loose = [];
     parser.maybeRecoverRoot = () => {};
+    // a stream whose /Length is not a number in its dictionary (e.g. "/Length 12 0 R"): pdf-lib finds the end by looking
+    // for "endstream" and takes a CR or CR LF before it for the line end, which may be the last byte of the encrypted
+    // data. As pdf.js does, everything up to "endstream" is kept; the real length is applied once all objects are read
+    // (AES ignores a part block at the end anyway, as pdf.js's does)
+    parser.parseDictOrStream = function(){
+      const startPos = this.bytes.position(), dict = this.parseDict();
+      this.skipWhitespaceAndComments();
+      if (!STREAM_EOL.some(k => this.matchKeyword(k)) && !this.matchKeyword(STREAM)) return dict;
+      const start = this.bytes.offset(), L = dict.get(N('Length'));
+      if (L instanceof PDFNumber) {
+        const end = start + L.asNumber();
+        this.bytes.moveTo(Math.min(end, u8.length)); this.skipWhitespaceAndComments();
+        if (end <= u8.length && this.matchKeyword(ENDSTREAM)) return PDFRawStream.of(dict, u8.slice(start, end));
+        this.bytes.moveTo(start);
+      }
+      let raw = this.findEndOfStreamFallback(startPos);   // (where the line end before "endstream" starts; moves past it)
+      while (raw < u8.length && (u8[raw] === 0x0D || u8[raw] === 0x0A)) raw++;
+      const s = PDFRawStream.of(dict, u8.slice(start, raw));
+      loose.push({s, start, raw, ref:L instanceof PDFRef ? L : null});
+      return s;
+    };
     parser.parseIndirectObject = async function(){
       const ref = this.parseIndirectObjectHeader();
       this.skipWhitespaceAndComments();
@@ -114,12 +140,26 @@ async function decryptPdf(input){
       this.matchKeyword(ENDOBJ);
       const type = obj instanceof PDFRawStream ? obj.dict.lookup(N('Type')) : null;
       if (type === N('ObjStm')) events.push({ref, stm:obj});
-      else if (type === N('XRef')) PDFXRefStreamParser.forStream(obj).parseIntoContext();
+      else if (type === N('XRef')) {   // (a linearized file's last xref stream has only /Size: keep /Root /Encrypt /Info /ID)
+        const was = this.context.trailerInfo;
+        PDFXRefStreamParser.forStream(obj).parseIntoContext();
+        const t = this.context.trailerInfo;
+        for (const k of ['Root', 'Encrypt', 'Info', 'ID']) if (!t[k]) t[k] = was[k];
+      }
       else { this.context.assign(ref, obj); events.push({ref, obj}); }
       return ref;
     };
     const ctx = await parser.parseDocument(), ti = ctx.trailerInfo;
     if (!ti.Encrypt) return {state:'plain'};
+    // the real length of a stream whose length is a separate object (numbers are never encrypted); one inside an object
+    // stream is applied after decryption, below
+    const fit = l => {
+      const n = l.ref && ctx.lookup(l.ref);
+      if (!(n instanceof PDFNumber)) return -1;
+      const e = l.start + n.asNumber();
+      return n.asNumber() >= 0 && e <= l.raw && u8.subarray(e, l.raw).every(isSpace) ? n.asNumber() : -1;
+    };
+    for (const l of loose) { const n = fit(l); if (n >= 0) { l.s.contents = u8.slice(l.start, l.start + n); l.done = true; } }
     const enc = ctx.lookup(ti.Encrypt), encRef = ti.Encrypt instanceof PDFRef ? ti.Encrypt : null;
     if (!(enc instanceof PDFDict)) return {state:'unsupported', reason:'the encryption dictionary is missing'};
     if (enc.lookup(N('Filter')) !== N('Standard')) return {state:'unsupported', reason:'encryption handler ' + String(enc.lookup(N('Filter')))};
@@ -164,6 +204,7 @@ async function decryptPdf(input){
       }
       return o;
     };
+    const done = new Map();   // stream as read → {d: the decrypted stream, m: how it was encrypted}
     const stream = (s, ref) => {
       walk(s.dict, ref);
       const type = s.dict.get(N('Type'));
@@ -181,20 +222,33 @@ async function decryptPdf(input){
         else s.dict.delete(N('DecodeParms'));
         list.length ? s.dict.set(N('Filter'), list.length === 1 ? list[0] : ctx.obj(list)) : s.dict.delete(N('Filter'));
       }
-      return PDFRawStream.of(s.dict, new Uint8Array(run(m, ref, Buffer.from(s.contents))));
+      const d = PDFRawStream.of(s.dict, new Uint8Array(run(m, ref, Buffer.from(s.contents))));
+      done.set(s, {d, m});
+      return d;
     };
 
     // decrypt in file order, so a later revision of an object still wins over an earlier one
+    let k = 0;
     for (const e of events) {
+      const nObj = e.stm ? e.stm.dict.lookup(N('N')) : null;   // (an object stream counts as the objects in it)
+      if ((k += nObj instanceof PDFNumber ? nObj.asNumber() : 1) >= 300) { k = 0; await tick(); }
       if (encRef && e.ref === encRef) continue;
       if (e.stm) await PDFObjectStreamParser.forStream(stream(e.stm, e.ref), () => false).parseIntoContext();
       else ctx.assign(e.ref, e.obj instanceof PDFRawStream ? stream(e.obj, e.ref) : walk(e.obj, e.ref));
+    }
+    // a length kept in an object stream can be read only now: RC4 (and no encryption) keeps the length, so the bytes
+    // read past it (the line end before "endstream") are cut off; AES already dropped them with the part block
+    for (const l of loose) {
+      const n = l.done ? -1 : fit(l), x = done.get(l.s);
+      if (n >= 0 && x && x.m !== 'aes' && x.m !== 'aes256') x.d.contents = x.d.contents.subarray(0, Math.min(n, x.d.contents.length));
     }
     if (encRef) ctx.delete(encRef);
     ti.Encrypt = undefined;
     PDFParser.prototype.maybeRecoverRoot.call(parser);
     const doc = new PDFDocument(ctx, false, false);
-    const out = await doc.save({updateFieldAppearances:false, addDefaultPage:false});
+    // (no object streams: pdf-lib then gives way every 1000 objects while writing; with them it counts in steps of a
+    // whole stream and may never land on a multiple of 1000. The next change saves with object streams again.)
+    const out = await doc.save({updateFieldAppearances:false, addDefaultPage:false, useObjectStreams:false, objectsPerTick:1000});
     return {state:'decrypted', bytes:out, signed};
   } catch (e) {
     return {state:'unsupported', reason:String((e && e.message) || e)};

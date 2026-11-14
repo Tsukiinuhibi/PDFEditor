@@ -141,5 +141,13 @@ await win.click('#p-atts .att:has(.nm:text-is("A.pdf")) [data-x=open]'); await w
 s = await S();
 check('〔開啟〕 on A.pdf: a new tab with its 2 pages', (await tabs()) === n0 + 1 && s.name === 'A.pdf' && s.pages === 2, s);
 
+// ---- a decryption that does not read like the original (here: another document altogether) is not used -------------------
+const SAMPLE = fs.readFileSync(path.join(ROOT, 'tests', 'e2e', 'fixtures', 'sample.pdf'));
+await app.evaluate(({ipcMain}, sample) => { ipcMain.removeHandler('pdf:decrypt'); ipcMain.handle('pdf:decrypt', async () => ({state:'decrypted', bytes:new Uint8Array(sample), signed:false})); }, [...SAMPLE]);
+await toasts();
+await open(copy('r4-aes128.pdf', 'odd.pdf'));
+t = await toasts(); s = await S();
+check('a decrypted copy that reads differently from the file (pages, sizes or text): the file opens as it is, no notice', s.name === 'odd.pdf' && s.pages === 2 && s.encrypted && !t.some(x => x.includes('限制編輯')), {t, s});
+
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
 console.log(failed ? `${failed} check(s) failed` : 'all checks passed');

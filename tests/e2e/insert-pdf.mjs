@@ -25,7 +25,8 @@ const make = async (name, {cover = true, collection = true, files = [], base = n
 const A = await inner('A', 2), B = await inner('B', 3);
 const PORT = await make('portfolio.pdf', {files:[['B.pdf', B], ['A.pdf', A], ['notes.txt', new TextEncoder().encode('hello'), 'text/plain']]});
 const ATT = await make('with-attachment.pdf', {cover:false, collection:false, base:fs.readFileSync(path.join(FIX, 'sample.pdf')), files:[['A.pdf', A]]});
-const PORT2 = await make('portfolio2.pdf', {files:[['C.pdf', fs.readFileSync(path.join(FIX, 'encrypted', 'r4-aes128.pdf'))], ['broken.pdf', new TextEncoder().encode('%PDF-1.7\nnot really a pdf')]]});
+const PORT2 = await make('portfolio2.pdf', {files:[['C.pdf', fs.readFileSync(path.join(FIX, 'encrypted', 'r4-aes128.pdf'))], ['broken.pdf', new TextEncoder().encode('%PDF-1.7\nnot really a pdf')],
+  ['locked.pdf', fs.readFileSync(path.join(FIX, 'encrypted', 'r6-userpw.pdf'))]]});
 const XFA = path.join(TMP, 'xfa.pdf');
 {
   const d = await PDFDocument.create(); d.addPage([612, 792]);
@@ -80,7 +81,10 @@ check('inserted after page 1: 4 more pages; the first inserted page is the sampl
 await undo();
 
 // ---- a PDF portfolio -------------------------------------------------------------------------------------------------
+await Ev(() => { const W = window.Worker; window.__workers = 0; window.Worker = function(...a){ window.__workers++; return new W(...a); }; window.Worker.prototype = W.prototype; });
 d = await dialog(PORT);
+const workers = await Ev(() => window.__workers);
+check('the portfolio\'s three files are read with one pdf.js worker between them (not one each)', workers === 1, {workers});
 check('a PDF portfolio: its PDFs listed after the cover — 共 6 頁 in 3 groups headed by the file names (A before B)',
   d.foot.includes('PDF 包') && d.foot.includes('共 6 頁') && d.cards.length === 6 && d.groups.length === 3 && d.groups[0].includes('封面') && d.groups[1].includes('A.pdf') && d.groups[2].includes('B.pdf'), d);
 check('the PDFs\' 5 pages ticked, the cover not; notes.txt named as not insertable; A\'s pages drawn (not white)',
@@ -117,8 +121,8 @@ check('a file that needs a password: 「此 PDF 受密碼保護，無法匯入�
 
 // ---- a portfolio holding an encrypted PDF and a broken one --------------------------------------------------------------
 d = await dialog(PORT2);
-check('a portfolio with an encrypted PDF and a broken one: the encrypted one listed (2 pages), broken.pdf named as unreadable',
-  d.cards.length === 3 && d.groups.length === 2 && d.groups[1].includes('C.pdf') && d.notes.some(n => n.includes('broken.pdf')), d);
+check('a portfolio with a 「限制編輯」 PDF, a broken one and one that needs a password: the first listed (2 pages); broken.pdf named as unreadable, locked.pdf as needing a password',
+  d.cards.length === 3 && d.groups.length === 2 && d.groups[1].includes('C.pdf') && d.notes.some(n => n.includes('broken.pdf') && n.includes('locked.pdf（需要密碼）')), d);
 at = await insert();
 tx = await texts(at, 2);
 check('its encrypted PDF\'s pages come in with their text', (await pages()) === n0 + 2 && tx[0] === 'Secret page 1' && tx[1] === 'Secret page 2', tx);

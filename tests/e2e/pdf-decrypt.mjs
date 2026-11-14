@@ -48,7 +48,7 @@ const same = (o, pages = 2) => o.pages === pages && !o.encryptKey && o.title ===
   && o.note === '祕密便利貼 secret note' && o.field === '欄位內容' && o.attachment[0] === 'hello.txt' && o.attachment[1] === 'hello attached world' && o.metadata;
 const read = f => new Uint8Array(fs.readFileSync(path.join(FIX, f)));
 
-for (const f of ['r2-rc4-40', 'r3-rc4-128', 'r4-rc4-128', 'r4-aes128', 'r4-aes128-nometa', 'r6-aes256']) {
+for (const f of ['r2-rc4-40', 'r3-rc4-128', 'r4-rc4-128', 'r4-aes128', 'r4-aes128-nometa', 'r6-aes256', 'lin-aes128', 'lin-aes256']) {
   const r = await decryptPdf(read(f + '.pdf'));
   let o = null, err = '';
   if (r.state === 'decrypted') try { o = await contents(r.bytes); } catch (e) { err = String(e.message || e); }
@@ -67,6 +67,28 @@ for (const f of ['r2-rc4-40', 'r3-rc4-128', 'r4-rc4-128', 'r4-aes128', 'r4-aes12
   const t0 = Date.now(), r = await decryptPdf(read('big-aes128.pdf')), ms = Date.now() - t0;
   let o = null; if (r.state === 'decrypted') o = await contents(r.bytes);
   check('100 pages (AES-128, object streams): decrypted in under 5 s', r.state === 'decrypted' && !!o && same(o, 100) && ms < 5000, {ms, pages:o && o.pages});
+}
+// stream lengths kept as separate objects ("/Length 10 0 R"), some encrypted data ending in a carriage return: every
+// page's drawing comes back whole (taking the CR before "endstream" for a line end loses the last AES block / RC4 byte)
+for (const f of ['len-aes128', 'len-rc4-128']) {
+  const r = await decryptPdf(read(f + '.pdf'));
+  let o = null, bad = [];
+  if (r.state === 'decrypted') {
+    o = await contents(r.bytes);
+    const doc = await PDFDocument.load(r.bytes, {updateMetadata:false});
+    doc.getPages().forEach((p, k) => { let t = ''; try { t = text(p.node.Contents()); } catch (e) { t = 'ERR ' + e.message; } if (t !== `BT /F1 36 Tf 72 700 Td (Secret page ${k + 1}) Tj ET`) bad.push([k + 1, t.slice(-30)]); });
+  }
+  check(`${f}: lengths as separate objects — all 300 pages' drawings exactly as they were, the rest of the document too`, r.state === 'decrypted' && !!o && same(o, 300) && bad.length === 0, {state:r.state, bad:bad.slice(0, 4)});
+}
+// about 18 000 objects: the reading gives way to other work now and then, so the program never stalls for long
+{
+  const b = read('many-aes128.pdf');
+  let last = performance.now(), worst = 0;
+  const iv = setInterval(() => { const t = performance.now(); worst = Math.max(worst, t - last); last = t; }, 5);
+  const t0 = performance.now(), r = await decryptPdf(b), ms = Math.round(performance.now() - t0);
+  await new Promise(res => setTimeout(res, 20)); clearInterval(iv); worst = Math.round(Math.max(worst, performance.now() - last));
+  let pages = 0; if (r.state === 'decrypted') pages = (await PDFDocument.load(r.bytes, {updateMetadata:false})).getPageCount();
+  check('3000 pages and 18 000 objects: decrypted; the longest stall of everything else is under 120 ms', r.state === 'decrypted' && pages === 3000 && worst < 120, {ms, worst, pages});
 }
 {
   const r = await decryptPdf(read('r6-userpw.pdf'));

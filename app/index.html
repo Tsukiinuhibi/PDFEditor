@@ -1346,9 +1346,30 @@ async function readablePdf(bytes){
   if (NO_DECRYPT || !DESK || !DESK.decryptPdf || !hasText(bytes, '/Encrypt')) return {bytes, state:'plain'};
   try {
     const r = await DESK.decryptPdf(bytes);
-    if (r && r.state === 'decrypted' && r.bytes) return {bytes:new Uint8Array(r.bytes), state:'decrypted', signed:!!r.signed};
+    if (r && r.state === 'decrypted' && r.bytes) {
+      const dec = new Uint8Array(r.bytes);
+      // a copy that does not read as the original does in pdf.js is not used: the file stays as it is
+      return (await readsAlike(bytes, dec)) ? {bytes:dec, state:'decrypted', signed:!!r.signed} : {bytes, state:'unsupported'};
+    }
     return {bytes, state:(r && r.state) || 'unsupported'};
   } catch (_) { return {bytes, state:'unsupported'}; }
+}
+// two versions of a document read alike in pdf.js: the same number of pages, the same page sizes and turns (the first
+// 20 pages), the same text on page 1
+async function readsAlike(a, b){
+  const worker = new pdfjsLib.PDFWorker(), docs = [];
+  try {
+    for (const bytes of [a, b]) docs.push(await pdfjsLib.getDocument({...PDF_OPTS, data:bytes.slice(), worker}).promise);
+    const [x, y] = docs;
+    if (x.numPages !== y.numPages) return false;
+    for (let i = 1; i <= Math.min(x.numPages, 20); i++) {
+      const v = (await x.getPage(i)).getViewport({scale:1}), w = (await y.getPage(i)).getViewport({scale:1});
+      if (Math.abs(v.width - w.width) > 0.01 || Math.abs(v.height - w.height) > 0.01) return false;
+    }
+    const text = async d => (await (await d.getPage(1)).getTextContent()).items.map(t => t.str).join('');
+    return (await text(x)) === (await text(y));
+  } catch (_) { return false; }
+  finally { for (const d of docs) await d.destroy().catch(() => {}); worker.destroy(); }
 }
 async function openInNewTab(bytes, name, handle){
   // a signed one stays as it is: rewriting it on opening would quietly break its signature
@@ -3623,9 +3644,9 @@ $('#fInsert').addEventListener('change', async e => {
 });
 // one source of pages for the insert picker: the chosen file, or a PDF inside it. 「限制編輯」 files are decrypted (their
 // pages could not be copied otherwise); one encrypted in a way that cannot be decrypted is refused
-async function insertSource(raw, name){
+async function insertSource(raw, name, worker){
   const rd = await readablePdf(raw), bytes = rd.bytes;
-  const src = await pdfjsLib.getDocument({...PDF_OPTS, data:bytes.slice()}).promise;
+  const src = await pdfjsLib.getDocument({...PDF_OPTS, data:bytes.slice(), worker}).promise;
   try {
     if (rd.state === 'unsupported') {
       const m = await src.getMetadata().catch(() => null);
@@ -3648,10 +3669,11 @@ async function insertFromPdf(file){
   busy(true, '讀取 PDF…');
   // the file's own pages, then the PDFs inside it: a PDF portfolio (PDF 包) keeps its documents as attached files and
   // shows only a cover page; any PDF can carry attached PDFs
-  const srcs = [], skipped = [];
+  const srcs = [], skipped = [], worker = new pdfjsLib.PDFWorker();   // (one pdf.js worker for all of them)
+  const done = () => Promise.all(srcs.map(x => x.src.destroy().catch(() => {}))).then(() => worker.destroy());
   let portfolio = false, xfa = false;
   try {
-    srcs.push(await insertSource(new Uint8Array(await file.arrayBuffer()), file.name));
+    srcs.push(await insertSource(new Uint8Array(await file.arrayBuffer()), file.name, worker));
     const meta = await srcs[0].src.getMetadata().catch(() => null), info = (meta && meta.info) || {};
     portfolio = !!info.IsCollectionPresent;
     xfa = !!info.IsXFAPresent && await needsRendering(srcs[0].bytes);
@@ -3659,11 +3681,11 @@ async function insertFromPdf(file){
       .sort((a, b) => String(a.filename).localeCompare(String(b.filename), 'zh-Hant', {numeric:true}));
     for (const a of atts) {
       if (!isPdfBytes(a.content)) { skipped.push(`${a.filename}（不是 PDF）`); continue; }
-      try { srcs.push(await insertSource(new Uint8Array(a.content), a.filename)); }
+      try { srcs.push(await insertSource(new Uint8Array(a.content), a.filename, worker)); }
       catch (e) { skipped.push(`${a.filename}（${e && e.name === 'PasswordException' ? '需要密碼' : e && e.name === 'UnsupportedEncryption' ? '加密方式無法處理' : '讀不到'}）`); }
     }
   } catch (e) {
-    busy(false); srcs.forEach(x => x.src.destroy());
+    busy(false); done();
     toast(e && e.name === 'PasswordException' ? '此 PDF 受密碼保護，無法匯入' : e && e.name === 'UnsupportedEncryption' ? '這份 PDF 的加密方式無法處理，不能插入它的頁面'
       : '無法讀取此 PDF：' + (e.message || e), 'err');
     return;
@@ -3704,7 +3726,7 @@ async function insertFromPdf(file){
     if (ps) ps.onchange = () => { $('#atWrap').style.display = ps.value === 'at' ? '' : 'none'; };
   }, 0);
   const res = await picker;
-  setTimeout(() => srcs.forEach(x => x.src.destroy()), 300);
+  setTimeout(done, 300);
   if (!res) return;
   const pos = res.extra.pos;
   let at;
