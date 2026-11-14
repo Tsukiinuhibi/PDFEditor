@@ -300,6 +300,8 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .pr-warn{color:#b35c00;font-size:12px;margin:-4px 0 8px}
 .url-st{font-size:12px;color:var(--ink2);min-height:18px}
 .cl-st{margin:6px 0 10px;color:var(--ink2);font-size:12.5px}
+.cl-key{margin:-4px 0 10px;font-size:12.5px;color:var(--ink2);word-break:break-all}
+.cl-key code{font-size:11.5px;user-select:all}
 .cl-steps{margin:4px 0 8px 20px;padding:0;line-height:1.75;font-size:12.5px}
 .wd-note{font-size:12px;line-height:1.6;color:var(--ink2);margin-top:4px}
 .lk-other{font-size:12px;line-height:1.6;color:var(--ink2);word-break:break-all;border:1px solid var(--line);border-radius:6px;padding:6px 8px}
@@ -6028,7 +6030,7 @@ function addPopupAnnot(doc, i, parentRef, box){
   return pref;
 }
 async function createNote(i, icon, text, box, {author = AUTHOR, label = '已新增註解'} = {}){
-  await mutate(label, doc => {
+  return mutate(label, doc => {
     const g = visToPdf(i, icon), now = nowStr();
     const ap = formAP(doc, NOTE_ICON_OPS, 20, 20, g.rot);
     const ref = addAnnot(doc, i, {Type:'Annot', Subtype:'Text', Rect:g.rect, Contents:PDFHexString.fromText(text), T:PDFHexString.fromText(author),
@@ -10876,13 +10878,14 @@ function claudePaneHTML(){
     <div class="note" style="margin-bottom:10px">讓 Claude 桌面版用 PDF 工作台讀取與修改你開著的 PDF：找與取代文字、加文字方塊與便利貼、螢光筆、旋轉與刪除頁面、另存新檔。Claude 做的修改都可以復原，也不會覆蓋原本的檔案。</div>
     <label class="set-opt"><input type="checkbox" id="clOn"${c.enabled ? ' checked' : ''}>允許 Claude 使用 PDF 工作台<small>只有這台電腦上的 Claude 擴充功能連得到</small></label>
     <div class="cl-st" id="clSt">${esc(st)}</div>
+    ${c.enabled ? `<div class="cl-key">連線金鑰：<code id="clKey">${esc(c.key)}</code> <button class="mini" data-cl="copy">複製</button></div>` : ''}
     <div class="set-btns"><button class="btn" data-cl="mcpb"${c.enabled && c.port ? '' : ' disabled'}>儲存 Claude 擴充功能…</button><button class="btn" data-cl="key">重新產生金鑰</button></div>
     <div class="set-h" style="margin-top:14px">安裝步驟</div>
     <ol class="cl-steps"><li>安裝並登入 Claude 桌面版（claude.ai/download）。</li><li>打開上面的「允許 Claude 使用 PDF 工作台」。</li>
       <li>按〔儲存 Claude 擴充功能…〕，存出「PDF 工作台.mcpb」。</li>
       <li>在檔案總管雙擊這個檔案（或在 Claude 的「設定 → 擴充功能 → 進階設定 → 安裝擴充功能…」選它），按〔安裝〕。</li>
       <li>在 Claude 的對話裡說要做的事，例如「把目前文件裡的『草稿』都換成『定稿』」。用的時候 PDF 工作台要開著。</li></ol>
-    <div class="note">按〔重新產生金鑰〕後，裝好的擴充功能就不能用了，要重新儲存並安裝一次。</div>`;
+    <div class="note">按〔重新產生金鑰〕後，裝好的擴充功能就連不上了：把新的金鑰複製到 Claude 的「設定 → 擴充功能 → PDF 工作台」的連線金鑰；或先移除舊的擴充功能，再重新儲存並安裝。</div>`;
 }
 // the extension: manifest (MCPB 0.3; the port and key filled in as the settings' defaults), the server and its tools
 async function saveClaudeMcpb(){
@@ -10908,10 +10911,18 @@ async function saveClaudeMcpb(){
     toast('已儲存 Claude 擴充功能：' + where.split(/[\\/]/).pop());
   } catch (e) { toast('儲存擴充功能失敗：' + (e.message || e), 'err'); }
 }
+let CL_SAVE_WAIT = 150000;   // how long pdf_save_as waits for the 另存新檔 window before it answers
 const CL_EDIT = new Set(['pdf_open', 'pdf_replace', 'pdf_highlight', 'pdf_add_text', 'pdf_add_note', 'pdf_rotate_pages', 'pdf_delete_pages', 'pdf_insert_blank_page', 'pdf_undo', 'pdf_save_as']);
 const clNeed = () => { if (!S.pdf) throw new Error('PDF 工作台現在沒有開啟的文件，請先用 pdf_open 開啟一個 PDF'); };
+// a change through mutate(): false (the person declined, e.g. for a signed document, or it failed) is an error for Claude
+const clDone = ok => { if (!ok) throw new Error('這個修改沒有完成：使用者取消了（例如數位簽署過的文件會先問），或發生錯誤。文件沒有改變。'); };
 const clPage = p => { const n = S.pages.length, k = Number(p); if (!Number.isInteger(k) || k < 1 || k > n) throw new Error(`頁碼要在 1～${n} 之間（收到 ${p}）`); return k - 1; };
-const clPages = txt => { const n = S.pages.length, r = parseRange(String(txt ?? ''), n); if (!r || !r.size) throw new Error(`頁碼範圍看不懂，或不在 1～${n} 之間：「${txt}」`); return [...r].sort((a, b) => a - b); };
+const clPages = txt => {
+  const n = S.pages.length, t = String(txt ?? '').replace(/[０-９]/g, d => String.fromCharCode(d.charCodeAt(0) - 0xFEE0)), nums = (t.match(/\d+/g) || []).map(Number);
+  if (!nums.length || nums.some(k => !(k >= 1 && k <= n))) throw new Error(`頁碼要在 1～${n} 之間（收到「${txt}」）`);   // (checked before parseRange, which leaves such pages out quietly)
+  const r = parseRange(t, n); if (!r || !r.size) throw new Error(`頁碼範圍看不懂：「${txt}」（例如 "1-3, 5"，頁碼在 1～${n} 之間）`);
+  return [...r].sort((a, b) => a - b);
+};
 const CLAUDE_TOOLS = {
   async pdf_status(){
     if (!S.pdf) return {text:'PDF 工作台現在沒有開啟的文件。可以用 pdf_open 開啟一個 PDF。'};
@@ -10943,7 +10954,7 @@ const CLAUDE_TOOLS = {
     if (REPLACING) throw new Error('PDF 工作台正在取代別的文字，請稍後再試');
     REPLACING = true; let n;
     try { n = await replaceNow(hits, repl, o, q); } finally { REPLACING = false; }
-    if (!n) throw new Error(hits.every(h => h.ocr) ? '這些是掃描頁上的文字，不能取代' : '這些文字無法取代');
+    if (!n) throw new Error(hits.every(h => h.ocr) ? '這些是掃描頁上的文字，不能取代' : '這些文字沒有取代：無法取代，或使用者取消了（例如數位簽署過的文件會先問）');
     scrollToPage(hits[0].i);
     return {text:`已把「${q}」取代成「${repl}」，共 ${n} 處（第 ${[...new Set(hits.map(h => h.i + 1))].join('、')} 頁）。可以用 pdf_undo 復原。`};
   },
@@ -10951,7 +10962,7 @@ const CLAUDE_TOOLS = {
     const color = /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : '#ffd43b', {hits, q} = await clSearch(a);
     if (!hits.length) return {text:`找不到「${q}」，沒有標示`};
     const marks = hits.flatMap(h => h.boxes.filter(b => b && b.w > 0.5 && b.h > 0.5).map(b => [h.i, b]));
-    await mutate(`Claude：已標示「${q}」${hits.length} 處`, doc => { marks.forEach(([i, b]) => highlightAnnot(doc, i, b, color)); });
+    clDone(await mutate(`Claude：已標示「${q}」${hits.length} 處`, doc => { marks.forEach(([i, b]) => highlightAnnot(doc, i, b, color)); }));
     scrollToPage(hits[0].i);
     return {text:`已用螢光筆標示「${q}」共 ${hits.length} 處（第 ${[...new Set(hits.map(h => h.i + 1))].join('、')} 頁）。`};
   },
@@ -10963,10 +10974,10 @@ const CLAUDE_TOOLS = {
     const color = /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color.toLowerCase() : '#000000';
     const lines = text.split(/\r\n|\r|\n/).map(t => [{text:t, size, color, bold:!!a.bold, italic:false, underline:false, bg:'', font:''}]), box = {boxBg:'', border:false};
     const r = await renderTextBox(lines, box), x = clCoord(a.x, 'x', Math.max(0, pg.w - r.w)), y = clCoord(a.y, 'y', Math.max(0, pg.h - r.h));
-    await mutate('Claude：已加上文字方塊', async doc => {
+    clDone(await mutate('Claude：已加上文字方塊', async doc => {
       addAnnot(doc, i, {Type:'Annot', Subtype:'FreeText', T:PDFHexString.fromText(AUTHOR), CreationDate:nowStr(), Subj:PDFHexString.fromText('文字方塊'), F:4,
         ...(await textBoxFields(doc, i, lines, box, r, {x, y, w:r.w, h:r.h}))});
-    });
+    }));
     scrollToPage(i);
     return {text:`已在第 ${i + 1} 頁加上文字方塊，左上角在 (${x.toFixed(0)}, ${y.toFixed(0)})，大小 ${r.w.toFixed(0)}×${r.h.toFixed(0)} pt。`};
   },
@@ -10975,7 +10986,7 @@ const CLAUDE_TOOLS = {
     const i = clPage(a.page), pg = S.pages[i], text = String(a.text ?? '');
     if (!text.trim()) throw new Error('便利貼的文字是空的');
     const x = clCoord(a.x, 'x', pg.w - 20), y = clCoord(a.y, 'y', pg.h - 20);
-    await createNote(i, {x, y, w:20, h:20}, text, {x:Math.min(x + 24, Math.max(0, pg.w - 220)), y:Math.min(y, Math.max(0, pg.h - 140)), w:200, h:120}, {label:'Claude：已新增便利貼'});
+    clDone(await createNote(i, {x, y, w:20, h:20}, text, {x:Math.min(x + 24, Math.max(0, pg.w - 220)), y:Math.min(y, Math.max(0, pg.h - 140)), w:200, h:120}, {label:'Claude：已新增便利貼'}));
     scrollToPage(i);
     return {text:`已在第 ${i + 1} 頁 (${x.toFixed(0)}, ${y.toFixed(0)}) 加上便利貼。`};
   },
@@ -10985,7 +10996,7 @@ Object.assign(CLAUDE_TOOLS, {
     clNeed();
     const list = clPages(a.pages), deg = Number(a.degrees);
     if (![90, 180, 270].includes(deg)) throw new Error('角度要是 90、180 或 270（順時針）');
-    await mutate(`Claude：第 ${rangeText(list)} 頁已旋轉 ${deg}°`, doc => { list.forEach(i => { const p = doc.getPage(i); p.setRotation(degrees((p.getRotation().angle + deg) % 360)); }); });
+    clDone(await mutate(`Claude：第 ${rangeText(list)} 頁已旋轉 ${deg}°`, doc => { list.forEach(i => { const p = doc.getPage(i); p.setRotation(degrees((p.getRotation().angle + deg) % 360)); }); }));
     scrollToPage(list[0]);
     return {text:`已把第 ${rangeText(list)} 頁順時針旋轉 ${deg}°。`};
   },
@@ -10993,35 +11004,39 @@ Object.assign(CLAUDE_TOOLS, {
     clNeed();
     const list = clPages(a.pages);
     if (list.length >= S.pages.length) throw new Error('不能刪除全部頁面，文件至少要留一頁');
-    await mutate(`Claude：已刪除第 ${rangeText(list)} 頁`, doc => {
+    clDone(await mutate(`Claude：已刪除第 ${rangeText(list)} 頁`, doc => {
       [...list].sort((x, y) => y - x).forEach(i => doc.removePage(i));
       S.current = clamp(S.current - list.filter(i => i < S.current).length, 0, doc.getPageCount() - 1);
-    });
+    }));
     return {text:`已刪除第 ${rangeText(list)} 頁，現在共 ${S.pages.length} 頁。可以用 pdf_undo 復原。`};
   },
   async pdf_insert_blank_page(a){
     clNeed();
     const n = S.pages.length, after = Number(a.after);
     if (!Number.isInteger(after) || after < 0 || after > n) throw new Error(`after 要在 0～${n} 之間（0 表示加在最前面）`);
-    await mutate(`Claude：已加上空白頁`, doc => {   // as large and as turned as the page it follows (the first page when it goes first)
+    clDone(await mutate(`Claude：已加上空白頁`, doc => {   // as large and as turned as the page it follows (the first page when it goes first)
       const ref = doc.getPage(Math.max(0, after - 1)), {width, height} = ref.getSize();
       doc.insertPage(after, [width, height]).setRotation(degrees(ref.getRotation().angle));
-    });
+    }));
     scrollToPage(after);
     return {text:`已在${after ? `第 ${after} 頁後面` : '最前面'}加上一張空白頁（第 ${after + 1} 頁），現在共 ${S.pages.length} 頁。`};
   },
   async pdf_open(a){
     const p = String(a.path ?? '').trim();
     if (!/\.pdf$/i.test(p)) throw new Error('只能開啟 .pdf 檔（收到：' + p + '）');
+    if (!(/^[A-Za-z]:[\\/]/.test(p) || /^\/(?![\\/])/.test(p)))
+      throw new Error('請給 PDF 檔在這台電腦上的完整路徑（例如 C:\\Users\\名字\\Documents\\檔案.pdf），不接受網路位置或相對路徑（收到：' + p + '）');
     if (!DESK) throw new Error('這個版本不能開啟電腦裡的檔案');
-    let r; try { r = await DESK.readFile(p); } catch (_) { throw new Error('讀不到這個檔案：' + p); }
+    let r; try { r = await DESK.readFile(p, {quiet:true}); } catch (_) { throw new Error('讀不到這個檔案：' + p); }
     await openFile(new File([r.data], r.name, {type:'application/pdf'}), desktopHandle(p, r.name));
     if (!S.pdf || S.name !== r.name) throw new Error('這個檔案打不開（可能不是 PDF，或檔案已損壞）：' + p);
     return {text:`已開啟「${r.name}」（${S.pages.length} 頁），它現在是目前的文件。`};
   },
   async pdf_save_as(){   // the 另存新檔 window, as Ctrl+S opens it: the person picks the place (never the original)
     clNeed();
-    const saving = saveAsNew(S.bytes, '_已編輯'), r = await Promise.race([saving, new Promise(res => setTimeout(() => res('wait'), 150000))]);
+    CL_SAVING = true;   // until the window closes, changes wait (else they would not be in the file, yet the tab would read as saved)
+    const saving = saveAsNew(S.bytes, '_已編輯').finally(() => { CL_SAVING = false; });
+    const r = await Promise.race([saving, new Promise(res => setTimeout(() => res('wait'), CL_SAVE_WAIT))]);
     if (r === 'wait') return {text:'已在 PDF 工作台跳出「另存新檔」視窗，使用者還沒有選好位置。'};
     return r ? {text:`已另存新檔：${S.handle && S.handle.path || S.name}`} : {text:'沒有存檔：使用者取消了另存新檔。'};
   },
@@ -11046,11 +11061,21 @@ async function clSearch({query, match_case, whole_word, pages}){
   return {hits, o, q};
 }
 const clContext = h => { const a = Math.max(0, h.s - 20), b = Math.min(h.ctx.length, h.e + 20); return (a ? '…' : '') + h.ctx.slice(a, h.s) + '【' + h.ctx.slice(h.s, h.e) + '】' + h.ctx.slice(h.e, b) + (b < h.ctx.length ? '…' : ''); };
-async function runClaudeTool(tool, args){
-  const f = CLAUDE_TOOLS[tool]; if (!f) return {error:'PDF 工作台還沒有這個工具：' + tool};
-  if (CL_EDIT.has(tool) && ($('#mask').classList.contains('show') || TBE || NP))
-    return {error:'PDF 工作台正在忙（有視窗開著，或正在編輯文字方塊、便利貼）。請使用者先完成或關掉它，再試一次。'};
-  try { return await f(args && typeof args === 'object' ? args : {}); } catch (e) { return {error:String((e && e.message) || e)}; }
+// busy for a change: a window open (the 另存新檔 window too), the program working on a change, a text box, note, pen
+// stroke or shape being drawn
+const clBusy = () => $('#mask').classList.contains('show') || $('#busy').classList.contains('show') || CL_SAVING || !!TBE || !!NP
+  || !!POLY || !!FPOLY || PEN.busy || PEN.strokes.length > 0;
+let CL_QUEUE = Promise.resolve(), CL_SAVING = false;
+// calls are carried out one at a time, in the order they came (two at once would both start from the same document, and
+// one change would be lost)
+function runClaudeTool(tool, args){
+  const run = async () => {
+    const f = CLAUDE_TOOLS[tool]; if (!f) return {error:'PDF 工作台還沒有這個工具：' + tool};
+    if (CL_EDIT.has(tool) && clBusy())
+      return {error:'PDF 工作台正在忙（有視窗開著、正在存檔，或使用者正在編輯）。請使用者先完成或關掉它，再試一次。'};
+    try { return await f(args && typeof args === 'object' ? args : {}); } catch (e) { return {error:String((e && e.message) || e)}; }
+  };
+  const p = CL_QUEUE.then(run, run); CL_QUEUE = p.catch(() => {}); return p;
 }
 if (DESK && DESK.claude) DESK.claude.onCall(async (id, tool, args) => DESK.claude.reply(id, await runClaudeTool(tool, args)));
 
@@ -11433,7 +11458,9 @@ async function openSettings(tab = 'look'){
     const sf = e.target.closest('[data-sf]'); if (sf) { if (sf.dataset.sf === 'export') exportSettings(); if (sf.dataset.sf === 'import') chooseSettingsFile(); return; }
     const cl = e.target.closest('[data-cl]'); if (cl) { if (cl.disabled) return;
       if (cl.dataset.cl === 'mcpb') saveClaudeMcpb();
-      if (cl.dataset.cl === 'key') DESK.claude.newKey().then(st => { CLAUDE_ST = st; show('claude'); toast('已產生新的金鑰：請重新儲存並安裝 Claude 擴充功能'); });
+      if (cl.dataset.cl === 'copy') { navigator.clipboard.writeText(CLAUDE_ST.key).then(() => toast('已複製連線金鑰'), () => toast('無法複製，請手動選取金鑰', 'err')); }
+      if (cl.dataset.cl === 'key' && !cl.dataset.ask) { cl.dataset.ask = '1'; cl.textContent = '再按一次確定（裝好的擴充功能會連不上）'; return; }   // (asks first)
+      if (cl.dataset.cl === 'key') DESK.claude.newKey().then(st => { CLAUDE_ST = st; show('claude'); toast('已產生新的金鑰：請把它複製到 Claude 擴充功能的設定，或重新儲存並安裝擴充功能'); });
       return; }
     const u = e.target.closest('[data-u2]'); if (!u || u.disabled) return;
     if (u.dataset.u2 === 'check') { UPD.state = {state:'checking'}; renderUpdate(); DESK.update.check().then(st => { if (st) { UPD.state = st; renderUpdate(); } }); }
@@ -11651,6 +11678,7 @@ window.__pdfapp = {
   imageBoxes:i => detectImages(i),
   multi:() => MS ? {i:MS.i, ids:MS.items.map(a => a.id)} : null,
   flatten:pages => flattenForExport(pages),   // (tests) the copy that 轉存 Word converts
+  claudeSaveWait:ms => { CL_SAVE_WAIT = ms; },   // (tests) pdf_save_as answers sooner
   wordFonts,
   links:async i => {   // (tests) page i's links: on screen, where they go, how they look
     const doc = await geoDoc();

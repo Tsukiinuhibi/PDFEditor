@@ -25,7 +25,7 @@ function call(tool, args){
       res.on('data', d => parts.push(d));
       res.on('end', () => {
         let j = null; try { j = JSON.parse(Buffer.concat(parts).toString('utf8')); } catch (_) {}
-        if (res.statusCode === 401) return resolve({ error: 'PDF 工作台拒絕了連線：金鑰不對（可能在 PDF 工作台重新產生過金鑰）。' + AGAIN });
+        if (res.statusCode === 401) return resolve({ error: 'PDF 工作台拒絕了連線：金鑰不對（可能在 PDF 工作台重新產生過金鑰）。請在 PDF 工作台的「設定 → Claude」複製新的金鑰，貼到 Claude 的「設定 → 擴充功能 → PDF 工作台」的連線金鑰；或移除這個擴充功能，再重新儲存並安裝。' });
         if (res.statusCode !== 200 || !j) return resolve({ error: (j && j.error) || `PDF 工作台回應錯誤（${res.statusCode}）` });
         resolve(j);
       });

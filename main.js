@@ -131,8 +131,8 @@ function safeName(n) {
   return s.slice(0, 200);
 }
 
-ipcMain.handle('file:read', async (_e, p) => {
-  allowDir(path.dirname(p));
+ipcMain.handle('file:read', async (_e, p, opts) => {
+  if (!(opts && opts.quiet)) allowDir(path.dirname(p));   // (quiet: a file Claude asked for; its folder is not added)
   const data = await fs.readFile(p);
   return { name: path.basename(p), path: p, data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength) };
 });
@@ -200,7 +200,11 @@ ipcMain.on('claude:result', (_e, id, r) => { const f = claudeWait.get(id); if (f
 const claudeState = () => ({ enabled: !!(claudeSet && claudeSet.enabled), port: bridge.port, key: claudeSet ? claudeSet.key : '', error: claudeErr, last: claudeLast });
 async function claudeApply(){
   claudeErr = '';
-  if (claudeSet.enabled) { if (!(await bridge.start(claudeSet.port))) claudeErr = `連接埠 ${claudeSet.port}～${claudeSet.port + 9} 都被占用`; }
+  if (claudeSet.enabled) {
+    const p = await bridge.start(claudeSet.port);
+    if (!p) claudeErr = `連接埠 ${claudeSet.port}～${claudeSet.port + 9} 都被占用`;
+    else if (p !== claudeSet.port) { claudeSet.port = p; CL.saveSettings(claudeFile(), claudeSet); }   // (the extension saved now uses this one: keep it)
+  }
   else await bridge.stop();
   return claudeState();
 }

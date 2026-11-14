@@ -6,7 +6,7 @@ contextBridge.exposeInMainWorld('desktop', {
   ready: () => ipcRenderer.invoke('renderer-ready'),
   info: () => ipcRenderer.invoke('app:info'),
   openDialog: () => ipcRenderer.invoke('file:open-dialog'),
-  readFile: p => ipcRenderer.invoke('file:read', p),
+  readFile: (p, opts) => ipcRenderer.invoke('file:read', p, opts),
   writeFile: (p, data) => ipcRenderer.invoke('file:write', p, data),
   saveAs: (name, data, opts) => ipcRenderer.invoke('file:save-as', name, data, opts),
   chooseSave: (name, opts) => ipcRenderer.invoke('file:choose-save', name, opts),

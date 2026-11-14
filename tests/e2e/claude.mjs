@@ -5,6 +5,7 @@ import { launch, TMP, ROOT } from './_env.mjs';
 import { spawn } from 'child_process';
 import zlib from 'zlib';
 import http from 'http';
+import net from 'net';
 import fs from 'fs';
 import path from 'path';
 
@@ -87,11 +88,16 @@ check('pdf_go_to_page 99 (of fewer): an error that says the range', r.isError &&
 // the bridge refuses: no key, a wrong key, a request from a web page (Origin)
 const noKey = await post(port, {}), badKey = await post(port, {'X-PDFE-Key':'0'.repeat(48)}), web = await post(port, {'X-PDFE-Key':key, Origin:'https://example.com'});
 check('the bridge: no key 401, a wrong key 401, a web page (Origin) 403', noKey === 401 && badKey === 401 && web === 403, {noKey, badKey, web});
-// a new key: the old one is refused, also through the extension
-await openClaude(); await win.click('[data-cl="key"]'); await win.waitForTimeout(500);
-const oldNow = await post(port, {'X-PDFE-Key':key});
+// a new key: shown in 設定 (to paste into the extension), one click asks first, the second makes it; the old one is refused
+await openClaude();
+const keyShown = await Ev(() => (document.querySelector('#clKey') || {}).textContent || '');
+await win.click('[data-cl="key"]'); await win.waitForTimeout(400);
+const stillOld = await post(port, {'X-PDFE-Key':key});
+await win.click('[data-cl="key"]'); await win.waitForTimeout(500);
+const oldNow = await post(port, {'X-PDFE-Key':key}), keyNew = await Ev(() => (document.querySelector('#clKey') || {}).textContent || '');
 r = await tool(s, 'pdf_status');
-check('〔重新產生金鑰〕: the old key is refused, and the extension says to save and install it again', oldNow === 401 && r.isError && /金鑰/.test(r.text), {oldNow, text:r.text});
+check('〔重新產生金鑰〕: the key is shown in 設定; the first click only asks, the second makes a new one (shown); the old key is refused, and the extension says how to put the new one in',
+  keyShown === key && stillOld === 200 && oldNow === 401 && /^[0-9a-f]{48}$/.test(keyNew) && keyNew !== key && r.isError && /複製新的金鑰/.test(r.text), {keyShown:keyShown.slice(0, 6), stillOld, oldNow, text:r.text});
 // 允許 off: the extension cannot reach the program, and says so (no hang)
 await win.click('#clOn'); await win.waitForTimeout(800);
 const st2 = await status();
@@ -172,6 +178,51 @@ const bad1 = await tool(s3, 'pdf_open', {path:path.join(TMP, 'notes.txt')}), bad
 check('pdf_open: a PDF by its path (Chinese and a space in it) opens and becomes the current document; not a .pdf, or no such file: an error',
   !r.isError && !!j3 && j3.active && j3.active.name === '另一份 文件.pdf' && bad1.isError && /\.pdf/.test(bad1.text) && bad2.isError && /讀不到/.test(bad2.text), {text:r.text, active:j3 && j3.active && j3.active.name, bad1:bad1.text, bad2:bad2.text});
 s3.close();
+
+// ---- part 4 (final review): changes that do not happen, calls at once, a slow 另存新檔, page ranges, paths, the port ---
+const s4 = mcp({PDFE_PORT:String(man2.user_config.port.default), PDFE_KEY:man2.user_config.key.default});
+await s4.request('initialize', {protocolVersion:'2025-06-18', capabilities:{}, clientInfo:{name:'test', version:'1'}}); s4.notify('notifications/initialized');
+const npages = () => Ev(() => window.__pdfapp.S.pages.length);
+// a change the person declines (a signed document asks first): Claude is told, nothing changed
+await Ev(() => { window.__pdfapp.S.signed = true; });
+const n4 = await npages();
+const pDel = tool(s4, 'pdf_delete_pages', {pages:'2'});
+await win.waitForFunction(() => document.querySelector('#mask').classList.contains('show'), null, {timeout:15000});
+await win.click('#modal button:has-text("取消")');
+r = await pDel;
+await Ev(() => { window.__pdfapp.S.signed = false; });
+check('a change the person declines (a signed document): Claude is told it did not happen, and nothing changed', r.isError && /取消/.test(r.text) && (await npages()) === n4, r.text);
+// two calls at once: one after the other, both carried out
+const [a1, a2] = await Promise.all([tool(s4, 'pdf_add_note', {page:1, x:50, y:50, text:'第一張'}), tool(s4, 'pdf_add_note', {page:1, x:50, y:120, text:'第二張'})]);
+await win.waitForTimeout(1000);
+const notes4 = (await anns(0)).filter(a => a.sub === 'Text').map(a => a.contents);
+check('two calls at once: one after the other, both carried out', !a1.isError && !a2.isError && notes4.includes('第一張') && notes4.includes('第二張'), {notes4, a1:a1.text, a2:a2.text});
+// a 另存新檔 window that stays open: Claude is told; a change meanwhile is refused as busy; once it closes, changes work
+await app.evaluate(({ipcMain}, dir) => { ipcMain.removeHandler('file:save-as'); ipcMain.handle('file:save-as', () => new Promise(res => setTimeout(() => res(dir + '/slow_已編輯.pdf'), 4000))); }, TMP);
+await Ev(() => window.__pdfapp.claudeSaveWait(800));   // (the tool answers after 0.8 s here instead of 150 s)
+r = await tool(s4, 'pdf_save_as');
+const during = await tool(s4, 'pdf_add_text', {page:1, x:72, y:500, text:'存檔中加的字'});
+await win.waitForTimeout(4500);
+const later = await tool(s4, 'pdf_add_text', {page:1, x:72, y:520, text:'存好之後加的字'});
+check('a 另存新檔 window still open: Claude is told so, a change meanwhile is refused as busy; after it closes changes work again',
+  /還沒有選好位置/.test(r.text) && during.isError && /正在忙/.test(during.text) && !later.isError, {r:r.text, during:during.text, later:later.text});
+// page ranges reaching past the last page, or huge: an error at once, nothing changed
+const n5 = await npages(), t0 = Date.now();
+const e1 = await tool(s4, 'pdf_delete_pages', {pages:`${n5 - 1}-${n5 + 3}`}), e2 = await tool(s4, 'pdf_delete_pages', {pages:`2, ${n5 + 50}`}), e3 = await tool(s4, 'pdf_rotate_pages', {pages:'1-99999999999', degrees:90});
+check('page ranges reaching past the last page, or huge: an error that says the range, at once, nothing changed',
+  [e1, e2, e3].every(e => e.isError && /1～\d+/.test(e.text)) && Date.now() - t0 < 10000 && (await npages()) === n5, {e1:e1.text, e2:e2.text, e3:e3.text, ms:Date.now() - t0});
+// pdf_open: only a full path on this computer
+const p1 = await tool(s4, 'pdf_open', {path:'\\\\attacker-host\\share\\x.pdf'}), p2 = await tool(s4, 'pdf_open', {path:'//attacker-host/share/x.pdf'}), p3 = await tool(s4, 'pdf_open', {path:'relative/x.pdf'});
+check('pdf_open refuses a network share and a relative path', [p1, p2, p3].every(u => u.isError && /完整路徑/.test(u.text)), [p1.text, p2.text, p3.text]);
+s4.close();
+// the port that was free is remembered, so the installed extension still finds the program after a restart
+const profFile = path.join(TMP, 'profile', 'claude.json'), prof = JSON.parse(fs.readFileSync(profFile, 'utf8'));
+await openClaude(); await win.click('#clOn'); await win.waitForTimeout(800);   // off
+const blocker = net.createServer(); await new Promise(res => blocker.listen(prof.port, '127.0.0.1', res));
+await win.click('#clOn'); await win.waitForTimeout(1000);   // on again: that port is taken
+const prof2 = JSON.parse(fs.readFileSync(profFile, 'utf8')), st6 = await status();
+blocker.close(); await closeModal();
+check('its port taken: the next one is used, shown and remembered', prof2.port === prof.port + 1 && st6.includes(String(prof.port + 1)), {before:prof.port, after:prof2.port, st6});
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
