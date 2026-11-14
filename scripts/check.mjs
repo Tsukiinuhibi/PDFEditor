@@ -1,4 +1,4 @@
-// Quick check before a release: the syntax of main.js, word.js, preload.js, app/fontid.js and the module script inside
+// Quick check before a release: the syntax of main.js, word.js, claude.js, preload.js, app/fontid.js, app/claude/server/index.js and the module script inside
 // app/index.html, and that this version's notes head app/CHANGELOG.md and match RELEASE_NOTES.md.
 import { execFileSync } from 'child_process';
 import fs from 'fs';
@@ -9,7 +9,7 @@ const html = fs.readFileSync('app/index.html', 'utf8');
 const mods = [...html.matchAll(/<script type="module">([\s\S]*?)<\/script>/g)];
 const tmp = path.join(os.tmpdir(), 'pdfe-index-module.mjs');
 fs.writeFileSync(tmp, mods[mods.length - 1][1]);
-for (const f of ['main.js', 'word.js', 'preload.js', 'app/fontid.js', tmp]) {
+for (const f of ['main.js', 'word.js', 'claude.js', 'preload.js', 'app/fontid.js', 'app/claude/server/index.js', tmp]) {
   execFileSync(process.execPath, ['--check', f], { stdio: 'inherit' });
   console.log('ok  ' + (f === tmp ? 'app/index.html (module script)' : f));
 }

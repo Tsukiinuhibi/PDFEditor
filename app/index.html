@@ -299,6 +299,8 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .pr-err:empty{display:none}
 .pr-warn{color:#b35c00;font-size:12px;margin:-4px 0 8px}
 .url-st{font-size:12px;color:var(--ink2);min-height:18px}
+.cl-st{margin:6px 0 10px;color:var(--ink2);font-size:12.5px}
+.cl-steps{margin:4px 0 8px 20px;padding:0;line-height:1.75;font-size:12.5px}
 .wd-note{font-size:12px;line-height:1.6;color:var(--ink2);margin-top:4px}
 .lk-other{font-size:12px;line-height:1.6;color:var(--ink2);word-break:break-all;border:1px solid var(--line);border-radius:6px;padding:6px 8px}
 .pr-sum{margin-right:auto;font-size:13px;color:var(--ink2)}
@@ -10862,6 +10864,83 @@ async function openWordDialog(){
 }
 
 /* ====================================================================
+   Claude 增益集: Claude Desktop's extension (a .mcpb saved from 設定 → Claude) runs an MCP server that sends each tool call
+   to the local bridge in main.js (claude.js), and main.js hands it here (claude:call → claude:result). A tool gets the
+   arguments Claude sent and answers {text} or {error} in words a person reads; every change goes through mutate().
+   ==================================================================== */
+let CLAUDE_ST = {enabled:false, port:0, key:'', error:'', last:0};
+function claudePaneHTML(){
+  const c = CLAUDE_ST, st = !c.enabled ? '關閉' : c.error ? '無法開始：' + c.error : `等待 Claude 連線（連接埠 ${c.port}）` + (c.last ? `　上次 Claude 的呼叫：${new Date(c.last).toLocaleTimeString()}` : '');
+  return `<div class="set-h">Claude</div>
+    <div class="note" style="margin-bottom:10px">讓 Claude 桌面版用 PDF 工作台讀取與修改你開著的 PDF：找與取代文字、加文字方塊與便利貼、螢光筆、旋轉與刪除頁面、另存新檔。Claude 做的修改都可以復原，也不會覆蓋原本的檔案。</div>
+    <label class="set-opt"><input type="checkbox" id="clOn"${c.enabled ? ' checked' : ''}>允許 Claude 使用 PDF 工作台<small>只有這台電腦上的 Claude 擴充功能連得到</small></label>
+    <div class="cl-st" id="clSt">${esc(st)}</div>
+    <div class="set-btns"><button class="btn" data-cl="mcpb"${c.enabled && c.port ? '' : ' disabled'}>儲存 Claude 擴充功能…</button><button class="btn" data-cl="key">重新產生金鑰</button></div>
+    <div class="set-h" style="margin-top:14px">安裝步驟</div>
+    <ol class="cl-steps"><li>安裝並登入 Claude 桌面版（claude.ai/download）。</li><li>打開上面的「允許 Claude 使用 PDF 工作台」。</li>
+      <li>按〔儲存 Claude 擴充功能…〕，存出「PDF 工作台.mcpb」。</li>
+      <li>在檔案總管雙擊這個檔案（或在 Claude 的「設定 → 擴充功能 → 進階設定 → 安裝擴充功能…」選它），按〔安裝〕。</li>
+      <li>在 Claude 的對話裡說要做的事，例如「把目前文件裡的『草稿』都換成『定稿』」。用的時候 PDF 工作台要開著。</li></ol>
+    <div class="note">按〔重新產生金鑰〕後，裝好的擴充功能就不能用了，要重新儲存並安裝一次。</div>`;
+}
+// the extension: manifest (MCPB 0.3; the port and key filled in as the settings' defaults), the server and its tools
+async function saveClaudeMcpb(){
+  const c = CLAUDE_ST; if (!DESK || !c.enabled || !c.port) return;
+  try {
+    const get = async u => { const r = await fetch(u); if (!r.ok) throw new Error(u); return new Uint8Array(await r.arrayBuffer()); };
+    const server = await get('claude/server/index.js'), toolBytes = await get('claude/server/tools.json'), tools = JSON.parse(new TextDecoder().decode(toolBytes));
+    const version = /^\d+\.\d+\.\d+$/.test(UPD.info && UPD.info.version || '') ? UPD.info.version : '1.0.0';
+    const manifest = {manifest_version:'0.3', name:'pdf-workbench', display_name:'PDF 工作台', version,
+      description:'讓 Claude 用 PDF 工作台讀取與修改你開著的 PDF：找與取代文字、加文字方塊與便利貼、螢光筆、頁面操作、復原、另存新檔。',
+      author:{name:'PDF 工作台'},
+      server:{type:'node', entry_point:'server/index.js', mcp_config:{command:'node', args:['${__dirname}/server/index.js'], env:{PDFE_PORT:'${user_config.port}', PDFE_KEY:'${user_config.key}'}}},
+      tools:tools.map(t => ({name:t.name, description:t.description})),
+      compatibility:{platforms:['win32', 'darwin'], runtimes:{node:'>=16.0.0'}},
+      user_config:{
+        port:{type:'number', title:'連接埠', description:'PDF 工作台「設定 → Claude」顯示的連接埠', default:c.port, required:true, min:1024, max:65535},
+        key:{type:'string', title:'連線金鑰', description:'PDF 工作台「設定 → Claude」產生的金鑰', default:c.key, required:true, sensitive:true},
+      }};
+    const zip = makeZip([{name:'manifest.json', data:new TextEncoder().encode(JSON.stringify(manifest, null, 2)), deflate:true},
+      {name:'server/index.js', data:server, deflate:true}, {name:'server/tools.json', data:toolBytes, deflate:true}]);
+    const where = await DESK.chooseSave('PDF 工作台.mcpb'); if (!where) return;
+    await DESK.writeFile(where, new Uint8Array(await zip.arrayBuffer()));
+    toast('已儲存 Claude 擴充功能：' + where.split(/[\\/]/).pop());
+  } catch (e) { toast('儲存擴充功能失敗：' + (e.message || e), 'err'); }
+}
+const CL_EDIT = new Set(['pdf_open', 'pdf_replace', 'pdf_highlight', 'pdf_add_text', 'pdf_add_note', 'pdf_rotate_pages', 'pdf_delete_pages', 'pdf_insert_blank_page', 'pdf_undo', 'pdf_save_as']);
+const clNeed = () => { if (!S.pdf) throw new Error('PDF 工作台現在沒有開啟的文件，請先用 pdf_open 開啟一個 PDF'); };
+const clPage = p => { const n = S.pages.length, k = Number(p); if (!Number.isInteger(k) || k < 1 || k > n) throw new Error(`頁碼要在 1～${n} 之間（收到 ${p}）`); return k - 1; };
+const clPages = txt => { const n = S.pages.length, r = parseRange(String(txt ?? ''), n); if (!r || !r.size) throw new Error(`頁碼範圍看不懂，或不在 1～${n} 之間：「${txt}」`); return [...r].sort((a, b) => a - b); };
+const CLAUDE_TOOLS = {
+  async pdf_status(){
+    if (!S.pdf) return {text:'PDF 工作台現在沒有開啟的文件。可以用 pdf_open 開啟一個 PDF。'};
+    const documents = docs.map((d, k) => k === active ? {name:S.name, pages:S.pages.length, unsaved:!!S.dirty, active:true} : {name:d.name, pages:(d.pages || []).length, unsaved:!!d.dirty, active:false});
+    return {text:JSON.stringify({documents, active:{name:S.name, pages:S.pages.length, current_page:S.current + 1, unsaved:!!S.dirty,
+      page_sizes:S.pages.map(p => [+p.w.toFixed(1), +p.h.toFixed(1)])}, units:'pt, from the top-left corner of the page as shown'})};
+  },
+  async pdf_read_text({pages} = {}){
+    clNeed();
+    const list = pages ? clPages(pages) : [...Array(Math.min(S.pages.length, 50)).keys()];
+    if (list.length > 50) throw new Error('一次最多讀 50 頁，請分幾次讀');
+    const out = [];
+    for (const i of list) { const lines = await findLines(i); out.push(`第 ${i + 1} 頁\n` + (lines.length ? lines.map(l => l.text).join('\n') : '（這一頁沒有文字層，可能是掃描的頁面）')); }
+    let text = out.join('\n\n');
+    if (text.length > 100000) text = text.slice(0, 100000) + '\n…（太長，後面省略了；請指定比較少的頁）';
+    if (!pages && S.pages.length > 50) text += `\n\n（文件有 ${S.pages.length} 頁，這裡只讀了前 50 頁）`;
+    return {text};
+  },
+  async pdf_go_to_page({page}){ clNeed(); const i = clPage(page); scrollToPage(i); return {text:`已跳到第 ${i + 1} 頁`}; },
+  async pdf_undo(){ clNeed(); if (!S.undo.length) return {text:'沒有可以復原的修改'}; await actions.undo(); return {text:'已復原上一個修改'}; },
+};
+async function runClaudeTool(tool, args){
+  const f = CLAUDE_TOOLS[tool]; if (!f) return {error:'PDF 工作台還沒有這個工具：' + tool};
+  if (CL_EDIT.has(tool) && ($('#mask').classList.contains('show') || TBE || NP))
+    return {error:'PDF 工作台正在忙（有視窗開著，或正在編輯文字方塊、便利貼）。請使用者先完成或關掉它，再試一次。'};
+  try { return await f(args && typeof args === 'object' ? args : {}); } catch (e) { return {error:String((e && e.message) || e)}; }
+}
+if (DESK && DESK.claude) DESK.claude.onCall(async (id, tool, args) => DESK.claude.reply(id, await runClaudeTool(tool, args)));
+
+/* ====================================================================
    Sample document
    ==================================================================== */
 async function makeSample(){
@@ -11182,7 +11261,7 @@ async function importSettings(file){
 }
 async function openSettings(tab = 'look'){
   if (SET) { SET.show(tab); return; }
-  const tabs = [['look', '外觀'], ['bar', '工具列'], ['keys', '按鍵'], ['people', '人員'], ['file', '設定檔'], ...(DESK ? [['update', '軟體更新']] : [])];
+  const tabs = [['look', '外觀'], ['bar', '工具列'], ['keys', '按鍵'], ['people', '人員'], ['file', '設定檔'], ...(DESK && DESK.claude ? [['claude', 'Claude']] : []), ...(DESK ? [['update', '軟體更新']] : [])];
   const body = document.createElement('div'); body.className = 'set';
   body.innerHTML = `<div class="set-tabs">${tabs.map(([k, n]) => `<button data-st="${k}">${n}</button>`).join('')}</div><div class="set-pane"></div>`;
   const pane = body.querySelector('.set-pane');
@@ -11206,6 +11285,7 @@ async function openSettings(tab = 'look'){
     file:() => `<div class="set-h">設定檔</div>
       <div class="note" style="margin-bottom:12px">把這台電腦上的程式設定（外觀、工具列、按鍵、人員名單、繪圖樣式、我的最愛顏色、戳記、文字方塊樣式…）存成一個檔案，在別台電腦或重灌後匯入，就是同一套設定。</div>
       <div class="set-btns"><button class="btn" data-sf="export">匯出設定…</button><button class="btn" data-sf="import">匯入設定…</button></div>`,
+    claude:() => claudePaneHTML(),
     update:() => {
       const st = UPD.state.state, ready = st === 'ready', working = st === 'checking' || st === 'downloading';
       return `<div class="set-h">軟體更新</div>
@@ -11222,6 +11302,7 @@ async function openSettings(tab = 'look'){
     body.querySelectorAll('[data-st]').forEach(b => b.classList.toggle('on', b.dataset.st === k));
     if (k === 'keys') { keys = keyEditor(); pane.innerHTML = ''; pane.appendChild(keys.body); }
     else pane.innerHTML = panes[k]();
+    if (k === 'claude') DESK.claude.state().then(st => { CLAUDE_ST = st; if (SET && SET.tab === 'claude') pane.innerHTML = panes.claude(); });   // (as it is now)
   };
   // the update pane is drawn again on every updater event: an open 更新內容 (and where it is scrolled to) stays as it is
   SET = {tab, show, paintUpdate:() => { if (!SET || SET.tab !== 'update') return; const keep = pane.querySelector('#updNotes'), top = keep ? keep.scrollTop : 0; pane.innerHTML = panes.update(); if (keep) { pane.querySelector('#updNotes').replaceWith(keep); keep.scrollTop = top; } }};
@@ -11236,6 +11317,10 @@ async function openSettings(tab = 'look'){
     const pd = e.target.closest('[data-pdel]'); if (pd) { if (!pd.disabled && removePerson(pd.dataset.pdel)) show('people'); return; }
     if (e.target.closest('[data-padd]')) { addFromInput(); return; }
     const sf = e.target.closest('[data-sf]'); if (sf) { if (sf.dataset.sf === 'export') exportSettings(); if (sf.dataset.sf === 'import') chooseSettingsFile(); return; }
+    const cl = e.target.closest('[data-cl]'); if (cl) { if (cl.disabled) return;
+      if (cl.dataset.cl === 'mcpb') saveClaudeMcpb();
+      if (cl.dataset.cl === 'key') DESK.claude.newKey().then(st => { CLAUDE_ST = st; show('claude'); toast('已產生新的金鑰：請重新儲存並安裝 Claude 擴充功能'); });
+      return; }
     const u = e.target.closest('[data-u2]'); if (!u || u.disabled) return;
     if (u.dataset.u2 === 'check') { UPD.state = {state:'checking'}; renderUpdate(); DESK.update.check().then(st => { if (st) { UPD.state = st; renderUpdate(); } }); }
     if (u.dataset.u2 === 'install') { closeModal(true); installUpdate(); }
@@ -11251,6 +11336,7 @@ async function openSettings(tab = 'look'){
     if (el.name === 'th') { setTheme(el.value); toast('顯示模式：' + THEME_NAMES[el.value]); }
     if (el.name === 'pc') { setPageColor(el.value); toast('頁面色彩：' + PAGE_NAMES[el.value]); }
     if (el.name === 'pdef') { setDefaultPerson(el.value); show('people'); }
+    if (el.id === 'clOn') { el.disabled = true; DESK.claude.setEnabled(el.checked).then(st => { CLAUDE_ST = st; if (SET && SET.tab === 'claude') show('claude'); }); }
     if (el.name === 'iconsOnly') { RIBBON.iconsOnly = el.checked; try { localStorage.setItem(RIBBON_KEY, JSON.stringify(RIBBON)); } catch (_) {} applyRibbon(); }
   });
   await openModal({title:'設定', body, width:620, buttons:[{spacer:true}, {label:'關閉', value:true, primary:true}], onOpen:() => show(tab)});

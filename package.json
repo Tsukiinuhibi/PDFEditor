@@ -49,6 +49,7 @@
       "main.js",
       "preload.js",
       "word.js",
+      "claude.js",
       "app/**/*",
       "!**/*.map",
       "!node_modules/pdfjs-dist/legacy/**",

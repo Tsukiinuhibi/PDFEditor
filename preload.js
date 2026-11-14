@@ -28,6 +28,13 @@ contextBridge.exposeInMainWorld('desktop', {
     onProgress: cb => ipcRenderer.on('url:progress', (_e, id, got, total) => cb(id, got, total)),
   },
   clipboardText: () => ipcRenderer.invoke('app:clipboard-text'),
+  claude: {
+    state: () => ipcRenderer.invoke('claude:state'),
+    setEnabled: on => ipcRenderer.invoke('claude:set-enabled', on),
+    newKey: () => ipcRenderer.invoke('claude:new-key'),
+    onCall: cb => ipcRenderer.on('claude:call', (_e, id, tool, args) => cb(id, tool, args)),
+    reply: (id, r) => ipcRenderer.send('claude:result', id, r),
+  },
   word: {
     detect: () => ipcRenderer.invoke('word:detect'),
     convert: (id, pdf, out) => ipcRenderer.invoke('word:convert', id, pdf, out),

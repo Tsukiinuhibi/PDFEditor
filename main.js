@@ -180,6 +180,33 @@ ipcMain.handle('word:convert', async (_e, id, pdf, out) => {
   } finally { wordJobs.delete(id); }
 });
 ipcMain.handle('word:cancel', (_e, id) => { const j = wordJobs.get(id); if (j) { j.cancelled = true; if (j.child) j.child.kill(); } });
+// Claude 增益集: the local bridge for Claude Desktop's extension (claude.js). A call goes to the page (claude:call) and its
+// answer comes back (claude:result); the page carries it out on the open document, through mutate()
+const CL = require('./claude');
+const claudeFile = () => path.join(app.getPath('userData'), 'claude.json');
+let claudeSet = null, claudeErr = '', claudeLast = 0, claudeSeq = 0;
+const claudeWait = new Map();
+const bridge = CL.createBridge({
+  getKey: () => claudeSet && claudeSet.enabled ? claudeSet.key : '',
+  onCall: () => { claudeLast = Date.now(); },
+  handle: (tool, args) => new Promise(resolve => {
+    if (!win || win.isDestroyed()) return resolve({ error: 'PDF 工作台的視窗沒有開著' });
+    const id = ++claudeSeq, t = setTimeout(() => { claudeWait.delete(id); resolve({ error: 'PDF 工作台太久沒有完成（它可能正在等使用者處理某個視窗）' }); }, 170000);
+    claudeWait.set(id, r => { clearTimeout(t); resolve(r); });
+    win.webContents.send('claude:call', id, tool, args);
+  }),
+});
+ipcMain.on('claude:result', (_e, id, r) => { const f = claudeWait.get(id); if (f) { claudeWait.delete(id); f(r && typeof r === 'object' ? r : { error: '沒有結果' }); } });
+const claudeState = () => ({ enabled: !!(claudeSet && claudeSet.enabled), port: bridge.port, key: claudeSet ? claudeSet.key : '', error: claudeErr, last: claudeLast });
+async function claudeApply(){
+  claudeErr = '';
+  if (claudeSet.enabled) { if (!(await bridge.start(claudeSet.port))) claudeErr = `連接埠 ${claudeSet.port}～${claudeSet.port + 9} 都被占用`; }
+  else await bridge.stop();
+  return claudeState();
+}
+ipcMain.handle('claude:state', () => claudeState());
+ipcMain.handle('claude:set-enabled', async (_e, on) => { claudeSet.enabled = !!on; CL.saveSettings(claudeFile(), claudeSet); return claudeApply(); });
+ipcMain.handle('claude:new-key', () => { claudeSet.key = CL.newKey(); CL.saveSettings(claudeFile(), claudeSet); return claudeState(); });
 const savedHere = new Set();   // files of another kind chosen with file:choose-save in this run (the only ones open-path opens)
 // a place for a new file of another kind (a .docx): the save dialog only, the caller writes there; never the opened PDF
 ipcMain.handle('file:choose-save', async (_e, suggested, opts) => {
@@ -384,6 +411,7 @@ ipcMain.handle('update:install', () => {
 
 /* ---------------- app lifecycle ---------------- */
 app.whenReady().then(async () => {
+  claudeSet = CL.loadSettings(claudeFile()); claudeApply().catch(() => {});
   await loadPicked();
   const root = __dirname;
   protocol.handle('app', req => {
