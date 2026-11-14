@@ -223,9 +223,12 @@ q1.drawText('ＡＢＣ and AB here', {x:72, y:500, size:16, font:f5});
 d5.addPage([595, 842]);   // a blank page
 const scanImg = await d5.embedPng(Buffer.from(scan, 'base64'));
 for (let k = 0; k < 3; k++) d5.addPage([595, 842]).drawImage(scanImg, {x:0, y:0, width:595, height:842});
+const tiny = await win.evaluate(() => { const c = document.createElement('canvas'); c.width = 1240; c.height = 1754; const g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.fillStyle = '#1a1a1a'; g.font = '22px sans-serif'; g.fillText('7', 610, 1700); return c.toDataURL('image/png').split(',')[1]; });
+d5.addPage([595, 842]).drawImage(await d5.embedPng(Buffer.from(tiny, 'base64')), {x:0, y:0, width:595, height:842});   // (fix pass) a scan with only a small page number
 const PDF5 = path.join(TMP, 'find5.pdf'); fs.writeFileSync(PDF5, await d5.save());
 await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), PDF5);
-await win.waitForFunction(() => window.__pdfapp.S.pages.length === 5 && /find5/.test(window.__pdfapp.S.name), null, {timeout:30000}); await win.waitForTimeout(1500);
+await win.waitForFunction(() => window.__pdfapp.S.pages.length === 6 && /find5/.test(window.__pdfapp.S.name), null, {timeout:30000}); await win.waitForTimeout(1500);
 await Ev(() => window.__pdfapp.setTool('select')); await Ev(() => window.__pdfapp.scrollToPage(0)); await win.waitForTimeout(500);
 const setOpt = (k, on) => Ev(([k, on]) => { const b = document.querySelector(`#findBar [data-fo="${k}"]`); if (b.classList.contains('on') !== on) b.click(); }, [k, on]);
 const lastLabel = () => Ev(() => { const u = window.__pdfapp.S.undo; return u.length ? u[u.length - 1].label : ''; });
@@ -250,6 +253,8 @@ check('全形＝半形 with 全字相符: 「AB」 is found on its own, not insi
 await type('Alpha'); await Ev(() => document.querySelector('#findQ').focus());
 await win.keyboard.press('Control+p'); await win.waitForTimeout(1500);
 const prT = await Ev(() => document.querySelector('#mask').classList.contains('show') ? document.querySelector('#modal .mh').textContent : '');
+await win.keyboard.type('zz'); await win.waitForTimeout(400);
+const qUnder = await Ev(() => document.querySelector('#findQ').value);
 if (prT) { await win.keyboard.press('Escape'); await win.waitForTimeout(600); }
 const afterPrint = await st(); await Ev(() => document.querySelector('#findQ').focus()); await type('a'); await Ev(() => document.querySelector('#findR').focus());
 await win.keyboard.press('Control+f'); await win.waitForTimeout(300);
@@ -260,8 +265,8 @@ const f3moved = (await st()).cur, n5b = (await st()).n;
 await key('Escape');
 await Ev(() => { const z = document.querySelector('#zIn'); z.focus(); z.select(); }); await win.keyboard.press('Control+f'); await win.waitForTimeout(500);
 const openedFromZoom = (await st()).open;
-check('in the find boxes Ctrl+P prints (not swallowed); in the replace box Ctrl+F goes to the find box and F3 steps; Ctrl+F from another box opens the bar',
-  /列印/.test(prT) && focusQ === 'findQ' && (n5b < 2 || f3moved !== cur5) && openedFromZoom, {prT, focusQ, cur5, f3moved, n5b, openedFromZoom, afterPrint:{open:afterPrint.open, q:afterPrint.q}});
+check('in the find boxes Ctrl+P prints (not swallowed; typing under the window leaves the query alone); in the replace box Ctrl+F goes to the find box and F3 steps; Ctrl+F from another box opens the bar',
+  /列印/.test(prT) && qUnder === 'Alpha' && focusQ === 'findQ' && (n5b < 2 || f3moved !== cur5) && openedFromZoom, {prT, qUnder, focusQ, cur5, f3moved, n5b, openedFromZoom, afterPrint:{open:afterPrint.open, q:afterPrint.q}});
 // the 搜尋 tab: with the bar closed it shows how to search, not an old list
 await type('Alpha'); await win.click('#side .tab[data-tab="find"]'); await win.waitForTimeout(600);
 const tabOpen = await Ev(() => document.querySelectorAll('#p-find .fd-hit').length);
@@ -269,8 +274,10 @@ await key('Escape'); await win.waitForTimeout(400);
 const tabClosed = await Ev(() => ({hits:document.querySelectorAll('#p-find .fd-hit').length, note:(document.querySelector('#p-find .empty-note') || {}).textContent || ''}));
 check('the 搜尋 tab: the list while the bar is open; with the bar closed, how to search (no old list)', tabOpen >= 1 && tabClosed.hits === 0 && /Ctrl\+F/.test(tabClosed.note), {tabOpen, tabClosed});
 // the same message twice at once: shown once
-const same = await Ev(() => { window.__pdfapp.toast('同一個訊息只要一次', 'err'); window.__pdfapp.toast('同一個訊息只要一次', 'err'); return [...document.querySelectorAll('.toast')].filter(t => t.textContent === '同一個訊息只要一次').length; });
-check('the same message twice at once (e.g. a font notice for every line of a replace all): shown once', same === 1, same);
+const same = await Ev(() => { const seen = []; const mo = new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => seen.push(n.textContent)))); mo.observe(document.querySelector('#toasts'), {childList:true});
+  window.__pdfapp.toast('同一個訊息只要一次', 'err'); window.__pdfapp.toast('同一個訊息只要一次', 'err');
+  return new Promise(res => setTimeout(() => { mo.disconnect(); res({shown:[...document.querySelectorAll('.toast')].filter(t => t.textContent === '同一個訊息只要一次').length, added:seen.filter(t => t === '同一個訊息只要一次').length}); }, 50)); });
+check('the same message twice at once: shown once, the newer one replacing the older (so its time starts again)', same.shown === 1 && same.added === 2, same);
 // scans: a blank page is not sent to OCR; while the scans are read, stepping keeps the progress, and 〔停止〕 stops it
 await key('Control+f'); await setOpt('scans', true);
 const runs0 = await Ev(() => window.__pdfapp.ocrRuns());
@@ -281,13 +288,18 @@ await win.keyboard.press('F3'); await win.waitForTimeout(150);
 const keepLabel = await label();
 const stopBtn = await Ev(() => { const b = document.querySelector('#findBar [data-fa="stopocr"]'); return !!b && !b.hidden; });
 if (stopBtn) await win.click('#findBar [data-fa="stopocr"]');
+const stopping = await Ev(() => { const b = document.querySelector('#findBar [data-fa="stopocr"]'); return {text:b.textContent, off:b.disabled}; });
 await win.waitForTimeout(4000);
 const afterStop = {label:await label(), runs:(await Ev(() => window.__pdfapp.ocrRuns())) - runs0};
-check('scans being read: stepping keeps 「辨識掃描頁…」; 〔停止〕 stops it before every scan is read', /辨識掃描頁/.test(keepLabel) && stopBtn && !/辨識掃描頁/.test(afterStop.label) && afterStop.runs < 3, {keepLabel, stopBtn, afterStop});
+await Ev(() => window.__pdfapp.mutate('已加入矩形', doc => { doc.getPage(0).drawRectangle({x:20, y:20, width:30, height:20}); })); await win.waitForTimeout(4000);
+const afterEdit = (await Ev(() => window.__pdfapp.ocrRuns())) - runs0;
+check('scans being read: stepping keeps 「辨識掃描頁…」; 〔停止辨識〕 says it is stopping, stops before every scan is read, says how many were not read, and a change does not start them again',
+  /辨識掃描頁/.test(keepLabel) && stopBtn && /停止中/.test(stopping.text) && stopping.off && !/辨識掃描頁…/.test(afterStop.label) && /沒辨識/.test(afterStop.label) && afterStop.runs < 3 && afterEdit === afterStop.runs,
+  {keepLabel, stopBtn, stopping, afterStop, afterEdit});
 await setOpt('scans', false); await setOpt('scans', true); await type('Helloo'); await type('Hello');
 await win.waitForFunction(() => !/辨識掃描頁/.test((document.querySelector('#findN') || {}).textContent || ''), null, {timeout:90000, polling:200}).catch(() => {});
 const runsAll = (await Ev(() => window.__pdfapp.ocrRuns())) - runs0;
-check('every scan read once, the blank page never sent to OCR (3 scans → 3 runs)', runsAll === 3, runsAll);
+check('every scan read once (a scan with only a small page number too), the blank page never sent to OCR (4 scans → 4 runs)', runsAll === 4, runsAll);
 // a scan turned by 90°: read again (its old reading has the wrong places)
 const rBefore = await Ev(() => window.__pdfapp.ocrRuns());
 await key('Escape');

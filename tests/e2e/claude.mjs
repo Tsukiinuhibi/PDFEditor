@@ -319,6 +319,15 @@ const typing7 = !!(await Ev(() => window.__pdfapp.TBE())), rep7 = await slowRep,
 await win.keyboard.press('Escape'); await win.waitForTimeout(500); await Ev(() => window.__pdfapp.setTool('select'));
 check('the person starts typing in a text box while Claude searches to replace: Claude is told it is busy; the box is not closed under them',
   typing7 && rep7.isError && /正在忙/.test(rep7.text) && tbe7, {r:rep7.text, typing7, tbe7});
+// (v1.0.49 fix pass) pdf_replace where a place cannot be done (the word alone inside a form object, emptied): Claude is told which
+{ const d = await PDFDocument.create(), f = await d.embedFont(StandardFonts.Helvetica), a = d.addPage([595, 842]), b = d.addPage([595, 842]);
+  a.drawText('Alpha delta gamma', {x:72, y:700, size:16, font:f});
+  const src = await PDFDocument.create(), sf = await src.embedFont(StandardFonts.Helvetica), sp = src.addPage([200, 40]); sp.drawText('delta', {x:4, y:14, size:16, font:sf});
+  b.drawPage(await d.embedPage(sp), {x:72, y:600});
+  fs.writeFileSync(path.join(TMP, 'form word.pdf'), await d.save()); }
+await tool(s5, 'pdf_open', {path:path.join(TMP, 'form word.pdf')});
+const rForm = await tool(s5, 'pdf_replace', {query:'delta', replacement:''});
+check('pdf_replace where one place cannot be done: Claude hears only the pages done, and which page still has it', !rForm.isError && /第 1 頁）/.test(rForm.text) && !/第 1、2 頁/.test(rForm.text) && /第 2 頁.*1 處無法取代/.test(rForm.text), rForm.text);
 // pdf_open: a file that needs a password, and a broken file named like an open one
 const LOCKED = path.join(TMP, 'locked.pdf'); fs.copyFileSync(path.join(ROOT, 'tests', 'e2e', 'fixtures', 'encrypted', 'r6-userpw.pdf'), LOCKED);
 const pw = await tool(s5, 'pdf_open', {path:LOCKED});

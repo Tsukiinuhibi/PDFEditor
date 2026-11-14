@@ -254,12 +254,12 @@ check('two-sided printing (not only booklets): each side says 「第 K 張正面
 await close();
 // stored settings out of range (a hand-edited settings file): brought back into range
 await Ev(() => { const k = 'pdfeditor.print.v1'; let p = {}; try { p = JSON.parse(localStorage.getItem(k)) || {}; } catch (_) {}
-  p.by = p.by || {}; const who = p.last || ''; p.by[who] = {...(p.by[who] || {}), quality:100000, pct:-5, ppct:99999, overlap:-3, margin:999, nup:7}; localStorage.setItem(k, JSON.stringify(p)); });
+  p.by = p.by || {}; const who = p.last || ''; p.by[who] = {...(p.by[who] || {}), quality:100000, pct:-5, ppct:99999, overlap:-3, margin:999, nup:7, duplex:'zzz', layout:'zzz'}; localStorage.setItem(k, JSON.stringify(p)); });
 await open();
 const stored = await Ev(() => window.__pdfapp.printSt());
 await close();
-check('stored print settings out of range: brought back to allowed values', [150, 300].includes(stored.quality) && stored.pct >= 1 && stored.ppct <= 1000 && stored.overlap >= 0 && [0, 5, 10].includes(stored.margin) && [2, 4, 6, 9, 16].includes(stored.nup),
-  {quality:stored.quality, pct:stored.pct, ppct:stored.ppct, overlap:stored.overlap, margin:stored.margin, nup:stored.nup});
+check('stored print settings out of range (numbers, and choices the window does not offer): brought back to allowed values', [150, 300].includes(stored.quality) && stored.pct >= 1 && stored.ppct <= 1000 && stored.overlap >= 0 && [0, 5, 10].includes(stored.margin) && [2, 4, 6, 9, 16].includes(stored.nup) && stored.duplex === 'simplex' && stored.layout === 'normal',
+  {quality:stored.quality, pct:stored.pct, ppct:stored.ppct, overlap:stored.overlap, margin:stored.margin, nup:stored.nup, duplex:stored.duplex, layout:stored.layout});
 // Ctrl+P twice while the printers are being found: one window, with the busy sign meanwhile
 await app.evaluate(() => { global.__savedPrinters = global.__pdfePrinters; global.__pdfePrinters = async () => { await new Promise(r => setTimeout(r, 1500)); return global.__savedPrinters(); }; });
 await win.keyboard.press('Control+p'); await win.waitForTimeout(200);
@@ -278,24 +278,32 @@ await app.evaluate(() => { global.__savedHook = global.__pdfePrintHook; global._
 const waitSend = () => win.waitForFunction(() => /正在送到印表機/.test((document.querySelector('#prSum') || {}).textContent || ''), null, {timeout:30000}).catch(() => {});
 const afterStop = () => Ev(() => ({open:window.__pdfapp.printState().open, sum:(document.querySelector('#prSum') || {}).textContent || '', go:(document.querySelector('#prGo') || {}).disabled}));
 await open(); await win.click('#prGo'); await waitSend();
+const seenToasts = () => Ev(() => (window.__seenToasts || []).slice());
+await Ev(() => { window.__seenToasts = []; new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => n.textContent && window.__seenToasts.push(n.textContent)))).observe(document.querySelector('#toasts'), {childList:true}); });
 await win.click('#prCancel'); await win.waitForTimeout(1200);
-const byBtn = await afterStop();
+const byBtn = await afterStop(), stopSaid = await seenToasts();
 await win.click('#prGo'); await waitSend();
 await win.keyboard.press('Escape'); await win.waitForTimeout(1200);
 const byEsc = await afterStop();
 await app.evaluate(() => { global.__pdfePrintHook = global.__savedHook; });
 if (byEsc.open) await close();
-check('a printer that never answers: 〔取消〕 and Esc stop waiting, and the window can be used again', byBtn.open && !/正在送到/.test(byBtn.sum) && byBtn.go === false && byEsc.open && !/正在送到/.test(byEsc.sum), {byBtn, byEsc});
+check('a printer that never answers: 〔取消〕 and Esc stop waiting, the window can be used again, and it says the printer may still print', byBtn.open && !/正在送到/.test(byBtn.sum) && byBtn.go === false && byEsc.open && !/正在送到/.test(byEsc.sum) && stopSaid.some(t => /停止等待/.test(t)), {byBtn, byEsc, stopSaid});
 // a PDF opened from Explorer while the print window is open: it opens when the window closes (the print keeps its document)
 const od = await PDFDocument.create(); od.addPage([300, 300]); const OTHER = path.join(TMP, 'other while printing.pdf'); fs.writeFileSync(OTHER, await od.save());
 await open();
 const tabs0 = await Ev(() => document.querySelectorAll('.dtab').length);
 await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), OTHER);
 await win.waitForTimeout(2500);
-const tabsDuring = await Ev(() => document.querySelectorAll('.dtab').length), stillOpen = (await pst()).open;
+const tabsDuring = await Ev(() => document.querySelectorAll('.dtab').length), stillOpen = (await pst()).open, waitSaid = await seenToasts();
 await close(); await win.waitForTimeout(3000);
 const tabsAfter = await Ev(() => document.querySelectorAll('.dtab').length);
-check('a PDF opened from Explorer while the print window is open: opened after the window closes', stillOpen && tabsDuring === tabs0 && tabsAfter === tabs0 + 1, {tabs0, tabsDuring, stillOpen, tabsAfter});
+check('a PDF opened from Explorer while the print window is open: opened after the window closes, and the person is told so', stillOpen && tabsDuring === tabs0 && tabsAfter === tabs0 + 1 && waitSaid.some(t => /列印視窗/.test(t) && /other while printing/.test(t)), {tabs0, tabsDuring, stillOpen, tabsAfter, waitSaid});
+// (fix pass, last: the printer list never comes) the window opens anyway after a while, and the program stays usable
+await app.evaluate(() => { global.__pdfePrinters = () => new Promise(() => {}); });
+await win.keyboard.press('Control+p'); await win.waitForTimeout(11000);
+const hung = await Ev(() => ({open:window.__pdfapp.printState().open, busy:document.querySelector('#busy').classList.contains('show'), note:(document.querySelector('#prDlg .pr-warn') || {}).textContent || ''}));
+if (hung.open) await close();
+check('the printer list never comes: after a while the window opens anyway (no printers, the system dialog offered), nothing left blocked', hung.open && !hung.busy && /找不到印表機|讀取印表機/.test(hung.note) && !(await Ev(() => document.querySelector('#busy').classList.contains('show'))), hung);
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

@@ -1202,7 +1202,7 @@ const viewer = $('#viewer'), pagesEl = $('#pages');
 
 /* ---------------- small UI helpers ---------------- */
 function toast(msg, kind){
-  if ([...$('#toasts').children].some(x => x.textContent === msg)) return;   // (already showing: e.g. a font notice for every line of a replace all)
+  [...$('#toasts').children].filter(x => x.textContent === msg).forEach(x => x.remove());   // (already showing — e.g. a font notice for every line of a replace all: the newer one takes its place)
   const t = document.createElement('div'); t.className = 'toast' + (kind === 'err' ? ' err' : ''); t.textContent = msg;
   $('#toasts').appendChild(t); setTimeout(() => t.remove(), kind === 'long' ? 6500 : kind === 'err' ? 4200 : 2400);
 }
@@ -1219,6 +1219,7 @@ const isTyping = e => { const t = e.target; return t && (t.tagName === 'INPUT' |
 
 let modalResolve = null;
 function openModal({title, body, buttons, width, onOpen}){
+  const ae = document.activeElement; if (ae && ae.closest && ae.closest('#findBar')) ae.blur();   // (typing goes to the window, not the find box under it)
   const m = $('#modal'); m.style.width = width ? width + 'px' : '';
   m.innerHTML = `<div class="mh">${esc(title)}</div><div class="mb"></div><div class="mf"></div>`;
   const mb = m.querySelector('.mb');
@@ -1533,7 +1534,10 @@ const samePath = (a, b) => !!a && !!b && (a === b || (/^[A-Za-z]:[\\/]/.test(a) 
 async function openFile(file, handle = null, {rethrow = false} = {}){
   if (!file) return;
   await whenIdle();   // (a file sent while a change is being made opens after it)
-  while (PR || PRINTOPEN) await new Promise(r => setTimeout(r, 250));   // (the print window prints the document it was opened for)
+  if (PR || PRINTOPEN) {   // (the print window prints the document it was opened for: this one opens when it closes)
+    toast(`關閉列印視窗後會開啟「${file.name || '檔案'}」`, 'long');
+    while ((PR || PRINTOPEN) && (PRINTOPEN || $('#mask').classList.contains('show'))) await new Promise(r => setTimeout(r, 250));
+  }
   // the same file is already open: just switch to its tab
   const same = handle && handle.path && docs.findIndex(d => { const h = docField(d, 'handle'); return h && samePath(h.path, handle.path); });
   if (same >= 0) { switchTab(same); toast('「' + file.name + '」已經開啟'); return; }
@@ -4687,7 +4691,7 @@ async function preparePageText(lines, box, edit, empty, strut){
   return {lines, real, r:empty || real ? null : await renderTextBox(lines, box, strut)};
 }
 // inside a change: the old text out (our block, or what lies in edit.U), the prepared lines in at (x, y)
-async function applyPageText(doc, i, x, y, prep, box, edit, empty, strut){
+async function applyPageText(doc, i, x, y, prep, box, edit, empty, strut, {quiet = false} = {}){   // quiet: the caller says it
   let {lines, real, r} = prep, removed = 0;
   {
     if (edit.block) removed = cutPageBlock(doc, i, edit.block) ? 1 : 0;
@@ -4699,7 +4703,7 @@ async function applyPageText(doc, i, x, y, prep, box, edit, empty, strut){
       removed += removePageText(doc, i, edit.U);
     }
     if (!removed) {   // the text sits where it cannot be taken out (e.g. inside a form object): cover it instead
-      if (empty) { toast('這段文字無法直接刪除', 'err'); return false; }
+      if (empty) { if (!quiet) toast('這段文字無法直接刪除', 'err'); return false; }
       box = {...box, boxBg:box.boxBg || edit.bg};
       if (!real) r = await renderTextBox(lines, box, strut);
     }
@@ -9745,9 +9749,20 @@ function printNum(k, v){
   if (!Number.isFinite(n)) return k === 'copies' ? 1 : PRINT_DEF[k];
   return clamp(k === 'copies' ? Math.round(n) : n, lo, hi);
 }
+// the values each choice in the window offers (read from the window's own form once)
+let PRINT_CHOICES = null;
+function printChoices(){
+  if (!PRINT_CHOICES) {
+    PRINT_CHOICES = {};
+    try { const t = document.createElement('div'); t.innerHTML = printFormHTML({...PRINT_DEF, printer:'', copies:1, collate:true, range:'all', custom:'', subset:'all', reverse:false}, []);
+      t.querySelectorAll('select[data-p]').forEach(sel => { PRINT_CHOICES[sel.dataset.p] = [...sel.options].map(o => o.value); }); } catch (_) {}
+  }
+  return PRINT_CHOICES;
+}
 function printerSettings(name){
   const b = printPrefs().by[name] || {}, out = {...PRINT_DEF};
-  Object.keys(PRINT_DEF).forEach(k => { if (b[k] !== undefined && typeof b[k] === typeof PRINT_DEF[k]) out[k] = typeof PRINT_DEF[k] === 'number' ? printNum(k, b[k]) : b[k]; });
+  const ch = printChoices();
+  Object.keys(PRINT_DEF).forEach(k => { if (b[k] !== undefined && typeof b[k] === typeof PRINT_DEF[k]) out[k] = typeof PRINT_DEF[k] === 'number' ? printNum(k, b[k]) : !ch[k] || ch[k].includes(b[k]) ? b[k] : PRINT_DEF[k]; });
   if (!PAPERS[out.paper]) out.paper = PRINT_DEF.paper;
   return out;
 }
@@ -10004,10 +10019,11 @@ async function printWindow(){
   if (!(await settleEdits())) return;
   let printers = [];
   busy(true, '尋找印表機…');
-  try { printers = DESK && DESK.print ? await DESK.print.printers() : []; } catch (_) { printers = []; }   // the window says so (no printers)
+  try { printers = DESK && DESK.print ? (await Promise.race([DESK.print.printers(), new Promise(res => setTimeout(() => res([]), 8000))])) : []; } catch (_) { printers = []; }   // (none, or none within 8 s: the window says so)
   finally { busy(false); }
   const prefs = printPrefs(), printer = printers.some(p => p.name === prefs.last) ? prefs.last : '';
   PR = {st:{printer, ...printerSettings(printer), copies:1, collate:true, range:'all', custom:'', subset:'all', reverse:false}, printers, cur:0, plan:null, err:'', job:null};
+  try {   // (whatever happens in the window, PR goes with it: a file waiting to open must not wait for ever)
   const body = document.createElement('div'); body.id = 'prDlg'; body.className = 'pr-grid';
   body.innerHTML = printFormHTML(PR.st, printers); PR.body = body;
   await openModal({title:'列印', body, width:1060, buttons:[
@@ -10015,8 +10031,7 @@ async function printWindow(){
     {label:'印表機內容…', id:'prSys', handler:async () => (await runPrint({dialog:true})) ? true : undefined},
     {label:'列印', id:'prGo', primary:true, handler:async () => (await runPrint({dialog:false})) ? true : undefined},
   ], onOpen:(mb, mf) => { const sum = document.createElement('span'); sum.id = 'prSum'; sum.className = 'pr-sum'; mf.prepend(sum); wirePrint(); refreshPrint(); }});
-  if (PR && PR.job) PR.job.cancel = true;
-  PR = null; PR_CACHE.clear();
+  } finally { if (PR && PR.job) PR.job.cancel = true; PR = null; PR_CACHE.clear(); }
 }
 // every side drawn at the chosen dpi into the print view, then printed; 〔取消〕 stops it while the sides are being drawn
 async function runPrint({dialog}){
@@ -10045,9 +10060,9 @@ async function runPrint({dialog}){
     }
     if (stopped()) throw new Error('cancel');
     sum.textContent = '正在送到印表機…';
-    const r = await Promise.race([new Promise(res => { job.wake = () => res({ok:false, why:'cancel'}); }), DESK.print.run({dialog, deviceName:st.printer || '', copies:clamp(Math.round(+st.copies || 1), 1, 999), collate:!!st.collate,
+    const r = await Promise.race([new Promise(res => { job.wake = () => res({ok:false, why:'cancel', waited:true}); }), DESK.print.run({dialog, deviceName:st.printer || '', copies:clamp(Math.round(+st.copies || 1), 1, 999), collate:!!st.collate,
       duplexMode:plan.duplex, color:st.color !== 'gray', landscape:land, pageSize:{width:Math.round(Math.min(pa, pb) * 1000), height:Math.round(Math.max(pa, pb) * 1000)}})]);   // (a printer that never answers: 〔取消〕 / Esc stop waiting)
-    if (!r || !r.ok) { if (!(r && /cancel/i.test(r.why || ''))) toast('列印失敗：' + ((r && r.why) || '印表機沒有回應'), 'err'); return false; }
+    if (!r || !r.ok) { if (r && r.waited) toast('已停止等待印表機（已經送出的頁面，印表機可能仍會印出）', 'long'); else if (!(r && /cancel/i.test(r.why || ''))) toast('列印失敗：' + ((r && r.why) || '印表機沒有回應'), 'err'); return false; }
     toast(`已送到「${printerLabel(st.printer)}」`);
     return true;
   } catch (e) {
@@ -10120,17 +10135,18 @@ function findWorker(){
 }
 // a page picture with nothing on it: no pixel of a small copy darker than paper
 function blankImage(c){
-  const s = document.createElement('canvas'); s.width = 96; s.height = Math.max(1, Math.round(96 * c.height / c.width));
-  const g = s.getContext('2d'); g.drawImage(c, 0, 0, s.width, s.height); const d = g.getImageData(0, 0, s.width, s.height).data;
+  const s = document.createElement('canvas'); s.width = Math.max(1, Math.round(c.width / 4)); s.height = Math.max(1, Math.round(c.height / 4));
+  const g = s.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(c, 0, 0, s.width, s.height); const d = g.getImageData(0, 0, s.width, s.height).data;
   for (let k = 0; k < d.length; k += 4) if (Math.min(d[k], d[k + 1], d[k + 2]) < 225) return false;
   return true;
 }
 // a page without text read by OCR (only when 掃描頁 is on): lines like findLines, each character with its own box
 const FIND_OCR = new WeakMap();   // document → Map(page object → promise of lines)
-function ocrLines(i){
+function ocrLines(i, {cachedOnly = false} = {}){   // cachedOnly: a reading already made, or null
   const d = activeDoc(), pg0 = S.pages[i], ref = pg0.page.ref, key = (ref ? ref.num + 'R' + ref.gen : 'p' + i) + `:${pg0.rot}:${Math.round(pg0.w)}x${Math.round(pg0.h)}`;   // (turned: read again)
   if (!FIND_OCR.has(d)) FIND_OCR.set(d, new Map());
   const memo = FIND_OCR.get(d); if (memo.has(key)) return memo.get(key);
+  if (cachedOnly) return null;
   const p = (async () => {
     const pg = S.pages[i], img = await ocrImage(i, {x:0, y:0, w:pg.w, h:pg.h}), k = (img.width - 48) / pg.w, m = 24;   // ocrImage: a 24 px white margin
     if (blankImage(img)) return [];   // (nothing on it: not worth an OCR run)
@@ -10199,16 +10215,21 @@ async function searchDoc(){
   paintFind(); buildFindPanel();
   if (FIND.cur >= 0 && same < 0) showHit(FIND.cur);
   if (!o.scans || !scans.length) return;
-  FIND.scanSeq = seq; FIND.stopOcr = false;
+  FIND.scanSeq = seq; FIND.stopOcr = false; FIND.tailNote = '';
+  const sb = $('#findBar [data-fa="stopocr"]'); if (sb) { sb.disabled = false; sb.textContent = '停止辨識'; }
+  const qk = q + '|' + JSON.stringify(o), held = FIND.ocrStopped === qk;   // (stopped for this search: only readings already made, until the query or an option changes)
+  let left = 0;
   try {
     for (let n = 0; n < scans.length; n++) {   // the scanned pages, read one at a time; the matches so far stay usable
-      FIND.scanNote = `辨識掃描頁…（${n + 1}／${scans.length}）`; setFindLabel(FIND.hits.length ? `第 ${FIND.cur + 1}／${FIND.hits.length} 筆` : '');
-      const lines = await ocrLines(scans[n]); if (seq !== FIND.seq) return;
+      FIND.scanNote = held ? '' : `辨識掃描頁…（${n + 1}／${scans.length}）`; setFindLabel(FIND.hits.length ? `第 ${FIND.cur + 1}／${FIND.hits.length} 筆` : '');
+      const lines = await ocrLines(scans[n], {cachedOnly:held}); if (seq !== FIND.seq) return;
+      if (lines === null) { left++; continue; }
       const cur = FIND.hits[FIND.cur]; look(scans[n], lines); publish();
       FIND.cur = cur ? FIND.hits.indexOf(cur) : FIND.hits.length ? Math.max(0, FIND.hits.findIndex(h => h.i >= S.current)) : -1;
       paintFind(); buildFindPanel();
-      if (FIND.stopOcr) break;   // 〔停止辨識〕: the page in hand is done, the rest are left
+      if (FIND.stopOcr) { FIND.ocrStopped = qk; left += scans.length - n - 1; break; }   // 〔停止辨識〕: the page in hand is done, the rest are left
     }
+    FIND.tailNote = left ? `還有 ${left} 頁掃描頁沒辨識` : ''; FIND.tailSeq = seq;
   } finally { if (FIND.scanSeq === seq) { FIND.scanNote = ''; if (seq === FIND.seq) paintFind(); } }   // (a newer search shows its own label)
 }
 function buildFindPanel(){
@@ -10298,7 +10319,7 @@ async function replaceHits(list, repl){
   REPLACING = true;
   try { return await replaceNow(list, repl); } finally { REPLACING = false; }
 }
-async function replaceNow(list, repl, o = {...FIND.opts}, q = FIND.q, {prefix = '', by = ''} = {}){   // → how many were replaced, or false
+async function replaceNow(list, repl, o = {...FIND.opts}, q = FIND.q, {prefix = '', by = '', report = null} = {}){   // → how many were replaced, or false; report: {done, donePages, undone}
   const scans = list.filter(h => h.ocr).length, todo = list.filter(h => !h.ocr);
   if (!todo.length) { toast(prefix + (scans ? '掃描頁的文字不能取代' : '沒有可以取代的文字'), 'err'); return false; }
   if (!(await settleEdits())) return false;
@@ -10316,12 +10337,14 @@ async function replaceNow(list, repl, o = {...FIND.opts}, q = FIND.q, {prefix = 
   const pagesOf = l => [...new Set(l.map(u => u.i + 1))].sort((a, b) => a - b).join('、'), count = l => l.reduce((a, u) => a + u.n, 0);
   const n = jobs.reduce((a, j) => a + j.n, 0);
   if (!n) { toast(prefix + (undone.length ? `這些文字無法取代（第 ${pagesOf(undone)} 頁）` : '這些文字無法取代'), 'err'); return false; }
-  let done = 0;
+  let done = 0, ran = false; const donePages = new Set();
   const ok = await mutate(`${prefix}已取代 ${n} 處`, async doc => {
-    for (const j of jobs) { if ((await applyPageText(doc, j.i, j.x, j.y, j.prep, j.box, j.edit, j.empty, j.strut)) === false) undone.push({i:j.i, n:j.n}); else done += j.n; }   // (false: it could not be taken out)
+    ran = true;
+    for (const j of jobs) { if ((await applyPageText(doc, j.i, j.x, j.y, j.prep, j.box, j.edit, j.empty, j.strut, {quiet:true})) === false) undone.push({i:j.i, n:j.n}); else { done += j.n; donePages.add(j.i); } }   // (false: it could not be taken out)
     return done ? {label:`${prefix}已取代 ${done} 處`} : false;
   }, {by});
-  if (!ok && !done && undone.length) toast(prefix + `這些文字無法取代（第 ${pagesOf(undone)} 頁）`, 'err');
+  if (report) Object.assign(report, {done, donePages:[...donePages].sort((a, b) => a - b), undone:undone.slice()});
+  if (!ok && ran && !done && undone.length) toast(prefix + `這些文字無法取代（第 ${pagesOf(undone)} 頁）`, 'err');   // (not when the change was declined, e.g. a signed document)
   if (ok && undone.length) toast(`${prefix}第 ${pagesOf(undone)} 頁有 ${count(undone)} 處無法取代（例如在表單物件裡的文字）`, 'long');
   if (ok && scans) toast(`${prefix}掃描頁的 ${scans} 處沒有取代`);
   return ok ? done : false;
@@ -10337,7 +10360,8 @@ async function replaceCurrent(){
 function scheduleFind(ms = 150){ clearTimeout(FIND.timer); FIND.timer = setTimeout(searchDoc, ms); }
 function setFindLabel(t){   // (while scans are read for this search, their progress stays at the end, and 〔停止辨識〕 shows)
   const live = !!FIND.scanNote && FIND.scanSeq === FIND.seq, n = $('#findN'), b = $('#findBar [data-fa="stopocr"]');
-  if (n) n.textContent = live ? (t ? t + ' · ' : '') + FIND.scanNote : t;
+  const tail = !live && FIND.tailNote && FIND.tailSeq === FIND.seq ? FIND.tailNote : '';   // (stopped: how many scans were not read)
+  if (n) n.textContent = live ? (t ? t + ' · ' : '') + FIND.scanNote : tail ? (t ? t + ' · ' : '') + tail : t;
   if (b) b.hidden = !live;
 }
 function paintFind(){
@@ -10388,7 +10412,7 @@ function closeFind(){
 }
 (() => {
   const bar = $('#findBar'), q = $('#findQ');
-  q.addEventListener('input', () => { FIND.q = q.value; scheduleFind(250); });
+  q.addEventListener('input', () => { FIND.q = q.value; FIND.ocrStopped = null; scheduleFind(250); });
   q.addEventListener('keydown', e => {
     if (progKey(e) || $('#mask').classList.contains('show')) return;   // (Ctrl+S / O / P: the program's, as everywhere; a window open over the bar has the keys)
     e.stopPropagation();   // the app's own keys stay out of the box
@@ -10407,11 +10431,11 @@ function closeFind(){
     if (b.dataset.fa === 'next') stepFind(1);
     if (b.dataset.fa === 'prev') stepFind(-1);
     if (b.dataset.fa === 'close') closeFind();
-    if (b.dataset.fa === 'stopocr') FIND.stopOcr = true;
+    if (b.dataset.fa === 'stopocr') { FIND.stopOcr = true; b.disabled = true; b.textContent = '停止中…'; }
     if (b.dataset.fa === 'rep') { const r = $('#findRepRow'); r.hidden = !r.hidden; b.textContent = r.hidden ? '取代 ▸' : '取代 ▾'; if (!r.hidden) $('#findR').focus(); }
     if (b.dataset.fa === 'one') replaceCurrent();
     if (b.dataset.fa === 'all') replaceHits(FIND.hits.slice(), $('#findR').value);
-    if (b.dataset.fo) { const k = b.dataset.fo; FIND.opts[k] = !FIND.opts[k]; b.classList.toggle('on', FIND.opts[k]); saveFindOpts(); searchDoc(); }
+    if (b.dataset.fo) { const k = b.dataset.fo; FIND.opts[k] = !FIND.opts[k]; b.classList.toggle('on', FIND.opts[k]); saveFindOpts(); FIND.ocrStopped = null; searchDoc(); }
   });
 })();
 
@@ -10647,7 +10671,7 @@ function linkRef(doc, i, link){
     if (rr.every((v, j) => Math.abs(v - want[j]) < 1)) at.push(k);
   }
   // more than one in the same box: the one that goes where this link goes (else the upper one, as it is the one clicked)
-  const goes = k => { const d = annots.get(k), a = d.lookupMaybe(N_('A'), PDFDict), u = a && a.lookupMaybe(N_('URI'), PDFString, PDFHexString), dest = d.lookupMaybe(N_('Dest'), PDFArray);
+  const goes = k => { const d = annots.get(k), a = d.lookupMaybe(N_('A'), PDFDict), u = a && a.lookupMaybe(N_('URI'), PDFString, PDFHexString), dv = d.lookup(N_('Dest')), dest = dv instanceof PDFArray ? dv : null;   // (a named destination: not compared)
     if (u && link.url && u.decodeText() === link.url) return true;
     return link.page != null && !!dest && String(dest.get(0)) === String(doc.getPage(link.page).ref); };
   if (at.length) { const k = at.length > 1 ? (at.filter(goes).pop() ?? at[at.length - 1]) : at[0], nr = ctx.register(annots.get(k)); annots.set(k, nr); return nr; }
@@ -11295,12 +11319,13 @@ const CLAUDE_TOOLS = {
     if (clBusy()) throw new Error(CL_BUSY);   // (the person started something during the search: their work is not closed under them)
     if (!hits.length) return {text:`找不到「${q}」，沒有取代`};
     if (REPLACING) throw new Error('PDF 工作台正在取代別的文字，請稍後再試');
-    REPLACING = true; let n;
-    try { n = await replaceNow(hits, repl, o, q, {prefix:'Claude：', by:'claude'}); } finally { REPLACING = false; }
+    REPLACING = true; let n; const rep = {};
+    try { n = await replaceNow(hits, repl, o, q, {prefix:'Claude：', by:'claude', report:rep}); } finally { REPLACING = false; }
     if (!n) throw new Error(hits.every(h => h.ocr) ? '這些是掃描頁上的文字，不能取代' : '這些文字沒有取代：無法取代，或使用者取消了（例如數位簽署過的文件會先問）');
-    const done = hits.filter(h => !h.ocr), skipped = hits.length - done.length;
-    scrollToPage(done[0].i);
-    return {text:`已把「${q}」取代成「${repl}」，共 ${n} 處（第 ${[...new Set(done.map(h => h.i + 1))].join('、')} 頁）。`
+    const skipped = hits.filter(h => h.ocr).length, pages = rep.donePages || [], und = rep.undone || [];
+    scrollToPage(pages.length ? pages[0] : hits[0].i);
+    return {text:`已把「${q}」取代成「${repl}」，共 ${n} 處（第 ${pages.map(i => i + 1).join('、')} 頁）。`
+      + (und.length ? `第 ${[...new Set(und.map(u => u.i + 1))].sort((a, b) => a - b).join('、')} 頁有 ${und.reduce((a, u) => a + u.n, 0)} 處無法取代（例如在表單物件裡的文字）。` : '')
       + (skipped ? `掃描頁上的 ${skipped} 處不能取代，已跳過。` : '') + '可以用 pdf_undo 復原。'};
   },
   async pdf_highlight(a){
