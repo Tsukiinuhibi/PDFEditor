@@ -1203,7 +1203,7 @@ const viewer = $('#viewer'), pagesEl = $('#pages');
 /* ---------------- small UI helpers ---------------- */
 function toast(msg, kind){
   const t = document.createElement('div'); t.className = 'toast' + (kind === 'err' ? ' err' : ''); t.textContent = msg;
-  $('#toasts').appendChild(t); setTimeout(() => t.remove(), kind === 'err' || kind === 'long' ? 4200 : 2400);
+  $('#toasts').appendChild(t); setTimeout(() => t.remove(), kind === 'long' ? 6500 : kind === 'err' ? 4200 : 2400);
 }
 let busyT = 0;
 function busy(on, txt){   // input is blocked at once; the veil and spinner only appear if the work takes a while
@@ -1323,8 +1323,11 @@ const applyDoc = d => DOC_KEYS.forEach(k => S[k] = d[k]);
 const anyDirty = () => S.dirty || docs.some((d, i) => i !== active && d.dirty);
 function docField(d, k){ return d === activeDoc() ? S[k] : d[k]; }
 
+// the program is working on the open document (#busy): tabs are not switched or closed under it, files wait to open
+const isBusy = () => $('#busy').classList.contains('show');
+const whenIdle = () => new Promise(res => { const t = () => isBusy() ? setTimeout(t, 120) : res(); t(); });
 function switchTab(i){
-  if (i === active || !docs[i]) return;
+  if (i === active || !docs[i] || isBusy()) return;
   if (PEN.strokes.length || PEN.busy || NP || TBE) { (async () => { await closeNote(true); await flushPen(); await commitTextEditor(); if (!TBE) switchTab(i); })(); return; }
   stashActive(); hideCtx(); hideTip(); pop.style.display = 'none';
   active = i; applyDoc(docs[i]);
@@ -1390,7 +1393,7 @@ async function openInNewTab(bytes, name, handle){
   pdf.getMetadata().then(m => { if (m && m.info && m.info.IsCollectionPresent) toast('這是 PDF 包：裡面的檔案在左側「附件」分頁，可以按〔開啟〕', 'long'); }).catch(() => {});
 }
 async function closeTab(i){
-  const d = docs[i]; if (!d) return;
+  const d = docs[i]; if (!d || isBusy()) return;
   if (docField(d, 'dirty')) {
     const v = await openModal({title:'關閉分頁', body:`<div style="max-width:400px">「${esc(docField(d, 'name'))}」有尚未儲存的修改。原檔不會被修改，要先另存新檔嗎？</div>`,
       buttons:[{label:'取消', value:null}, {label:'不儲存並關閉', value:'drop'}, {label:'另存新檔', value:'save', primary:true}]});
@@ -1526,6 +1529,7 @@ function mountDoc({scroll = 'current', anchorOffset = 0, scrollTop = 0, scrollLe
 
 async function openFile(file, handle = null){
   if (!file) return;
+  await whenIdle();   // (a file sent while a change is being made opens after it)
   // the same file is already open: just switch to its tab
   const same = handle && handle.path && docs.findIndex(d => { const h = docField(d, 'handle'); return h && h.path === handle.path; });
   if (same >= 0) { switchTab(same); toast('「' + file.name + '」已經開啟'); return; }
@@ -2672,7 +2676,8 @@ async function mutate(label, fn, opts = {}){
   const cur0 = S.current, pdf0 = S.pdf;
   try {
     const doc = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false});
-    // still encrypted (a signed 「限制編輯」 file, or one that could not be decrypted): pdf-lib cannot change it
+    // still encrypted (a signed 「限制編輯」 file, or one that could not be decrypted): pdf-lib cannot change it. (A quick
+    // check only: pdf-lib misses the encryption of linearized files with xref streams; the catch below asks pdf.js.)
     if (doc.isEncrypted) { const e = new Error('encrypted'); e.name = 'StillEncrypted'; throw e; }
     // signed elsewhere (a signature made here asks above, through S.signed): the first change in the tab says that it
     // breaks the signature (the original file is not touched, and 復原 brings it back); a tab is looked at until then
@@ -2693,7 +2698,7 @@ async function mutate(label, fn, opts = {}){
     S.sigChecked = true;
     if (opts.highlight) highlightPages(opts.highlight.from, opts.highlight.count, opts.highlight.label);
     if (label) toast(label);
-    if (sigNote) toast('這份文件有數位簽章：這次的修改會讓簽章失效（原檔不會被修改，可以按「復原」）', 'long');
+    if (sigNote) toast('這份文件有數位簽章，修改後簽章會失效。原檔不會被修改；按「復原」可以回到簽署時的內容。', 'long');
     return true;
   } catch (e) {
     console.error(e);
@@ -5098,10 +5103,11 @@ function reachableRefs(doc){
 // a digital signature in the file (a signature field with a value, or signature permissions)
 // a signature from wherever: a signature dictionary (/ByteRange, or /Type /Sig or /DocTimeStamp) anywhere in the document,
 // however its field is written; usage rights (/Perms /UR3 or /UR, Reader extensions) do not sign the content and do not
-// count. (As pdfcrypt.js isSigned. hasSignature below is wider on purpose: before rewriting a file, usage rights count too.)
+// count. (As pdfcrypt.js isSigned. hasSignature below also counts any /Perms, usage rights included: rewriting a file
+// breaks those too; before rewriting, both are asked.)
 function signedDoc(doc){
-  const ctx = doc.context, perms = doc.catalog.lookupMaybe(N_('Perms'), PDFDict), rights = new Set();
-  if (perms) for (const k of ['UR3', 'UR']) { const v = perms.get(N_(k)); const o = v instanceof PDFRef ? ctx.lookup(v) : v; if (o) rights.add(o); }
+  const ctx = doc.context, perms = doc.catalog.lookup(N_('Perms')), rights = new Set();
+  if (perms instanceof PDFDict) for (const k of ['UR3', 'UR']) { const v = perms.get(N_(k)); const o = v instanceof PDFRef ? ctx.lookup(v) : v; if (o) rights.add(o); }
   const seen = new Set();
   const visit = o => {
     if (o instanceof PDFLib.PDFRawStream) return visit(o.dict);
@@ -5152,7 +5158,7 @@ async function pruneUnused(bytes){
     const doc = await PDFDocument.load(bytes, {ignoreEncryption:true, updateMetadata:false}), ctx = doc.context;
     // left as they are: encrypted files (pdf-lib would put their still-encrypted strings into new object streams), signed
     // files (any rewrite breaks a signature) and files with objects pdf-lib could not read (what those point to is unseen)
-    if (ctx.trailerInfo.Encrypt || hasSignature(doc) || hasUnreadable(doc)) return bytes;
+    if (ctx.trailerInfo.Encrypt || hasSignature(doc) || signedDoc(doc) || hasUnreadable(doc)) return bytes;
     const live = reachableRefs(doc);
     let n = 0;
     ctx.enumerateIndirectObjects().forEach(([ref]) => { if (!live.has(ref.toString())) { ctx.delete(ref); n++; } });
@@ -8440,7 +8446,9 @@ async function openDigiSign(i, box){
     f.querySelectorAll('input[name=cm]').forEach(r => r.onchange = sync); sync();
   }});
   if (!res) return;
-  if (S.signed && !(await confirmDlg('再次簽署', '此文件已有數位簽章，本工具會重寫整份檔案，原有簽章將失效。確定要繼續？', '繼續'))) return;
+  // signed here (S.signed) or by someone else: signing rewrites the whole file and the signature there would break
+  const signedBefore = S.signed || await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false}).then(signedDoc, () => false);
+  if (signedBefore && !(await confirmDlg('再次簽署', '此文件已有數位簽章，本工具會重寫整份檔案，原有簽章將失效。確定要繼續？', '繼續'))) return;
   busy(true, '簽署中…');
   try {
     const d = new Date(), pad = n => String(n).padStart(2, '0');
@@ -11328,6 +11336,7 @@ $('#zIn').addEventListener('blur', updateZoomUI);
 ['dragenter', 'dragover'].forEach(ev => window.addEventListener(ev, e => { e.preventDefault(); viewer.classList.add('drop'); }));
 ['dragleave', 'drop'].forEach(ev => window.addEventListener(ev, e => { e.preventDefault(); if (ev === 'dragleave' && e.relatedTarget) return; viewer.classList.remove('drop'); }));
 window.addEventListener('drop', e => {
+  if (isBusy()) { toast('正在處理中，請稍後再拖進來', 'err'); return; }
   const f = [...(e.dataTransfer && e.dataTransfer.files || [])];
   if (!f.length && e.dataTransfer) {   // a link dragged in from a browser: download it (the window shows how it goes)
     const u = (e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain') || '').split(/\r?\n/).map(x => x.trim()).find(x => x && !x.startsWith('#'));
@@ -11411,7 +11420,7 @@ function runKeyBinding(e){
 }
 let lastMouseBind = 0;
 window.addEventListener('mousedown', e => {
-  if (capture || !S.pdf || $('#mask').classList.contains('show') || e.button === 0 || e.button === 2) return;
+  if (capture || !S.pdf || $('#mask').classList.contains('show') || isBusy() || e.button === 0 || e.button === 2) return;
   const a = findBinding(MB(e.button)); if (!a) return;
   e.preventDefault(); e.stopPropagation(); lastMouseBind = performance.now(); a.run();
 }, true);
@@ -11422,7 +11431,7 @@ if (DESK && DESK.onAppCommand) DESK.onAppCommand(cmd => {
   const button = cmd === 'browser-backward' ? 3 : cmd === 'browser-forward' ? 4 : -1;
   if (button < 0) return;
   if (capture) { capture(MB(button)); return; }
-  if (performance.now() - lastMouseBind < 400 || !S.pdf || $('#mask').classList.contains('show')) return;   // already handled as a mouse event
+  if (performance.now() - lastMouseBind < 400 || !S.pdf || $('#mask').classList.contains('show') || isBusy()) return;   // already handled as a mouse event
   const a = findBinding(MB(button)); if (a) a.run();
 });
 

@@ -23,6 +23,19 @@ const make = async (name, {field = true, ur3 = false} = {}) => {
   const out = path.join(TMP, name); fs.writeFileSync(out, await d.save()); return out;
 };
 const SIGNED = await make('signed.pdf'), UR3 = await make('extended.pdf', {field:false, ur3:true});
+const copyOf = (src, name) => { const p = path.join(TMP, name); fs.copyFileSync(src, p); return p; };
+const INHERIT = path.join(TMP, 'inherit.pdf');
+{
+  const d = await PDFDocument.create(), ctx = d.context, N = n => PDFName.of(n), p = d.addPage([595, 842]);
+  const sig = ctx.register(ctx.obj({Type:'Sig', Filter:'Adobe.PPKLite', SubFilter:'adbe.pkcs7.detached', ByteRange:[0, 10, 20, 30], Contents:PDFHexString.of('3082000A')}));
+  const kid = ctx.register(ctx.obj({Type:'Annot', Subtype:'Widget', T:PDFString.of('sig1'), V:sig, Rect:[0, 0, 0, 0], P:p.ref, F:132}));
+  const parent = ctx.register(ctx.obj({T:PDFString.of('grp'), FT:'Sig', Kids:[kid]}));
+  ctx.lookup(kid).set(N('Parent'), parent);
+  p.node.set(N('Annots'), ctx.obj([kid]));
+  d.catalog.set(N('AcroForm'), ctx.obj({Fields:[parent], SigFlags:3}));
+  ctx.register(ctx.obj({Leftover:true}));   // (nothing points to it)
+  fs.writeFileSync(INHERIT, await d.save({useObjectStreams:false}));
+}
 const ENC = path.join(TMP, 'signed-aes128.pdf'); fs.copyFileSync(path.join(ROOT, 'tests', 'e2e', 'fixtures', 'encrypted', 'signed-aes128.pdf'), ENC);
 
 const { app } = await launchPath(SIGNED);
@@ -33,6 +46,7 @@ win.on('console', m => { if (m.type() === 'error' && !expectErrors) console.log(
 await win.waitForFunction(() => !!(window.__pdfapp && window.__pdfapp.S.pages.length), null, {timeout:30000});
 await win.waitForTimeout(1500);
 const Ev = win.evaluate.bind(win);
+await app.evaluate(({dialog}, TMP) => { let n = 0; dialog.showSaveDialog = async () => ({canceled:false, filePath: TMP + '/saved-' + (++n) + '.pdf'}); dialog.showMessageBox = async () => ({response:0}); }, TMP);
 await Ev(() => { window.__toasts = []; new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => n.classList && n.classList.contains('toast') && window.__toasts.push(n.textContent))))
   .observe(document.querySelector('#toasts'), {childList:true}); });
 const toasts = () => Ev(() => window.__toasts.splice(0));
@@ -84,6 +98,63 @@ await win.keyboard.press('Control+w'); await win.waitForTimeout(150);
 await win.keyboard.press('Control+Tab'); await win.waitForTimeout(2600);
 check('while a change is being made, Ctrl+W and Ctrl+Tab neither close nor switch the tab (and open no window)', (await tabs()) === n0 && (await Ev(() => window.__pdfapp.S.name)) === on0 && (await dialog()) === null,
   {tabs:await tabs(), was:n0, on:await Ev(() => window.__pdfapp.S.name), dialog:await dialog()});
+let t2 = await toasts();
+check('that tab (a copy of the signed sample) gets its own notice on its first change', t2.some(x => x.includes('數位簽章') && x.includes('失效')), t2);
+
+// ---- busy: a tab switch from elsewhere (a mouse button, …) does nothing; a file opened meanwhile opens afterwards ------
+const X = await Ev(() => window.__pdfapp.S.name), n1 = await tabs();
+await Ev(() => { window.__pdfapp.mutate('slow 2', async () => { await new Promise(r => setTimeout(r, 1800)); }); });
+await win.waitForTimeout(300);
+await Ev(() => window.__pdfapp.switchTab(0));
+await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), copyOf(SIGNED, 'later.pdf'));
+await win.waitForTimeout(400);
+const during = {name:await Ev(() => window.__pdfapp.S.name), tabs:await tabs()};
+await win.waitForTimeout(4000);
+const after = await Ev(() => ({name:window.__pdfapp.S.name, undo:window.__pdfapp.S.undo.length}));
+const xi = await Ev(name => [...document.querySelectorAll('.dtab .nm')].findIndex(e => e.textContent === name), X);
+await Ev(i => window.__pdfapp.switchTab(i), xi); await win.waitForTimeout(800);
+const back = await Ev(() => ({name:window.__pdfapp.S.name, undo:window.__pdfapp.S.undo.length}));
+check('while busy: switching tabs does nothing, a file sent to open waits; afterwards it opens, and the change stays on its own tab',
+  during.name === X && during.tabs === n1 && (await tabs()) === n1 + 1 && after.name === 'later.pdf' && after.undo === 0 && back.name === X && back.undo === 2, {during, after, back});
+await toasts();
+
+// ---- a change that fails says nothing about the signature; the next one that works does ----------------------------------
+await open(copyOf(SIGNED, 'signed2.pdf')); await toasts();
+expectErrors = true;
+await Ev(() => window.__pdfapp.mutate('x', async () => { throw new Error('boom'); }));
+await win.waitForTimeout(600);
+expectErrors = false;
+t2 = await toasts();
+check('a failed change: no notice yet', t2.some(x => x.includes('操作失敗')) && !t2.some(x => x.includes('數位簽章')), t2);
+await drawRect();
+t2 = await toasts();
+check('the next change that is made: the notice', t2.some(x => x.includes('數位簽章') && x.includes('失效')), t2);
+
+// ---- signing here a PDF someone else signed: asks first, as for one signed here -------------------------------------------
+await open(copyOf(SIGNED, 'countersign.pdf'));
+await win.click('[data-view="single"]'); await win.waitForTimeout(400);
+await Ev(() => window.__pdfapp.setTool('digisign')); await win.waitForTimeout(300);
+{
+  const box = await win.locator('.page').first().boundingBox();
+  await win.mouse.move(box.x + 300, box.y + 500); await win.mouse.down(); await win.mouse.move(box.x + 500, box.y + 570, {steps:5}); await win.mouse.up();
+}
+await win.waitForTimeout(1200);
+await win.click('input[name=cm][value=self]').catch(() => {});
+await win.fill('#dsName', 'Tester').catch(() => {});
+await win.click('#dsGo').catch(() => {});
+let q = null;
+for (let k = 0; k < 40 && !(q && q.includes('再次簽署')); k++) { await win.waitForTimeout(250); q = await dialog(); }
+check('signing a PDF someone else signed: 「再次簽署」 asks first (the other signature would break)', !!q && q.includes('再次簽署'), q);
+await win.click('#modal button:has-text("取消")').catch(() => {}); await win.waitForTimeout(1500);
+check('〔取消〕: not signed, nothing changed', (await S()).undo === 0 && (await dialog()) === null, await S());
+await Ev(() => window.__pdfapp.setTool('select'));
+
+// ---- save-as of a signed PDF, even with an unusual signature field and objects nothing uses: saved byte for byte -----------
+await open(INHERIT);
+await win.keyboard.press('Control+s'); await win.waitForTimeout(2500);
+const saved = fs.readdirSync(TMP).filter(f => /^saved-\d+\.pdf$/.test(f)).map(f => path.join(TMP, f)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+check('save-as of a signed PDF whose /FT sits on the parent field: the copy is the file byte for byte (not cleaned, so the signature holds)',
+  !!saved && Buffer.compare(fs.readFileSync(saved), fs.readFileSync(INHERIT)) === 0, {saved, size:saved && fs.statSync(saved).size, orig:fs.statSync(INHERIT).size});
 
 // ---- a signed file that is still encrypted: says so, without asking about the signature ----------------------------------
 await open(ENC); await toasts();
