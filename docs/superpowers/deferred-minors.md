@@ -4,46 +4,25 @@ Each release's final whole-branch review sorts its findings; Critical and Import
 release, Minor ones are deferred. These are the deferred ones, still open, in the reviewers' words. They are fixed
 in batches, one release per batch (the user, 2026-11-14: 「接著修正再發佈」). The minors of v1.0.42 and v1.0.43
 were fixed in v1.0.47; those of v1.0.40, v1.0.41 and v1.0.47 in v1.0.48;
-those of v1.0.38, v1.0.39 and v1.0.48 in v1.0.49.
+those of v1.0.38, v1.0.39 and v1.0.48 in v1.0.49;
+those of v1.0.35, v1.0.36 and v1.0.37 in v1.0.50.
 
 For each batch: read the items, fix the ones that still hold with a test that fails first, and record the rest
 (test-only, docs-only, obsolete, or a deliberate choice) as rulings in the batch's ledger. Take a release's
 section out of this file when its batch ships.
 
-## v1.0.37 (batch v1.0.50)
+## v1.0.50 (batch v1.0.51)
 
-- no message when an object is dropped on a locked layer's row (the spec names one; the drop is refused, the lock icon shows)
-- the object menu's 移到圖層 still lists locked layers and works on a locked layer's objects (pre-existing)
-- an unlayered object in a layered document at its top says 已經在最上層 although layered objects lie above it
-- a signed document: dragging a row to where it already is asks the signature question, then nothing changes
-- folded lists (LY_FOLD) are keyed by object id and shared between open documents (the virtual 圖層 1 folds in every tab)
-- keepPlace may put the new object lower when null entries or a duplicate reference lie right under the old one
-- using the panel's menu or drag on one object lets go of another object (or a group) selected on the page
-- the open object lists are rebuilt in full on every change (slow with thousands of annotations)
-- the plan's names differ from the code (LY_OBJ_SHUT, buttons only for movable objects) — both ruled
-
-## v1.0.36 (batch v1.0.50)
-
-- the spec still says a group drag snaps (code and HANDOFF say it does not)
-- no picture of the objects while a group is dragged (only the outlines move)
-- Esc during a group drag does not cancel it
-- objects partly outside the page cannot be caught by the box (Shift+click works)
-- an unselected object under a selected one's outline cannot be Shift-added
-- an arrow-key nudge still pending is lost on Shift+click
-- deleteMulti lets the group go before the change (also when it is declined)
-- closing the last tab leaves the multi/objbar class on the bar until the next document
-- the 對齊到 list keeps the focus when reopened without a change (Delete/Esc wait for a click elsewhere)
-- test gaps — locked/hidden layers (only the hidden flag), ink and note popups in a group, vertical distribute, Shift+box, one-object box, the 2-object bar, tab switch
-
-## v1.0.35 (batch v1.0.50)
-
-- an indirect trailer /ID is not visited by reachableRefs (deleted, left dangling; harmless now that encrypted files are skipped)
-- stacked pictures whose first is fully clipped: the replace area comes from it (zero size)
-- performance on large documents (three full walks per delete/replace, imageKey re-hashes per draw)
-- BI…EI end detection is heuristic (binary data with " EI " inside)
-- purgeImages / cloneChain do not see resources shared with content the walker does not read (appearances, patterns, Type3)
-- no re-entry guard on 刪除圖片／更換圖片…; the picked image's object URL is not revoked; a 32-bit hash decides "same picture" without a byte compare
-- test gaps — copy-on-write for replace, ↻ direction sign
+- IMG_JOB is held across waits that might never settle (pickImage relies on the file input's cancel event; openModal
+  replaces an earlier unanswered dialog without settling it): 刪除圖片／更換圖片… would then do nothing until restart (no
+  live path found in Electron 45)
+- usedElsewhere does not read a Type3 font without /Resources of its own (it draws with the page's) or soft-mask groups
+  (ExtGState /SMask /G): a page picture they draw by name can lose the name (the data survives)
+- cloneChain in "all" mode: an inner form that an appearance also draws, inside an outer form drawn on two pages, is
+  copied twice (one copy and its PDFE_Fm name unused); usedElsewhere walks the document once more for it
+- an arrow-key nudge still pending is lost on Shift+box (and on Ctrl+] or a panel action)
+- the panel's object menu still offers 刪除 and 隱藏 for an object on a locked layer (pre-existing)
+- merging or deleting a layer with 「保留物件」 can move objects into a locked layer (pre-existing)
 
 ## v1.0.34 (batch v1.0.51)
 
