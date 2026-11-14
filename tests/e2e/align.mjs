@@ -343,6 +343,40 @@ await win.keyboard.press('Control+Shift+BracketRight'); await win.waitForTimeout
 const q5o = (await A(() => window.__pdfapp.annotsOrder(0))).map(o => o.id);
 check('a nudge, then Ctrl+Shift+] at once: the nudge is kept, and it comes to the top', near(await q5x(big.id), q5t.x + 3, .3) && q5o.indexOf(big.id) > q5o.indexOf(small.id), {q5t:q5t.x, t1:await q5x(big.id), q5o});
 await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// (final review) a right-click while a group is dragged: the drag ends there, nothing moves
+await marq4();
+const gr0 = await box4(), ug = await undos();
+await win.mouse.move(...await P(0, gr0[0].x + 6, gr0[0].y + gr0[0].h / 2)); await win.mouse.down();
+await win.mouse.move(...await P(0, gr0[0].x + 46, gr0[0].y + gr0[0].h / 2 + 30), {steps:6}); await win.waitForTimeout(200);
+await win.mouse.down({button:'right'}); await win.mouse.up({button:'right'}); await win.waitForTimeout(500);
+await win.mouse.move(...await P(0, gr0[0].x + 66, gr0[0].y + gr0[0].h / 2 + 40), {steps:3});
+await win.mouse.up(); await win.waitForTimeout(1800);
+const gr1 = await box4();
+check('a right-click while a group is dragged: the drag ends there, nothing moves', gr0.every((b, k) => near(gr1[k].x, b.x) && near(gr1[k].y, b.y)) && (await undos()) === ug, {gr0, gr1});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// (final review) a nudge, then a drag of the same object at once: both kept (the nudge is not written in the middle of the drag)
+await see(0, 300, 560);
+const dn0 = (await anns(0)).find(x => x.id === row4[2].id);
+await win.mouse.click(...await P(0, dn0.x + 6, dn0.y + dn0.h / 2)); await win.waitForTimeout(600);
+for (let k = 0; k < 3; k++) await win.keyboard.press('ArrowRight');
+const dp = await P(0, dn0.x + 9, dn0.y + dn0.h / 2);
+await win.mouse.move(...dp); await win.mouse.down();
+for (let k = 1; k <= 8; k++) { await win.mouse.move(dp[0] + k * 5, dp[1]); await win.waitForTimeout(100); }
+await win.mouse.up(); await win.waitForTimeout(2200);
+const dn1 = (await anns(0)).find(x => x.id === row4[2].id), sc = await A(() => window.__pdfapp.S.scale);
+check('a nudge, then a drag of the same object at once: both kept (3 pt, then the drag)', near(dn1.x, dn0.x + 3 + 40 / sc, 1.5), {x0:dn0.x, x1:dn1.x, want:dn0.x + 3 + 40 / sc});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// (final review) a nudge of a text box, then a double click to write in it at once: the editor stays, the nudge kept
+const tb5 = (await anns(1)).find(x => x.sub === 'FreeText');
+await see(1, tb5.x + tb5.w / 2, tb5.y + tb5.h / 2);
+await win.mouse.click(...await P(1, tb5.x + 4, tb5.y + tb5.h / 2)); await win.waitForTimeout(600);
+for (let k = 0; k < 3; k++) await win.keyboard.press('ArrowRight');
+const tq = await P(1, tb5.x + 7, tb5.y + tb5.h / 2);
+await win.mouse.dblclick(...tq); await win.waitForTimeout(1500);
+const edOpen = await A(() => !!document.querySelector('.page .tbed') && !!window.__pdfapp.TBE());
+await win.keyboard.press('Escape'); await win.waitForTimeout(1800);
+const tb6 = (await anns(1)).find(x => x.id === tb5.id), tbText = await A(id => window.__pdfapp.getAnns(1).then(l => (l.find(a => a.id === id) || {}).contents || ''), tb5.id);
+check('a nudge of a text box, then a double click to write in it: the editor stays open, the nudge kept', edOpen && !!tb6 && near(tb6.x, tb5.x + 3, .6) && tbText.includes('Hi'), {edOpen, x0:tb5.x, x1:tb6 && tb6.x, tbText});
 // closing the last tab with a group selected: the group is let go, the bar loses its object look
 await marq4();
 const hadBar = await barTitle(), hadMulti = await multi();

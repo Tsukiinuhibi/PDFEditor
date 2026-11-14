@@ -432,7 +432,7 @@ function notesText(n) {
   if (!n) return '';
   const s = Array.isArray(n) ? n.map(x => x.note || '').join('\n') : String(n);
   return s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|li|h\d)>/gi, '\n').replace(/<li>/gi, '• ')
-    .replace(/<\/?[a-zA-Z][\w:-]*(\s[^<>]*)?\/?>/g, '')   // (HTML tags only: 「<5 MB>」 or 「<檔名>」 in the text stay)
+    .replace(/<\/?(?:p|br|li|ul|ol|h[1-6]|b|i|u|s|em|strong|del|code|pre|a|span|div|img|hr|blockquote|table|thead|tbody|tr|td|th|sup|sub|details|summary)\b[^<>]*>/gi, '')   // (HTML tags only: 「<5 MB>」, 「<檔名>」, 「<file name>」 stay)
     .replace(/\n{3,}/g, '\n\n').trim();
 }
 ipcMain.handle('update:state', () => (isDev ? { state: 'dev' } : updateState));

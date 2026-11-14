@@ -110,6 +110,14 @@ await pick(mixed);
 const bM = await bodyText();
 await closeQ();
 check('the question: how many it replaces and how many are new; the people list and default author come from the file', /取代目前的 2 項/.test(bM) && /新增 1 項/.test(bM) && /人員名單/.test(bM) && /預設作者/.test(bM), {bM});
+// (final review) shortcut settings as the program writes them travel through a file; colours with nothing in a list do not
+const realBinds = JSON.stringify({undo:[{type:'key', code:'KeyU', label:'U', ctrl:true, shift:false, alt:false}], back:[{type:'mouse', button:3}]});
+const rt = await A(b => { const keep = localStorage.getItem('pdfeditor.bindings.v1'); localStorage.setItem('pdfeditor.bindings.v1', b);
+  const snap = window.__pdfapp.settingsSnapshot(); if (keep == null) localStorage.removeItem('pdfeditor.bindings.v1'); else localStorage.setItem('pdfeditor.bindings.v1', keep);
+  return window.__pdfapp.parseSettingsFile(JSON.stringify(snap)); }, realBinds);
+check('shortcut settings as the program writes them (keys and mouse buttons): kept through export and import', !!rt.ok && rt.entries.some(([k, v]) => k === 'pdfeditor.bindings.v1' && v === realBinds) && !rt.skipped, {skipped:rt.skipped, keys:(rt.entries || []).map(e => e[0])});
+const nullCols = await A(() => window.__pdfapp.parseSettingsFile(JSON.stringify({app:'PDF 工作台', kind:'settings', settings:{'pdfeditor.theme':'dark', 'pdfeditor.colors.v1':'{"fav":null}', 'pdfeditor.styles.v1':'{}'}})));
+check('colours whose list is null: left out (the colour picker would break)', JSON.stringify(nullCols.entries.map(e => e[0])) === JSON.stringify(['pdfeditor.theme', 'pdfeditor.styles.v1']) && nullCols.skipped === 1, nullCols);
 // a storage error part-way: nothing half written, no reload
 await A(() => { const S = Storage.prototype; S.__set = S.setItem; S.setItem = function(k, v){ if (k === 'pdfeditor.zzz.test') throw new Error('quota'); return S.__set.call(this, k, v); }; });
 const half = write('half.json', {'pdfeditor.theme':'dark', 'pdfeditor.zzz.test':'y'});

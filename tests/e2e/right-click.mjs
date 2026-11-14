@@ -168,6 +168,27 @@ for (let k = 1; k <= 5; k++) { await win.mouse.move(o1[0] + 30 + k * 10, o1[1] +
 await win.mouse.up(); await win.waitForTimeout(1500);
 const sqC = (await anns(0, 'Square')).find(a => a.id === sq.id);
 check('Esc while dragging a selected object: the drag ends there, nothing moves, no error', Math.abs(sqC.x - sqB.x) < .5 && Math.abs(sqC.y - sqB.y) < .5 && errs.length === e1, {sqB, sqC, errs:errs.slice(e1)});
+// (final review) a right-click while a line's end is dragged (the click on the line itself): the drag ends there, the line unchanged
+const ln0r = (await anns(0, 'Line')).map(a => a.id);
+await tool('line'); await win.mouse.move(...await see(0, 150, 610)); await win.mouse.down(); await win.mouse.move(...await P(0, 260, 610), {steps:5}); await win.mouse.up(); await win.waitForTimeout(1200);
+const lnR = (await anns(0, 'Line')).find(a => !ln0r.includes(a.id));
+await tool('select'); await click(await P(0, lnR.x + lnR.w / 2, lnR.y + lnR.h / 2)); await win.waitForTimeout(600);
+const L0 = (await anns(0, 'Line')).find(a => a.id === lnR.id), e2 = errs.length;
+const ehs = await win.locator('.asel .eh').evaluateAll(els => els.map(e => { const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }));
+const eh = ehs.sort((p, q) => q[0] - p[0])[0];   // the right end
+await win.mouse.move(...eh); await win.mouse.down();
+await win.mouse.move(eh[0] - 20, eh[1] + 2, {steps:4}); await win.waitForTimeout(150);
+await win.mouse.down({button:'right'}); await win.mouse.up({button:'right'}); await win.waitForTimeout(500);
+await win.mouse.move(eh[0] - 40, eh[1] + 30, {steps:4});
+await win.mouse.up(); await win.waitForTimeout(1800);
+const L1 = (await anns(0, 'Line')).find(a => a.id === lnR.id);
+check('a right-click while a line\'s end is dragged: the drag ends there, the line unchanged, no error', !!L0 && !!L1 && Math.abs(L1.x - L0.x) < .5 && Math.abs(L1.w - L0.w) < .5 && Math.abs(L1.h - L0.h) < .5 && errs.length === e2, {L0, L1, errs:errs.slice(e2)});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// (final review) a polygon of one point, then a right-click on an object: the drawing is dropped and the object selected
+await tool('polygon'); await click(await see(0, 470, 700));
+await rclick(await onSq());
+check('多邊形 with one point, then a right-click on an object: dropped, and the object is selected', (await curTool()) === 'select' && (await selNow())?.id === sq.id, {tool:await curTool(), sel:await selNow()});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
 // note A open for writing, then a right-click on note B: A is written and closed before B's menu
 await tool('note'); await click(await see(0, 480, 250)); await win.keyboard.type('便利貼乙'); await rclick(await blank());
 const nA = (await anns(0, 'Text')).find(a => a.contents === '右鍵前的便利貼'), nB = (await anns(0, 'Text')).find(a => a.contents === '便利貼乙');

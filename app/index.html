@@ -2621,8 +2621,7 @@ viewer.addEventListener('contextmenu', async e => {
   const pt = pel ? pagePointXY(i, e.clientX, e.clientY) : null;   // now: leaving a tool closes its bar above, and the pages move up
   if (pel) { const note = await noteAt(i, e.clientX, e.clientY);
     if (note) { if (TBE) await commitTextEditor(); if (NP && NP.note.id !== note.id) await closeNote(true); showNoteMenu(e, i, note); return; } }   // (another note open: written and closed first)
-  const drew = !!(POLY || FPOLY);   // (this right-click finishes a drawing: the new shape is not selected)
-  await backToSelect();
+  const drew = await backToSelect();   // (a drawing this right-click finished: the new shape is not selected)
   if (pt && !drew && S.tool === 'select' && S.els[i]) {   // on an object: select it
     const d0 = activeDoc(), a = await annAt(i, pt);
     if (a && activeDoc() === d0 && S.els[i] && S.tool === 'select') selectAnnot(i, a);
@@ -2637,16 +2636,18 @@ async function annAt(i, p){
 }
 // as 完成 (Esc), and a polygon or a fill outline being drawn is finished when it has enough points (dropped quietly
 // when it has not)
-async function backToSelect(){
+async function backToSelect(){   // → whether a drawing was finished
+  let drew = false;
   if (NP) await closeNote(true);   // an open note is written first
-  if (POLY) { const need = DRAW_TOOLS[S.tool] && DRAW_TOOLS[S.tool].closed ? 3 : 2; if (POLY.pts.length >= need) await finishPoly(); else cancelPoly(); }
-  if (FPOLY) { if (FPOLY.pts.length >= 3) await finishFillPoly(); else cancelFillPoly(); }
+  if (POLY) { const need = DRAW_TOOLS[S.tool] && DRAW_TOOLS[S.tool].closed ? 3 : 2; if (POLY.pts.length >= need) { await finishPoly(); drew = true; } else cancelPoly(); }
+  if (FPOLY) { if (FPOLY.pts.length >= 3) { await finishFillPoly(); drew = true; } else cancelFillPoly(); }
   if (S.tool === 'pen' || PEN.strokes.length || PEN.busy) await flushPen();
   if (S.tool !== 'select') {
     setTool('select');   // a text box being typed in is saved first, then the tool changes
     await tbSaving; await noteSaving;
     if (S.tool !== 'select' && !TBE) setTool('select');
   } else { deselectAnnot(); clearMulti(); }
+  return drew;
 }
 pagesEl.addEventListener('pointermove', e => textboxHover(e));
 pagesEl.addEventListener('pointerleave', () => { if (S.tool === 'textbox') clearTextMarks(); });
@@ -2699,7 +2700,7 @@ pagesEl.addEventListener('pointerdown', e => {
    ==================================================================== */
 async function mutate(label, fn, opts = {}){
   if (!S.pdf) return false;
-  if (NUDGE && !opts.nudge) await flushNudge();   // an arrow-key nudge not written yet goes first
+  if (!opts.nudge) { if (NUDGE) await flushNudge(); else while (NUDGE_RUN) await NUDGE_RUN; }   // an arrow-key nudge not written yet (or being written) goes first
   primeWrite();
   if (!opts.fromPen && (PEN.strokes.length || PEN.busy)) await flushPen();
   if (NP) await closeNote(true);
@@ -4757,6 +4758,7 @@ async function restyleTextBox(doc, i, dict, patch){
   Object.entries(await textBoxFields(doc, i, lines, box, r, {x:at.x, y:at.y, w:r.w, h:r.h})).forEach(([k, v]) => dict.set(N_(k), doc.context.obj(v)));
 }
 async function editTextBox(i, a){
+  if (NUDGE) { await flushNudge(); const a2 = S.els[i] && (await getAnns(i)).find(x => x.id === a.id); if (a2) a = a2; }   // (a nudge of it not written yet: written first, so the editor starts where it went)
   await tbSaving;
   let rt = null;
   try {
@@ -6740,7 +6742,7 @@ const STYLES = (() => {
 const saveStyles = () => { try { localStorage.setItem(STYLE_KEY, JSON.stringify(STYLES)); } catch (_) {} };
 
 const opacitySel = v => {   // (a value not in the list, a preset's 60% or 45%, is shown as it is)
-  const L = [1, .85, .7, .5, .35], x = Math.round(clamp(+v || 0, 0, 1) * 100) / 100;
+  const L = [1, .85, .7, .5, .35], x = v == null || v === '' || isNaN(+v) ? 1 : Math.round(clamp(+v, 0, 1) * 100) / 100;
   if (!L.some(o => Math.abs(o - x) < .005)) { L.push(x); L.sort((a, b) => b - a); }
   return `<label class="sb-l">透明度<select data-s="opacity">${L.map(o => `<option value="${o}"${Math.abs(x - o) < .005 ? ' selected' : ''}>${Math.round(o * 100)}%</option>`).join('')}</select></label>`;
 };
@@ -7489,12 +7491,13 @@ async function moveObjects(i, moves, label){
 }
 // drag one of the selected objects: all of them move by the same amount
 function dragMulti(e){
-  const {i, items, els} = MS, pg = S.pages[i], p0 = pagePointXY(i, e.clientX, e.clientY);
+  const {i, items, els} = MS, pg = S.pages[i], p0 = pagePointXY(i, e.clientX, e.clientY), MS0 = MS;   // (the group let go meanwhile, a right-click: nothing moves)
   // as with one object, each keeps at least half of itself on the page
   const xr = [Math.max(...items.map(a => -a.x - a.w / 2)), Math.min(...items.map(a => pg.w - a.w / 2 - a.x))];
   const yr = [Math.max(...items.map(a => -a.y - a.h / 2)), Math.min(...items.map(a => pg.h - a.h / 2 - a.y))];
   let dx = 0, dy = 0, moved = false;
   const move = ev => {
+    if (MS !== MS0) { cancel(); return; }
     const p = pagePointXY(i, ev.clientX, ev.clientY); dx = clamp(p.x - p0.x, xr[0], xr[1]); dy = clamp(p.y - p0.y, yr[0], yr[1]);
     if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return;
     moved = true;
@@ -7506,7 +7509,7 @@ function dragMulti(e){
   const esc = ev => { if (ev.key !== 'Escape') return; ev.preventDefault(); ev.stopImmediatePropagation(); cancel(); };   // (also when the window loses the focus mid-drag)
   const up = () => {
     end();
-    if (!moved) { els.forEach(el => { el.style.transform = ''; }); return; }
+    if (!moved || MS !== MS0) { els.forEach(el => { el.style.transform = ''; }); return; }
     const n = items.length;
     moveObjects(i, items.map(a => ({a, ob:{x:a.x, y:a.y, w:a.w, h:a.h}, nb:{x:a.x + dx, y:a.y + dy, w:a.w, h:a.h}})), `已移動 ${n} 個物件`);
   };
@@ -8003,10 +8006,10 @@ function moveAnnotInDoc(doc, i, id, ob, nb){
   }
   return true;
 }
-async function commitAnnotBox(i, a, ob, nb){
+async function commitAnnotBox(i, a, ob, nb, opts = {}){
   const id = a.id, isMove = Math.abs(nb.w - ob.w) < .05 && Math.abs(nb.h - ob.h) < .05;
   holdSelection();
-  const ok = await mutate(isMove ? '已移動' : '已調整大小', doc => { if (!moveAnnotInDoc(doc, i, id, ob, nb)) { toast('找不到此註解', 'err'); return false; } });
+  const ok = await mutate(isMove ? '已移動' : '已調整大小', doc => { if (!moveAnnotInDoc(doc, i, id, ob, nb)) { toast('找不到此註解', 'err'); return false; } }, opts);
   if (!ok) clearHolds(i);
   if (ok && S.tool === 'select') {   // keep it selected at its new place
     const a2 = (await getAnns(i)).find(x => x.id === id);
@@ -8150,7 +8153,7 @@ const centerOf = pts => { const xs = pts.map(p => p.x), ys = pts.map(p => p.y); 
 const rotPts = (strokes, c, deg) => { const r = deg * Math.PI / 180, co = Math.cos(r), si = Math.sin(r);
   return strokes.map(s => s.map(p => ({x:c.x + (p.x - c.x) * co - (p.y - c.y) * si, y:c.y + (p.x - c.x) * si + (p.y - c.y) * co}))); };
 function geomDrag(e, mode, k){
-  const {i, a} = AS, pg = S.pages[i], s0 = {...AS.box}, isBox = ROT_BOX.has(a.subtype), rot0 = AS.rot || 0;
+  const {i, a} = AS, pg = S.pages[i], s0 = {...AS.box}, isBox = ROT_BOX.has(a.subtype), rot0 = AS.rot || 0, AS0 = AS;   // (let go meanwhile, a right-click: nothing changes)
   const g0 = isBox ? [[...boxCorners(s0, rot0), boxCorners(s0, rot0)[0]]] : AS.geo, c = centerOf(g0.flat());
   const p0 = pagePointXY(i, e.clientX, e.clientY), ang0 = Math.atan2(p0.y - c.y, p0.x - c.x);
   let cur = g0, deg = 0, moved = false;
@@ -8174,6 +8177,7 @@ function geomDrag(e, mode, k){
     else { const [A, B] = cur[0]; lab.textContent = `${Math.round((Math.atan2(-(B.y - A.y), B.x - A.x) * 180 / Math.PI + 360) % 360)}°・${(Math.hypot(B.x - A.x, B.y - A.y) / MM).toFixed(1)} mm`; }
   };
   const move = ev => {
+    if (AS !== AS0) { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); lab.remove(); veil.remove(); svg.remove(); gh && gh.remove(); clearSnapMarks(); return; }
     if (!moved) { if (Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return; moved = true; ovl.appendChild(veil); gh && ovl.appendChild(gh); ovl.appendChild(svg); ovl.appendChild(lab); AS.el.style.visibility = 'hidden'; AS.bar.style.visibility = 'hidden'; }
     const p = pagePointXY(i, ev.clientX, ev.clientY);
     if (mode === 'rot') {
@@ -8189,6 +8193,7 @@ function geomDrag(e, mode, k){
     draw();
   };
   const up = async ev => {
+    if (AS !== AS0) { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); lab.remove(); veil.remove(); svg.remove(); gh && gh.remove(); clearSnapMarks(); return; }
     if (moved) move(ev);   // the release point decides
     window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
     lab.remove(); clearSnapMarks();
@@ -8250,23 +8255,36 @@ function noteIconDown(ev, i, a){
 }
 // arrow keys nudge the selection (Shift = 10 pt); written once you stop pressing, whatever is selected by then — and
 // first, before any other change, 復原／重做, saving or another tab (a nudge is never lost, nor written over another change)
-let nudgeTimer = 0, NUDGE = null;   // {doc, i, id, ob (where it was), nb (where it goes)}
+let nudgeTimer = 0, NUDGE = null, NUDGE_RUN = null;   // NUDGE: {doc, i, id, ob (where it was), nb (where it goes)}; NUDGE_RUN: the one being written
 function nudgeSelected(dx, dy){
   if (!AS || !AS.movable) return;
   if (NUDGE && (NUDGE.i !== AS.i || NUDGE.id !== AS.a.id)) flushNudge();
   if (!NUDGE) NUDGE = {doc:activeDoc(), i:AS.i, id:AS.a.id, ob:{...AS.box}};
   AS.box.x += dx; AS.box.y += dy; NUDGE.nb = {...AS.box}; drawASel();
   clearTimeout(nudgeTimer);
-  nudgeTimer = setTimeout(flushNudge, 500);
+  nudgeTimer = setTimeout(nudgeTick, 500);
 }
+// the timer writes the nudge only while nothing else is under way (a button held, text or a note being written, a shape
+// being drawn, an area being chosen, a change or a window open): it waits a little more meanwhile
+let PTR_HELD = false;
+window.addEventListener('pointerdown', () => { PTR_HELD = true; }, true);
+window.addEventListener('pointerup', e => { PTR_HELD = !!e.buttons; }, true);
+['pointercancel', 'blur'].forEach(t => window.addEventListener(t, () => { PTR_HELD = false; }, true));
+const nudgeWaits = () => PTR_HELD || !!TBE || !!NP || !!POLY || !!FPOLY || !!XS || isBusy() || $('#mask').classList.contains('show');
+function nudgeTick(){ if (!NUDGE) return; if (nudgeWaits()) { nudgeTimer = setTimeout(nudgeTick, 300); return; } flushNudge(); }
 async function flushNudge(){
   clearTimeout(nudgeTimer);
+  while (NUDGE_RUN) await NUDGE_RUN;   // (one write at a time)
   const n = NUDGE; NUDGE = null;
   if (!n || n.doc !== activeDoc()) return;
-  if (AS && AS.i === n.i && AS.a.id === n.id) return commitAnnotBox(n.i, AS.a, n.ob, n.nb);   // still selected: it stays selected where it went
-  let was = null;   // (let go meanwhile: what is selected now stays selected)
-  const ok = await mutate('已移動', doc => { was = pageSel(); if (!moveAnnotInDoc(doc, n.i, n.id, n.ob, n.nb)) { toast('找不到此註解', 'err'); return false; } }, {nudge:true});
-  if (ok) await reselect(was);
+  const run = (async () => {
+    if (AS && AS.i === n.i && AS.a.id === n.id) return commitAnnotBox(n.i, AS.a, n.ob, n.nb, {nudge:true});   // still selected: it stays selected where it went
+    let was = null;   // (let go meanwhile: what is selected now stays selected)
+    const ok = await mutate('已移動', doc => { was = pageSel(); if (!moveAnnotInDoc(doc, n.i, n.id, n.ob, n.nb)) { toast('找不到此註解', 'err'); return false; } }, {nudge:true});
+    if (ok) await reselect(was);
+  })();
+  NUDGE_RUN = run;
+  try { await run; } finally { if (NUDGE_RUN === run) NUDGE_RUN = null; }
 }
 
 /* ---------------- handwritten signature ---------------- */
@@ -11957,9 +11975,9 @@ const SETTING_SHAPE = {
   'pdfeditor.theme':s => s in THEME_NAMES, 'pdfeditor.pagecolor':s => s in PAGE_NAMES,   // (plain text)
   'pdfeditor.lasttool.v1':j => isPlainObj(j) && Object.values(j).every(t => typeof t === 'string'),
   'pdfeditor.lastact.v1':j => isPlainObj(j) && Object.values(j).every(n => Number.isInteger(n)),
-  'pdfeditor.bindings.v1':j => isPlainObj(j) && Object.values(j).every(a => Array.isArray(a) && a.every(k => typeof k === 'string')),
+  'pdfeditor.bindings.v1':j => isPlainObj(j) && Object.values(j).every(a => Array.isArray(a) && a.every(b => isPlainObj(b) && typeof b.type === 'string')),   // ({type:'key', code…} / {type:'mouse', button})
   'pdfeditor.stamp.v1':j => isPlainObj(j) && typeof j.t === 'string' && typeof j.c === 'string' && typeof j.kind === 'string',
-  'pdfeditor.colors.v1':j => isPlainObj(j) && (j.fav == null || (Array.isArray(j.fav) && j.fav.every(c => typeof c === 'string'))) && (j.use == null || isPlainObj(j.use)),
+  'pdfeditor.colors.v1':j => isPlainObj(j) && (!('fav' in j) || (Array.isArray(j.fav) && j.fav.every(c => typeof c === 'string'))) && (!('use' in j) || isPlainObj(j.use)),
   'pdfeditor.people.v1':j => isPlainObj(j) && Array.isArray(j.names) && j.names.every(n => typeof n === 'string') && (j.def == null || typeof j.def === 'string'),
   'pdfeditor.fonts.recent.v1':j => Array.isArray(j) && j.every(n => typeof n === 'string'),
   ...Object.fromEntries(['textbox.v1', 'styles.v1', 'ribbon.v1', 'view.v1', 'print.v1', 'find.v1', 'export.v1', 'fontid.v1'].map(k => ['pdfeditor.' + k, isPlainObj])),

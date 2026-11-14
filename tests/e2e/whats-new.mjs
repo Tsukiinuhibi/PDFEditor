@@ -115,8 +115,8 @@ check('release check: notes different from RELEASE_NOTES.md fail', r.status !== 
 const h3 = await A(() => window.__pdfapp.notesHTML([{version:'9.9.8', md:'## 段落裡的標題\n- 一\n  - 一之一\n  - 一之二\n- 二'}]));
 check('notes HTML: 「##」 inside a section is a heading, not shown as it is written', h3.includes('<h4>段落裡的標題</h4>') && !h3.includes('##'), h3);
 check('notes HTML: a list inside a list keeps its level', h3.includes('<ul><li>一<ul><li>一之一</li><li>一之二</li></ul></li><li>二</li></ul>'), h3);
-const nt3 = await app.evaluate(() => global.__pdfeNotesText('<p>大於 <5 MB> 的 <b>檔案</b>、<檔名></p>'));
-check('the notes of an update: only HTML tags taken out (「<5 MB>」 and 「<檔名>」 stay)', nt3 === '大於 <5 MB> 的 檔案、<檔名>', nt3);
+const nt3 = await app.evaluate(() => global.__pdfeNotesText('<p>大於 <5 MB> 的 <b>檔案</b>、<檔名>、<file name></p>'));
+check('the notes of an update: only HTML tags taken out (「<5 MB>」, 「<檔名>」 and 「<file name>」 stay)', nt3 === '大於 <5 MB> 的 檔案、<檔名>、<file name>', nt3);
 // the seen version cannot be written: the window is not shown (it would come up at every start)
 await A(() => { const S = Storage.prototype; S.__set = S.setItem; S.__set.call(localStorage, 'pdfeditor.seenversion.v1', '1.0.26');
   S.setItem = function(k, v){ if (k === 'pdfeditor.seenversion.v1') throw new Error('blocked'); return S.__set.call(this, k, v); }; });

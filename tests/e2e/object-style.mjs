@@ -226,6 +226,14 @@ await cpk('color', '#1c64d9');
 const uSame = await undos5();
 await cpk('color', '#1c64d9');
 check('the colour it already has, picked again: nothing written, no undo step', (await undos5()) === uSame && (await style(0, ln5.id))?.color === '#1c64d9', {u:[uSame, await undos5()]});
+// (final review) a stored tool style whose opacity is not a number: shown as 100%, not 0%
+await app.evaluate(({dialog}) => { dialog.showMessageBoxSync = () => 0; });
+await A(() => { window.__pdfapp.S.dirty = false; localStorage.setItem('pdfeditor.styles.v1', JSON.stringify({rect:{opacity:'x'}})); });
+await win.reload(); await win.waitForTimeout(3500);
+await A(() => window.__pdfapp.makeSample()); await win.waitForTimeout(2500);
+await tool('rect');
+const opNaN = await A(() => { const s = document.querySelector('#hint select[data-s="opacity"]'); return s ? s.options[s.selectedIndex].textContent : null; });
+check('a stored tool style with an opacity that is not a number: 100% shown, not 0%', opNaN === '100%', opNaN);
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
