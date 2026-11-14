@@ -101,5 +101,13 @@ let bad = await withLeftover(async d => { const c = d.context, keep = c.register
 bad = Buffer.from(bad.toString('latin1').replace('(XXXX)', ')XXXX('), 'latin1');
 check('a file with an object pdf-lib cannot read: not rewritten (what it points to would be lost)', Buffer.compare(await prune(bad), bad) === 0);
 
+// v1.0.50: a trailer whose /ID is an object of its own: kept (the trailer would point to nothing)
+const dId = await PDFDocument.create(); dId.addPage([200, 200]);
+dId.context.trailerInfo.ID = dId.context.register(dId.context.obj([PDFHexString.of('0011223344556677'), PDFHexString.of('8899aabbccddeeff')]));
+dId.context.register(dId.context.obj({Marker:PDFString.of('ORPHAN-ID-TEST')}));   // (something to drop, so the file is rewritten)
+const withId = Buffer.from(await dId.save({useObjectStreams:false})), outId = await prune(withId);
+const reId = await PDFDocument.load(outId, {updateMetadata:false}), idv = reId.context.trailerInfo.ID, idObj = idv instanceof PDFRef ? reId.context.lookup(idv) : idv;
+check('a trailer /ID stored as an object of its own: still there after the clean-up', Buffer.compare(outId, withId) !== 0 && idv instanceof PDFRef && idObj instanceof PDFArray && idObj.size() === 2, {ref:String(idv), obj:String(idObj)});
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

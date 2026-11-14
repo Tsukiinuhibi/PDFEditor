@@ -45,6 +45,26 @@ page(content('q 595 0 0 842 0 0 cm /ImS2 Do Q\nBT /F2 24 Tf 3 Tr 100 500 Td (HID
 // page 10: a form without resources of its own (it uses the page's) drawing two pictures
 const F1a = image(56, 20), F2a = image(58, 20), Fm2 = ctx.register(ctx.flateStream(Buffer.from('q 100 0 0 50 100 600 cm /ImF1 Do Q\nq 100 0 0 50 300 600 cm /ImF2 Do Q\n'), {Type:'XObject', Subtype:'Form', BBox:[0, 0, 595, 842]}));
 page(content('q /Fm2 Do Q\n'), ctx.obj({XObject:{ImF1:F1a, ImF2:F2a, Fm2}}));
+// ---- pages for part 5 (v1.0.50) ----
+// page 11: two pictures stacked in one place, the first clipped away entirely
+page(content('q 0 0 0 0 re W n 200 0 0 100 100 600 cm /ImZ1 Do Q\nq 200 0 0 100 100 600 cm /ImZ2 Do Q\n'), ctx.obj({XObject:{ImZ1:image(60, 20), ImZ2:image(62, 20)}}));
+// page 12: the page's resources dictionary is its note's appearance's too; the picture is drawn on the page and in the appearance
+const res11 = ctx.register(ctx.obj({XObject:{ImP:image(64, 20)}}));
+const apP = ctx.register(ctx.stream('q 200 0 0 100 0 0 cm /ImP Do Q\n', {Type:'XObject', Subtype:'Form', BBox:[0, 0, 200, 100], Resources:res11}));
+page(content('q 200 0 0 100 100 600 cm /ImP Do Q\n'), res11).node.set(N('Annots'), ctx.obj([ctx.register(ctx.obj({Type:'Annot', Subtype:'Square', Rect:[300, 300, 500, 400], F:4, AP:{N:apP}}))]));
+// page 13: a form drawn by the page and by a note's appearance (there at half size, lower left)
+const FmS = ctx.register(ctx.flateStream(Buffer.from('q 100 0 0 50 100 600 cm /ImQ Do Q\n'), {Type:'XObject', Subtype:'Form', BBox:[0, 0, 595, 842], Resources:{XObject:{ImQ:image(66, 20)}}}));
+const apS = ctx.register(ctx.stream('/FmS Do\n', {Type:'XObject', Subtype:'Form', BBox:[0, 0, 595, 842], Resources:{XObject:{FmS}}}));
+page(content('q /FmS Do Q\n'), ctx.obj({XObject:{FmS}})).node.set(N('Annots'), ctx.obj([ctx.register(ctx.obj({Type:'Annot', Subtype:'Square', Rect:[0, 0, 297.5, 421], F:4, AP:{N:apS}}))]));
+// pages 14 and 15: one form drawn on both, a picture in it
+const FmC = ctx.register(ctx.flateStream(Buffer.from('q 100 0 0 50 100 600 cm /ImC Do Q\n'), {Type:'XObject', Subtype:'Form', BBox:[0, 0, 595, 842], Resources:{XObject:{ImC:image(68, 20)}}}));
+page(content('q /FmC Do Q\n'), ctx.obj({XObject:{FmC}})); page(content('q /FmC Do Q\n'), ctx.obj({XObject:{FmC}}));
+// page 16: two different 2 × 2 pictures, stored as they are, whose bytes give the same 32-bit hash
+const raw2 = hex => ctx.register(ctx.stream(Buffer.from(hex, 'hex'), {Type:'XObject', Subtype:'Image', Width:2, Height:2, ColorSpace:'DeviceRGB', BitsPerComponent:8}));
+page(content('q 100 0 0 50 100 600 cm /ImH1 Do Q\nq 100 0 0 50 300 600 cm /ImH2 Do Q\n'), ctx.obj({XObject:{ImH1:raw2('1c97128b10b0eec82b1de636'), ImH2:raw2('a86ca7253efd87c80d50c1ca')}}));
+// pages 17 and 18: one picture each
+page(content('q 100 0 0 50 100 600 cm /ImG Do Q\n'), ctx.obj({XObject:{ImG:image(70, 20)}}));
+page(content('q 100 0 0 50 100 600 cm /ImK Do Q\n'), ctx.obj({XObject:{ImK:image(72, 20)}}));
 const PDF = path.join(TMP, 'imgedit.pdf'); fs.writeFileSync(PDF, await doc.save());
 
 const { app } = await launchPath(PDF);
@@ -165,6 +185,8 @@ await rep(3, {x:100, y:142, w:100, h:100}, WIDE);
 await win.click('#modal [data-turn="90"]'); await win.waitForTimeout(200); await press('更換');
 const d3 = (await draws(3))[0];
 check('a picture inside a form, turned once with ↻: drawn a quarter turn round, fitted (50 × 100)', !!d3 && d3.px.w === 80 && near(d3.box.w, 50) && near(d3.box.h, 100) && near(Math.abs(d3.deg), 90, 1), d3);
+const up3 = d3 && await pixel(3, d3.box.x + d3.box.w / 2, d3.box.y + d3.box.h * .25), dn3 = d3 && await pixel(3, d3.box.x + d3.box.w / 2, d3.box.y + d3.box.h * .75);
+check('↻ turns it clockwise on screen: its left (red) side on top, its right (blue) side at the bottom', !!up3 && up3[0] > 200 && up3[2] < 80 && dn3[2] > 200 && dn3[0] < 80, {up3, dn3});
 await rep(0, {x:100, y:342, w:100, h:100}, WIDE); await press('更換');
 const nB = (await draws(0)).find(d => d.px.w === 80 && near(d.box.y, 367, 1.5));
 check('a cropped picture: the new one fitted into the part that could be seen, centred', !!nB && same(nB.box, {x:100, y:367, w:100, h:50}), {nB, all:await draws(0)});
@@ -177,6 +199,50 @@ check('invisible text in a font without widths: removed with the picture, not ju
 await rep(9, {x:100, y:192, w:100, h:50}, WIDE); if (await modal()) await press('更換');
 const d9 = await draws(9);
 check('a form without resources of its own: after one picture is replaced, the other still shows', d9.some(d => d.px.w === 80) && d9.some(d => d.px.w === 58), d9);
+
+// ---- part 5 (v1.0.50) ----------------------------------------------------------------------------------------------------
+// two pictures stacked, the first clipped away: one red box, the part that can be seen; the new picture takes that area
+const b10 = await boxes(10);
+check('two pictures stacked, the first clipped away entirely: one red box, round the picture that can be seen (not the whole page)', b10.length === 1 && same(b10[0], {x:100, y:142, w:200, h:100}), b10);
+await rep(10, {x:100, y:142, w:200, h:100}, WIDE); if (await modal()) await press('更換');
+const z10 = (await draws(10)).find(d => d.px.w === 80);
+check('two pictures stacked, the first clipped away: the new one fills the part that could be seen', !!z10 && same(z10.box, {x:100, y:142, w:200, h:100}), {z10, all:await draws(10)});
+// the page's resources are its note's appearance's too: the picture deleted from the page, the note still shows it
+await pick(11, {x:100, y:142, w:200, h:100}); await del(); if (await modal()) await press('刪除');
+await settle();
+const apP11 = await pixel(11, 340, 492);
+check('a picture deleted from the page whose resources a note\'s appearance shares: the note still shows it', !(await draws(11)).length && apP11[0] > 200 && apP11[2] < 80 && (await objects()).some(o => o.w === 64), {apP11, d:await draws(11)});
+// a form the page and a note's appearance both draw: the picture deleted from the page, the note keeps it
+await pick(12, {x:100, y:192, w:100, h:50}); await del(); if (await modal()) await press('刪除');
+await settle();
+const apQ12 = await pixel(12, 60, 530);
+check('a picture in a form the page and a note\'s appearance both draw: deleted from the page, the note still shows it', !(await draws(12)).length && apQ12[0] > 200 && apQ12[2] < 80, {apQ12, d:await draws(12)});
+// 更換, only this one, in a form two pages draw: the other page keeps the old picture (copy-on-write)
+await rep(13, {x:100, y:192, w:100, h:50}, WIDE);
+const sr13 = await scopeRow(); if (await modal()) await press('更換');
+const d13 = await draws(13), d14 = await draws(14);
+check('更換, only this one, a picture in a form two pages draw: this page has the new one, the other still the old one', sr13 && d13.length === 1 && d13[0].px.w === 80 && d14.length === 1 && d14[0].px.w === 68, {sr13, d13, d14});
+// two different pictures whose bytes happen to give the same 32-bit hash: not the same picture
+await pick(15, {x:100, y:192, w:100, h:50}); await del();
+const m16 = await modal(); if (m16) await press('只刪這一張'); else await settle();
+const d16 = await draws(15);
+check('two different pictures with the same 32-bit hash: not one picture (nothing asked); the other stays', !m16 && d16.length === 1 && near(d16[0].box.x, 300), {m16, d16});
+// 刪除圖片 pressed twice at once: done once
+const undos = () => Ev(() => window.__pdfapp.S.undo.length);
+await pick(16, {x:100, y:192, w:100, h:50});
+const u17 = await undos();
+await Ev(() => { const b = document.querySelector('.xbar [data-x="del"]'); b.click(); b.click(); });
+await settle(); if (await modal()) await press('刪除');
+check('刪除圖片 pressed twice at once: deleted once (one undo step)', (await undos()) === u17 + 1 && !(await draws(16)).length, {u:[u17, await undos()]});
+// 更換圖片… pressed twice: one file chooser; the picked picture's preview is let go when the dialog closes
+await pick(17, {x:100, y:192, w:100, h:50});
+const fcs = [], onFc = fc => fcs.push(fc); win.on('filechooser', onFc);
+await win.dblclick('.xbar [data-x="rep"]'); await win.waitForTimeout(1500); win.off('filechooser', onFc);
+let blob18 = '';
+if (fcs.length) { await fcs[0].setFiles(WIDE); await win.waitForTimeout(900); blob18 = await Ev(() => { const im = document.querySelector('#modal .rp-frame img'); return im ? im.src : ''; }); if (await modal()) await press('更換'); }
+const gone18 = blob18 ? await Ev(async u => { try { await fetch(u); return false; } catch (_) { return true; } }, blob18) : false;
+check('更換圖片… pressed twice: one file chooser; replaced once', fcs.length === 1 && (await draws(17)).some(d => d.px.w === 80), {choosers:fcs.length, d:await draws(17)});
+check('the picked picture\'s preview (its object URL) is let go once the dialog closes', /^blob:/.test(blob18) && gone18, {blob18, gone18});
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

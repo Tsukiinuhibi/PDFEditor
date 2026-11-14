@@ -189,6 +189,13 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - **更換**（`replacePageImage`）：`pickImage()` → `openReplaceDialog`（預覽、保持比例／填滿、〔↺〕〔↻〕、只這一張／全部 N 處）→ 指令換成 `q T cm /PDFE_Im<n> Do Q`。`replaceArea`／`replacePlacement`：新圖在畫面上是正的，舊圖刻意的斜角（不是 90° 倍數）保留，90° 轉向與翻轉不帶過去；`T = M_new · M⁻¹`，所以新圖仍在舊圖的裁切裡。疊在一起的只換第一張、其他刪掉。
 - **另存時清理**：`saveAsNew(bytes, suffix, {clean = true})` 先 `pruneUnused`（從 trailer 的 `Root`、`Info`、`Encrypt` 標記找得到的物件，其他刪掉；沒東西可刪就原封不動）。照原樣存、不清的：加密的檔案（trailer 有 `/Encrypt`：pdf-lib 會把仍是密文的字串放進新的物件串流）、有數位簽章的（`hasSignature`：簽章欄位有 `/V`，或有 `/Perms`）、有 pdf-lib 讀不懂的物件的（`hasUnreadable`：`PDFInvalidObject`，它指到的東西看不到）；`S.signed` 時也不清。數位簽章在簽之前先清、簽好的不再動。`purgeImages` 在有讀不懂的物件時不刪任何物件。
 - 表單物件沒有自己的 `/Resources`（用畫它那一層的）：`addXObject` 先複製一份當時有效的資源（指令記在 `draw.res`，表單鏈記在 `chain[k].pres`）再加名稱。
+- v1.0.50 的修正：
+  - 整個被裁掉的圖片：看得到的範圍是「沒有」，不是整頁（`boxMeet` 的 null 當參數是「沒有限制」、當結果是「沒有交集」，兩處都分開判斷）。以前它的紅框蓋住整頁，更換時新圖也放滿整頁。
+  - 疊在同一個紅框下的圖片：新圖放在看得到最多的那張的範圍（`mainOf`），其他的拿掉。
+  - 「同一張圖」：`imageKey`（32 位元雜湊）只用來縮小範圍，最後比對位元組（`sameImage`）。
+  - 註解外觀、圖樣（pattern）、Type3 字型畫到的圖片與表單（`usedElsewhere`）：`purgeImages` 不拿掉它們的名稱與資料；`cloneChain` 遇到它們用到的表單先複製再改（「全部 N 處」也一樣：N 只算頁面內容畫的地方），頁面上的刪除或更換不會改到註解外觀。
+  - 〔刪除圖片〕／〔更換圖片…〕進行中再按一次不會再做一次（`IMG_JOB`）；選的圖片的預覽（object URL）在更換對話框關掉後釋放。
+  - `reachableRefs` 也走 trailer 的 /ID（有的檔案把它存成獨立物件，以前另存時會被清掉）。
 
 ### 3.9.9 多選與對齊（v1.0.36）
 - **多選**（`MS = {i, items, els}`，只在同一頁、只有能移動的物件 `movableAnn`）：「選取」工具 Shift＋點物件 `toggleMulti`（Shift 按在選取物件的把手上仍是轉 15°／調整比例，不改選取）；在空白處拖曳 `startMarquee`：完全在框內的物件（`getAnns`，隱藏、鎖定圖層的不算）。`setMulti` 畫 `.asel.multi` 外框、`#hint.objbar.multi` 顯示 `multiBarHTML`。點空白、Esc、換工具、`mountDoc` 都清除。
