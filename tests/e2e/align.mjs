@@ -192,5 +192,119 @@ await win.click('.thumb[data-i="1"]'); await win.waitForTimeout(800);
 check('clicking a thumbnail lets the group go (Delete is about pages then)', (await multi()) === null);
 await win.click('[data-view="continuous"]'); await win.waitForTimeout(900);
 
+// ---- part 4 (v1.0.50): vertical distribute, one-object box, Shift+box, Esc, the page's edge, Shift+click inside an outline,
+// a nudge not yet written, a declined delete, the 對齊到 list, the last tab ------------------------------------------------
+const undos = () => A(() => window.__pdfapp.S.undo.length);
+const sel = () => A(() => window.__pdfapp.sel()).then(s => s && s.id);
+await A(() => document.activeElement && document.activeElement.blur && document.activeElement.blur());
+await see(1, 255, 225); await marq1();
+await win.click('#hint.multi [data-dist="v"]'); await win.waitForTimeout(1800);
+nb = (await boxes1()).sort((a, b) => a.y - b.y);
+const oy = [...o].sort((a, b) => a.y - b.y), v1 = nb[1].y - (nb[0].y + nb[0].h), v2 = nb[2].y - (nb[1].y + nb[1].h);
+check('垂直平均分配: the gaps above and below the middle one are equal; the top and bottom ones stay', near(v1, v2, .6) && near(nb[0].y, oy[0].y, .6) && near(nb[2].y + nb[2].h, oy[2].y + oy[2].h, .6), {v1, v2, nb});
+await undo();
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+await see(0, 300, 600);
+await tool('rect');
+for (const [a, b] of [[[60, 450], [120, 490]], [[200, 450], [260, 490]], [[340, 450], [400, 490]]]) await drag(await P(0, ...a), await P(0, ...b));
+await tool('select');
+const row4 = (await anns(0)).filter(a => a.sub === 'Square' && a.y > 430 && a.y < 470).sort((p, q) => p.x - q.x);
+const box4 = () => anns(0).then(l => row4.map(t => l.find(a => a.id === t.id)));
+const marq4 = async () => { await see(0, 235, 472); await drag(await P(0, 40, 430), await P(0, 430, 515), {wait:900}); };
+// with an object selected (its bar above the pages), a box dragged from empty space starts where it was pressed on the page
+// (the bar goes as the box starts, and the pages move up by its height)
+await see(0, 235, 472);
+await win.mouse.click(...await P(0, row4[1].x + 6, row4[1].y + row4[1].h / 2)); await win.waitForTimeout(900);
+const barUp = await A(() => document.querySelector('#hint').classList.contains('objbar'));
+await drag(await P(0, row4[0].x - 15, row4[0].y - 12), await P(0, row4[0].x + row4[0].w + 15, row4[0].y + row4[0].h + 12), {wait:900});
+const pick0 = {m:await multi(), s:await sel()};
+check('with an object selected (its bar above the pages), a box dragged from empty space starts where it was pressed', barUp && pick0.m === null && pick0.s === row4[0].id, {barUp, pick0});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// Esc during a group drag: back where they were, still selected, nothing written
+await marq4();
+const e0 = await box4(), u0 = await undos();
+await win.mouse.move(...await P(0, e0[0].x + 6, e0[0].y + e0[0].h / 2)); await win.mouse.down();
+await win.mouse.move(...await P(0, e0[0].x + 66, e0[0].y + e0[0].h / 2 + 40), {steps:8}); await win.waitForTimeout(200);
+await win.keyboard.press('Escape'); await win.waitForTimeout(200);
+await win.mouse.up(); await win.waitForTimeout(1800);
+const e1 = await box4(), tf = await A(() => [...document.querySelectorAll('.asel.multi')].map(el => el.style.transform || ''));
+check('Esc during a group drag: they stay where they were, still selected; no undo step', row4.length === 3 && e0.every((b, k) => near(e1[k].x, b.x) && near(e1[k].y, b.y)) && (await multi())?.ids.length === 3 && tf.length === 3 && tf.every(t => !t) && (await undos()) === u0, {e0, e1, tf, m:await multi(), u:[u0, await undos()]});
+if ((await undos()) !== u0) await undo();   // (the checks below start from where they were)
+// a box over one object: that one, by itself; Shift+box adds
+let cb = await box4();
+await drag(await P(0, cb[1].x - 20, cb[1].y - 15), await P(0, cb[1].x + cb[1].w + 20, cb[1].y + cb[1].h + 15), {wait:900});
+const one1 = {m:await multi(), s:await sel()};
+check('a box over one object: that one selected by itself (its own bar), not a group of one', one1.m === null && one1.s === row4[1].id, one1);
+await win.keyboard.down('Shift'); await drag(await P(0, cb[2].x + cb[2].w + 30, cb[2].y - 15), await P(0, cb[2].x - 20, cb[2].y + cb[2].h + 15), {wait:900}); await win.keyboard.up('Shift');
+const sb2 = await multi();
+check('Shift+box: what it catches is added to what was selected', sb2?.ids.length === 2 && sb2.ids.includes(row4[1].id) && sb2.ids.includes(row4[2].id), sb2);
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// an object partly off the page: the box judges it by the part on the page
+cb = await box4();
+await win.mouse.click(...await P(0, cb[0].x + 6, cb[0].y + cb[0].h / 2)); await win.waitForTimeout(600);
+await drag(await P(0, cb[0].x + cb[0].w - 6, cb[0].y + cb[0].h / 2), await P(0, cb[0].x - 194, cb[0].y + cb[0].h / 2), {wait:2000});   // (held near its right end: half of it goes off)
+const Lout = (await anns(0)).find(a => a.id === row4[0].id);
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+await drag(await P(0, Lout.x + Lout.w + 15, Lout.y - 15), await P(0, -20, Lout.y + Lout.h + 15), {wait:900});
+const caught = {m:await multi(), s:await sel()};
+check('an object partly off the page: the box catches it by the part on the page', !!Lout && Lout.x < -20 && caught.s === row4[0].id, {Lout, caught});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+await undo();
+// Shift+click on an object lying inside a selected one's outline: that object (what a plain click there picks)
+await see(0, 400, 650);
+await tool('rect'); await drag(await P(0, 300, 560), await P(0, 520, 760)); await drag(await P(0, 380, 620), await P(0, 430, 670));
+await tool('select');
+const big = (await anns(0)).find(a => a.sub === 'Square' && near(a.x, 300, 6) && near(a.y, 560, 6)), small = (await anns(0)).find(a => a.sub === 'Square' && near(a.x, 380, 6) && near(a.y, 620, 6));
+cb = await box4();
+await win.mouse.click(...await P(0, big.x + 8, big.y + big.h - 10)); await win.waitForTimeout(600);
+await shiftClick(await P(0, cb[2].x + 6, cb[2].y + cb[2].h / 2));
+await shiftClick(await P(0, small.x + small.w / 2, small.y + small.h / 2));
+const mu = await multi();
+check('Shift+click on an object inside a selected one\'s outline: it is added (the outer one stays)', !!big && !!small && mu?.ids.length === 3 && mu.ids.includes(small.id) && mu.ids.includes(big.id), mu);
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+await win.mouse.click(...await P(0, big.x + 8, big.y + big.h - 10)); await win.waitForTimeout(600);
+await shiftClick(await P(0, small.x + small.w / 2, small.y + small.h / 2));
+const mu2 = await multi();
+check('…with one object selected: Shift+click on the one inside it makes a group of the two', mu2?.ids.length === 2 && mu2.ids.includes(small.id) && mu2.ids.includes(big.id), mu2);
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// an arrow-key nudge not yet written, then Shift+click: the nudge is written first
+await see(0, 300, 600);
+const n0 = (await anns(0)).find(a => a.id === row4[0].id);
+await win.mouse.click(...await P(0, n0.x + 6, n0.y + n0.h / 2)); await win.waitForTimeout(600);
+for (let k = 0; k < 3; k++) await win.keyboard.press('ArrowRight');
+await shiftClick(await P(0, row4[1].x + 6, row4[1].y + row4[1].h / 2));   // (within the half second the nudge waits)
+await win.waitForTimeout(1800);
+const n1 = (await anns(0)).find(a => a.id === row4[0].id), mn = await multi();
+check('an arrow-key nudge not yet written, then Shift+click: the nudge is kept; both selected', near(n1.x, n0.x + 3, .3) && mn?.ids.length === 2 && mn.ids.includes(row4[0].id) && mn.ids.includes(row4[1].id), {n0:n0.x, n1:n1.x, mn});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// Delete declined (a signed document, 取消): nothing deleted, the group still selected
+await marq4();
+await A(() => { window.__pdfapp.S.signed = true; });
+await win.keyboard.press('Delete'); await win.waitForTimeout(800);
+const askedDel = await A(() => document.querySelector('#mask').classList.contains('show'));
+if (askedDel) { await win.click('#modal button:has-text("取消")'); await win.waitForTimeout(800); }
+await A(() => { window.__pdfapp.S.signed = false; });
+const md = await multi(), leftRow = (await anns(0)).filter(a => row4.some(r => r.id === a.id)).length;
+check('Delete declined (a signed document, 取消): nothing deleted, the group still selected', askedDel && leftRow === 3 && md?.ids.length === 3, {askedDel, leftRow, md});
+// the 對齊到 list opened and closed without a change keeps the focus: Esc and Delete are still the group's
+await marq4();
+await A(() => { const s = document.querySelector('#hint.multi select[data-alto]'); if (s) s.focus(); });
+const focused = await A(() => !!document.activeElement && document.activeElement.matches('select[data-alto]'));
+await win.keyboard.press('Escape'); await win.waitForTimeout(400);
+check('the 對齊到 list has the focus: Esc still lets the group go', focused && (await multi()) === null, {focused, m:await multi()});
+await marq4();
+await A(() => { const s = document.querySelector('#hint.multi select[data-alto]'); if (s) s.focus(); });
+await win.keyboard.press('Delete'); await win.waitForTimeout(1800);
+const leftDel = (await anns(0)).filter(a => row4.some(r => r.id === a.id)).length;
+check('…and Delete deletes the group', leftDel === 0, {leftDel});
+await undo();
+// closing the last tab with a group selected: the group is let go, the bar loses its object look
+await marq4();
+const hadBar = await barTitle(), hadMulti = await multi();
+await win.keyboard.press('Control+w'); await win.waitForTimeout(900);
+if (await A(() => document.querySelector('#mask').classList.contains('show'))) { await win.click('#modal button:has-text("不儲存並關閉")'); await win.waitForTimeout(1500); }
+const hintCls = await A(() => document.querySelector('#hint').className), mClosed = await multi(), nPages = await A(() => window.__pdfapp.S.pages.length);
+check('closing the last tab with a group selected: the group is let go; the bar is no longer an object bar', !!hadBar && nPages === 0 && !/\b(multi|objbar)\b/.test(hintCls) && mClosed === null, {hadBar, hadMulti, nPages, hintCls, mClosed});
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

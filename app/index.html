@@ -1415,6 +1415,7 @@ async function closeTab(i){
   if (pdf) setTimeout(() => pdf.destroy(), 300);
 }
 function showWelcome(){
+  deselectAnnot(); clearMulti();   // (the bar is no longer about an object)
   if (FIND.open) closeFind();
   FIND.hits = []; FIND.cur = -1; FIND.done = ''; buildFindPanel();
   applyDoc(blankDoc());
@@ -1761,7 +1762,7 @@ async function ensureOverlay(i){
   ovl.querySelectorAll('.annhit,.imgbox,.lnk').forEach(n => n.remove());
   const pct = (v, t) => (v / t * 100) + '%';
   anns.forEach(a => {
-    const d = document.createElement('div'); d.className = 'annhit' + (a.noap ? ' noap' : '') + (a.sig ? ' sig' : '') + (a.subtype === 'Text' ? ' txt' : '');
+    const d = document.createElement('div'); d.className = 'annhit' + (a.noap ? ' noap' : '') + (a.sig ? ' sig' : '') + (a.subtype === 'Text' ? ' txt' : ''); HIT_ANN.set(d, a);
     d.style.left = pct(a.x, pg.w); d.style.top = pct(a.y, pg.h); d.style.width = pct(a.w, pg.w); d.style.height = pct(a.h, pg.h);
     if (a.subtype === 'Text') {
       if (a.noap) d.innerHTML = NOTE_SVG;
@@ -2127,7 +2128,9 @@ window.addEventListener('keydown', e => {
   const inBox = !isTyping(e) || /^(INPUT|SELECT)$/.test(e.target && e.target.tagName);   // (a field, not a text box or note being written)
   if (inBox && mod && !e.shiftKey && e.code === 'KeyF') { e.preventDefault(); openFind(); return; }
   if (inBox && e.key === 'F3' && FIND.open) { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1); return; }
-  if (isTyping(e)) return;
+  const alto = !!MS && /^(Delete|Backspace|Escape)$/.test(e.key) && !!e.target.matches && e.target.matches('#hint [data-alto]');   // (the 對齊到 list,
+  if (alto) e.target.blur();   //  opened and closed without a change, keeps the focus: these keys are the group's still)
+  if (isTyping(e) && !alto) return;
   if (e.code === 'Space') {
     e.preventDefault();
     if (!S.spaceDown) { S.spaceDown = true; viewer.classList.add('pan-ready'); }
@@ -2641,6 +2644,7 @@ pagesEl.addEventListener('pointermove', e => textboxHover(e));
 pagesEl.addEventListener('pointerleave', () => { if (S.tool === 'textbox') clearTextMarks(); });
 pagesEl.addEventListener('pointerdown', e => {
   if (S.panning || S.spaceDown || e.button !== 0) return;
+  const pel0 = S.tool === 'select' && e.target.closest('.page'), at = pel0 ? pagePoint(+pel0.dataset.i, e) : null;   // (before the selection, and the bar above the pages with it, goes: the pages move up then)
   if (AS && !e.shiftKey && !(e.target.closest && e.target.closest('.asel,.abar'))) deselectAnnot();
   if (MS && !e.shiftKey && !(e.target.closest && e.target.closest('.asel'))) clearMulti();
   const pel = e.target.closest('.page'); if (!pel) return;
@@ -2651,7 +2655,7 @@ pagesEl.addEventListener('pointerdown', e => {
   if (t === 'note') { if (NP) return; const p = snapPoint(i, pagePoint(i, e), {mark:false}); newNoteAt(i, p.x, p.y); return; }
   if (t === 'signature') { const p = snapPoint(i, pagePoint(i, e), {mark:false}); placeSignature(i, p.x, p.y); return; }
   if (t === 'extract') { e.preventDefault(); startExtractDraw(i, e); return; }
-  if (t === 'select') { e.preventDefault(); startMarquee(i, e, e.shiftKey); return; }
+  if (t === 'select') { e.preventDefault(); startMarquee(i, e, e.shiftKey, at); return; }
   if (t === 'ocr') { e.preventDefault(); startOcrDraw(i, e); return; }
   if (t === 'link') { e.preventDefault(); startLinkDraw(i, e); return; }
   if (t === 'textbox') { e.preventDefault(); textboxDown(i, e); return; }
@@ -7334,6 +7338,13 @@ function deselectAnnot(){
    inside it. Only on one page, only objects that can be moved. MS = {i, items, els}; the bar above the pages shows it. */
 let MS = null;
 const movableAnn = a => !!a && !NO_MOVE.has(a.subtype) && !a.sig;
+// Shift+click on a selection outline: the object a plain click there picks (the topmost one; it may lie inside the
+// selected one), not always the outlined one
+const HIT_ANN = new WeakMap();   // .annhit → its object
+function pickUnder(e, a){
+  const el = document.elementsFromPoint(e.clientX, e.clientY).find(n => n.classList && n.classList.contains('annhit')), u = el && HIT_ANN.get(el);
+  return u && movableAnn(u) ? u : a;
+}
 function clearMulti(){
   if (!MS) return;
   MS.els.forEach(el => el.remove());
@@ -7348,22 +7359,23 @@ function setMulti(i, items){
   const els = items.map(a => {
     const el = document.createElement('div'); el.className = 'asel multi';
     Object.assign(el.style, {left:a.x / pg.w * 100 + '%', top:a.y / pg.h * 100 + '%', width:a.w / pg.w * 100 + '%', height:a.h / pg.h * 100 + '%'});
-    el.addEventListener('pointerdown', e => { if (e.button !== 0 || S.spaceDown) return; e.preventDefault(); e.stopPropagation(); if (e.shiftKey) toggleMulti(i, a); else dragMulti(e); });
+    el.addEventListener('pointerdown', e => { if (e.button !== 0 || S.spaceDown) return; e.preventDefault(); e.stopPropagation(); if (e.shiftKey) toggleMulti(i, pickUnder(e, a)); else dragMulti(e); });
     ovl.appendChild(el); return el;
   });
   S.els[i].style.zIndex = 4;
   MS = {i, items, els};
   paintObjBar();
 }
-function toggleMulti(i, a){
+async function toggleMulti(i, a){
+  if (nudgeFrom) await flushNudge();   // an arrow-key nudge not written yet: written first (the group starts where it is now)
   const list = MS && MS.i === i ? MS.items.slice() : AS && AS.i === i ? [AS.a] : [], k = list.findIndex(x => x.id === a.id);
   if (k >= 0) list.splice(k, 1); else list.push(a);
   if (!list.length) { clearMulti(); deselectAnnot(); return; }
   setMulti(i, list);
 }
 // a box dragged over empty space with the select tool (add: keep what was selected)
-function startMarquee(i, e, add){
-  const pg = S.pages[i], p0 = pagePoint(i, e), base = add ? (MS && MS.i === i ? MS.items.slice() : AS && AS.i === i ? [AS.a] : []) : [];
+function startMarquee(i, e, add, at = null){
+  const pg = S.pages[i], p0 = at || pagePoint(i, e), base = add ? (MS && MS.i === i ? MS.items.slice() : AS && AS.i === i ? [AS.a] : []) : [];
   const d = document.createElement('div'); d.className = 'draft marquee'; S.els[i].querySelector('.ovl').appendChild(d);
   let box = null;
   const move = ev => {
@@ -7374,7 +7386,10 @@ function startMarquee(i, e, add){
   const up = async () => {
     window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); d.remove();
     if (!box || box.w < 3 || box.h < 3) return;
-    const inside = (await getAnns(i)).filter(a => movableAnn(a) && a.x >= box.x - .5 && a.y >= box.y - .5 && a.x + a.w <= box.x + box.w + .5 && a.y + a.h <= box.y + box.h + .5);
+    const inside = (await getAnns(i)).filter(a => {   // (partly off the page: judged by the part on it; the box stops at the page's edge)
+      const x0 = Math.max(a.x, 0), y0 = Math.max(a.y, 0), x1 = Math.min(a.x + a.w, pg.w), y1 = Math.min(a.y + a.h, pg.h);
+      return movableAnn(a) && x1 >= x0 && y1 >= y0 && x0 >= box.x - .5 && y0 >= box.y - .5 && x1 <= box.x + box.w + .5 && y1 <= box.y + box.h + .5;
+    });
     if (S.tool === 'select' && S.els[i]) setMulti(i, [...base, ...inside]);
   };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
@@ -7401,18 +7416,24 @@ function dragMulti(e){
     moved = true;
     els.forEach(el => { el.style.transform = `translate(${dx / pg.w * S.els[i].clientWidth}px, ${dy / pg.h * S.els[i].clientHeight}px)`; });
   };
+  const end = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('keydown', esc, true); };
+  const esc = ev => {   // Esc: back where they were, still selected, nothing written
+    if (ev.key !== 'Escape') return;
+    ev.preventDefault(); ev.stopImmediatePropagation(); end(); els.forEach(el => { el.style.transform = ''; });
+  };
   const up = () => {
-    window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+    end();
     if (!moved) { els.forEach(el => { el.style.transform = ''; }); return; }
     const n = items.length;
     moveObjects(i, items.map(a => ({a, ob:{x:a.x, y:a.y, w:a.w, h:a.h}, nb:{x:a.x + dx, y:a.y + dy, w:a.w, h:a.h}})), `已移動 ${n} 個物件`);
   };
-  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('keydown', esc, true);
 }
 async function deleteMulti(){
   if (!MS) return;
-  const {i, items} = MS; clearMulti();
-  await mutate(`已刪除 ${items.length} 個物件`, doc => { items.forEach(a => { const ref = findAnnotRef(doc, i, a.id); if (ref) removeAnnotRefs(doc, i, ref); }); });
+  const {i, items} = MS;
+  const ok = await mutate(`已刪除 ${items.length} 個物件`, doc => { items.forEach(a => { const ref = findAnnotRef(doc, i, a.id); if (ref) removeAnnotRefs(doc, i, ref); }); });
+  if (ok && MS && MS.items === items) clearMulti();   // (declined: the group stays selected)
 }
 function snapshot(i, box){
   const src = S.els[i] && S.els[i].querySelector('canvas.pc'); if (!src) return null;
@@ -7437,7 +7458,7 @@ function selectAnnot(i, a){
   const hp = {nw:[0, 0], n:[50, 0], ne:[100, 0], e:[100, 50], se:[100, 100], s:[50, 100], sw:[0, 100], w:[0, 50]};
   el.querySelectorAll('.h').forEach(h => { const [x, y] = hp[h.dataset.d]; h.style.left = x + '%'; h.style.top = y + '%'; });
   el.addEventListener('pointerdown', e => { if (e.button !== 0 || S.spaceDown) return; e.preventDefault(); e.stopPropagation();
-    if (e.shiftKey && AS && AS.movable && !e.target.closest('.h,.rh,.eh')) { toggleMulti(AS.i, AS.a); return; }   // Shift on a handle keeps its own meaning (15° steps, proportions)
+    if (e.shiftKey && AS && AS.movable && !e.target.closest('.h,.rh,.eh')) { toggleMulti(AS.i, pickUnder(e, AS.a)); return; }   // Shift on a handle keeps its own meaning (15° steps, proportions)
     if (!AS || !AS.movable) return;
     if (e.target.closest('.rh')) return geomDrag(e, 'rot');
     if (e.target.closest('.eh')) return geomDrag(e, 'end', +e.target.closest('.eh').dataset.e);
@@ -8122,7 +8143,12 @@ function nudgeSelected(dx, dy){
   if (!nudgeFrom) nudgeFrom = {...AS.box};
   AS.box.x += dx; AS.box.y += dy; drawASel();
   clearTimeout(nudgeTimer);
-  nudgeTimer = setTimeout(() => { if (!AS) { nudgeFrom = null; return; } const ob = nudgeFrom; nudgeFrom = null; commitAnnotBox(AS.i, AS.a, ob, {...AS.box}); }, 500);
+  nudgeTimer = setTimeout(flushNudge, 500);
+}
+async function flushNudge(){   // (also before Shift+click makes a group of it)
+  clearTimeout(nudgeTimer);
+  const ob = nudgeFrom; nudgeFrom = null;
+  if (ob && AS) await commitAnnotBox(AS.i, AS.a, ob, {...AS.box});
 }
 
 /* ---------------- handwritten signature ---------------- */
