@@ -53,6 +53,36 @@ def source(pages=2, signed=False, notes=0, ur3=False):
 WANT = set(sys.argv[1:])
 
 
+def sig_dict(pdf):
+    return pdf.make_indirect(Dictionary(Type=Name.Sig, Filter=Name('/Adobe.PPKLite'), SubFilter=Name('/adbe.pkcs7.detached'),
+                                        ByteRange=Array([0, 10, 20, 30]), Contents=String(bytes(range(48, 112)))))
+
+
+# a signature field written in the other ways the format allows (or readers accept): a signed file all the same
+def save_sig_shape(name, shape):
+    if WANT and name not in WANT:
+        return
+    pdf = source()
+    p1, s = pdf.pages[0], sig_dict(pdf)
+    widget = lambda **kw: pdf.make_indirect(Dictionary(Type=Name.Annot, Subtype=Name.Widget, T=String('sig1'), V=s, Rect=Array([0, 0, 0, 0]), P=p1.obj, F=132, **kw))
+    if shape == 'inherit':   # /FT /Sig on the parent field, /V on its kid
+        kid = widget()
+        par = pdf.make_indirect(Dictionary(T=String('grp'), FT=Name.Sig, Kids=Array([kid])))
+        kid.Parent = par
+        p1.obj.Annots.append(kid)
+        pdf.Root.AcroForm.Fields.append(par)
+    elif shape == 'direct':  # the field written straight into /AcroForm /Fields
+        pdf.Root.AcroForm.Fields.append(Dictionary(FT=Name.Sig, T=String('sig1'), V=s))
+    else:
+        f = widget(FT=pdf.make_indirect(Name.Sig)) if shape == 'ftref' else widget(FT=Name.Sig) if shape == 'ur3' else widget()   # noft: no /FT
+        p1.obj.Annots.append(f)
+        pdf.Root.AcroForm.Fields.append(f)
+        if shape == 'ur3':   # a real signature and usage rights (/Perms /UR3) side by side
+            pdf.Root.Perms = Dictionary(UR3=sig_dict(pdf))
+    pdf.save(os.path.join(HERE, name + '.pdf'), encryption=Encryption(owner='owner-pw', user='', R=4, aes=True), static_id=True)
+    print('wrote', name)
+
+
 def save(name, enc, objstm=False, linearize=False, **kw):
     if WANT and name not in WANT:
         return
@@ -87,6 +117,8 @@ save('r6-userpw', Encryption(owner='owner-pw', user='secret', R=6))
 save('signed-aes128', Encryption(owner='owner-pw', user='', R=4, aes=True), signed=True)
 save('signed-aes128-objstm', Encryption(owner='owner-pw', user='', R=4, aes=True), objstm=True, signed=True)   # (the signature in an object stream)
 save('ur3-aes128', Encryption(owner='owner-pw', user='', R=4, aes=True), ur3=True)
+for shape in ('inherit', 'direct', 'ftref', 'noft', 'ur3'):
+    save_sig_shape('sig-' + shape, shape)
 save('big-aes128', Encryption(owner='owner-pw', user='', R=4, aes=True), objstm=True, pages=100)
 # linearized ("Fast Web View") with object streams, as Acrobat saves by default: the trailer is in the first xref stream
 save('lin-aes128', Encryption(owner='owner-pw', user='', R=4, aes=True), objstm=True, linearize=True)

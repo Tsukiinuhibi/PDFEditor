@@ -102,16 +102,33 @@ function fileKey(enc, id0){
   return rc4(key, PAD).equals(U.subarray(0, 32)) ? key : null;
 }
 
-// signed: some signature field has a value (a signature). Usage rights (/Perms /UR3, Reader extensions) are not a
-// signature of the document's content and do not count; every object is looked at, those in object streams too
-function hasSignedField(ctx){
-  for (const [, o] of ctx.enumerateIndirectObjects()) if (o instanceof PDFDict && o.get(N('FT')) === N('Sig') && o.get(N('V'))) return true;
+// signed: a signature dictionary (with /ByteRange, or /Type /Sig or /DocTimeStamp) anywhere in the document, however its
+// field is written; every object is looked at, those in object streams too. Usage rights (/Perms /UR3 or /UR: Reader
+// extensions) do not sign the document's content and do not count
+function isSigned(ctx){
+  const cat = ctx.lookup(ctx.trailerInfo.Root), perms = cat instanceof PDFDict ? cat.lookup(N('Perms')) : null, rights = new Set();
+  if (perms instanceof PDFDict) for (const k of ['UR3', 'UR']) { const v = perms.get(N(k)); const d = v instanceof PDFRef ? ctx.lookup(v) : v; if (d) rights.add(d); }
+  const seen = new Set();
+  const visit = o => {
+    if (o instanceof PDFRawStream) return visit(o.dict);
+    if (o instanceof PDFArray) { for (let i = 0; i < o.size(); i++) if (visit(o.get(i))) return true; return false; }
+    if (!(o instanceof PDFDict) || seen.has(o)) return false;
+    seen.add(o);
+    const t = o.get(N('Type'));
+    if (!rights.has(o) && (o.has(N('ByteRange')) || t === N('Sig') || t === N('DocTimeStamp'))) return true;
+    for (const [, v] of o.entries()) if (visit(v)) return true;
+    return false;
+  };
+  for (const [, o] of ctx.enumerateIndirectObjects()) if (visit(o)) return true;
   return false;
 }
 
 async function decryptPdf(input){
-  // (views on the bytes that came in, not copies: a big file is held only once)
-  const u8 = input instanceof Uint8Array ? input : new Uint8Array(input), bytes = Buffer.from(u8.buffer, u8.byteOffset, u8.byteLength);
+  // views on the bytes that came in, not copies (a big file is held once). u8 is a plain Uint8Array even when a Buffer
+  // came in, so u8.slice() below always copies
+  const u8 = ArrayBuffer.isView(input) ? new Uint8Array(input.buffer, input.byteOffset, input.byteLength) : input instanceof ArrayBuffer ? new Uint8Array(input) : null;
+  if (!u8) return {state:'unsupported', reason:'not the bytes of a file'};
+  const bytes = Buffer.from(u8.buffer, u8.byteOffset, u8.byteLength);
   if (bytes.indexOf('/Encrypt') < 0) return {state:'plain'};
   try {
     // read every object as it is in the file, in file order; object streams are kept for later (they are encrypted
@@ -255,7 +272,7 @@ async function decryptPdf(input){
     // (no object streams: pdf-lib then gives way every 1000 objects while writing; with them it counts in steps of a
     // whole stream and may never land on a multiple of 1000. The next change saves with object streams again.)
     const out = await doc.save({updateFieldAppearances:false, addDefaultPage:false, useObjectStreams:false, objectsPerTick:1000});
-    return {state:'decrypted', bytes:out, signed:hasSignedField(ctx)};
+    return {state:'decrypted', bytes:out, signed:isSigned(ctx)};
   } catch (e) {
     return {state:'unsupported', reason:String((e && e.message) || e)};
   }

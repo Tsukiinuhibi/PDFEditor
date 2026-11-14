@@ -2668,7 +2668,7 @@ async function mutate(label, fn, opts = {}){
   if (NP) await closeNote(true);
   if (S.signed && !(await confirmDlg('此文件已數位簽署', '繼續修改會使現有的數位簽章失效。確定要繼續？', '繼續修改'))) return false;
   busy(true, '處理中…');
-  const cur0 = S.current;
+  const cur0 = S.current, pdf0 = S.pdf;
   try {
     const doc = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false});
     const res = await fn(doc);
@@ -2691,8 +2691,9 @@ async function mutate(label, fn, opts = {}){
     console.error(e);
     // still encrypted (a signed 「限制編輯」 file, or one that could not be decrypted): pdf-lib cannot change it. Whether it
     // is, pdf.js knows (EncryptFilterName); the bytes "/Encrypt" may be anywhere in a plain file
-    const locked = e && e.name === 'PasswordException'
-      || await S.pdf.getMetadata().then(m => !!(m && m.info && m.info.EncryptFilterName), () => false);
+    const locked = e && e.name === 'PasswordException' || await Promise.race([
+      Promise.resolve().then(() => pdf0.getMetadata()).then(m => !!(m && m.info && m.info.EncryptFilterName), () => false),
+      new Promise(res => setTimeout(() => res(false), 2000))]);   // (the document the change was made on, even if its tab was closed)
     if (locked) toast('這份 PDF 有加密保護，PDF 工作台無法修改它', 'err');
     else toast('操作失敗：' + (e.message || e), 'err');
     S.current = cur0;

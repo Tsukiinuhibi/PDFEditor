@@ -65,7 +65,13 @@ for (const f of ['r2-rc4-40', 'r3-rc4-128', 'r4-rc4-128', 'r4-aes128', 'r4-aes12
 }
 {
   const r = await decryptPdf(read('signed-aes128-objstm.pdf'));
-  check('a signed file whose signature field and signature sit in an object stream: still said to be signed', r.state === 'decrypted' && r.signed === true, {state:r.state, signed:r.signed});
+  check('a signed file whose signature field sits in an object stream (the signature itself stays outside, as it must): still said to be signed', r.state === 'decrypted' && r.signed === true, {state:r.state, signed:r.signed});
+}
+// signature fields written the other ways: /FT on the parent, the field straight in /Fields, /FT as a reference, no /FT,
+// and a real signature next to usage rights — all signed (decrypting them on opening would break the signature)
+for (const f of ['sig-inherit', 'sig-direct', 'sig-ftref', 'sig-noft', 'sig-ur3']) {
+  const r = await decryptPdf(read(f + '.pdf'));
+  check(`${f}: still said to be signed`, r.state === 'decrypted' && r.signed === true, {state:r.state, signed:r.signed});
 }
 {
   const r = await decryptPdf(read('ur3-aes128.pdf'));
@@ -114,6 +120,12 @@ for (const f of ['len-aes128', 'len-rc4-128']) {
   b.write('/Standarx', k, 'latin1');
   const r = await decryptPdf(new Uint8Array(b));
   check('another encryption handler (not /Standard): "unsupported", with a reason', r.state === 'unsupported' && typeof r.reason === 'string' && r.reason.length > 0, r);
+}
+{
+  const r = await decryptPdf(null);
+  check('no bytes at all (null): "unsupported", not "plain"', r.state === 'unsupported', r);
+  const b = read('r4-aes128.pdf'), v = await decryptPdf(new DataView(b.buffer, b.byteOffset, b.byteLength));
+  check('the bytes as a DataView: decrypted as from a Uint8Array', v.state === 'decrypted', {state:v.state});
 }
 {
   const r = await decryptPdf(new TextEncoder().encode('not a pdf at all /Encrypt 1 0 R'));
