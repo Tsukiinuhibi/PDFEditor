@@ -91,7 +91,7 @@ await app.close();
 
 // the release check: the top of app/CHANGELOG.md must be this version and the same as RELEASE_NOTES.md
 const tmp = fs.mkdtempSync(path.join(TMP, 'chk-'));
-for (const f of ['main.js', 'preload.js', 'package.json', 'RELEASE_NOTES.md', 'scripts/check.mjs', 'app/index.html', 'app/fontid.js', 'app/CHANGELOG.md']) {
+for (const f of ['main.js', 'word.js', 'preload.js', 'package.json', 'RELEASE_NOTES.md', 'scripts/check.mjs', 'app/index.html', 'app/fontid.js', 'app/CHANGELOG.md']) {
   fs.mkdirSync(path.dirname(path.join(tmp, f)), {recursive:true}); fs.copyFileSync(path.join(ROOT, f), path.join(tmp, f));
 }
 const runCheck = cwd => spawnSync(process.execPath, ['scripts/check.mjs'], {cwd, encoding:'utf8'});
