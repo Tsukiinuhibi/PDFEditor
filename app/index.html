@@ -1201,7 +1201,7 @@ const viewer = $('#viewer'), pagesEl = $('#pages');
 /* ---------------- small UI helpers ---------------- */
 function toast(msg, kind){
   const t = document.createElement('div'); t.className = 'toast' + (kind === 'err' ? ' err' : ''); t.textContent = msg;
-  $('#toasts').appendChild(t); setTimeout(() => t.remove(), kind === 'err' ? 4200 : 2400);
+  $('#toasts').appendChild(t); setTimeout(() => t.remove(), kind === 'err' || kind === 'long' ? 4200 : 2400);
 }
 let busyT = 0;
 function busy(on, txt){   // input is blocked at once; the veil and spinner only appear if the work takes a while
@@ -1328,18 +1328,43 @@ function switchTab(i){
   active = i; applyDoc(docs[i]);
   mountDoc({scroll:'restore', scrollTop:docs[i].scrollTop, scrollLeft:docs[i].scrollLeft});
 }
+// PDFs encrypted with only a permissions password (「限制編輯」, no password to open them): pdf.js shows them, but pdf-lib
+// can neither change them nor copy their pages, so they are decrypted first (pdfcrypt.js, in the main process).
+// → {bytes, state:'plain'|'decrypted'|'password'|'unsupported', signed}; bytes are the decrypted ones only when 'decrypted'
+let NO_DECRYPT = false;   // (tests) keep encrypted files as they are
+const hasText = (bytes, str) => {   // whether the bytes hold this ASCII text anywhere
+  const c0 = str.charCodeAt(0), n = str.length;
+  for (let i = bytes.indexOf(c0); i >= 0 && i <= bytes.length - n; i = bytes.indexOf(c0, i + 1)) {
+    let k = 1; while (k < n && bytes[i + k] === str.charCodeAt(k)) k++;
+    if (k === n) return true;
+  }
+  return false;
+};
+async function readablePdf(bytes){
+  if (NO_DECRYPT || !DESK || !DESK.decryptPdf || !hasText(bytes, '/Encrypt')) return {bytes, state:'plain'};
+  try {
+    const r = await DESK.decryptPdf(bytes);
+    if (r && r.state === 'decrypted' && r.bytes) return {bytes:new Uint8Array(r.bytes), state:'decrypted', signed:!!r.signed};
+    return {bytes, state:(r && r.state) || 'unsupported'};
+  } catch (_) { return {bytes, state:'unsupported'}; }
+}
 async function openInNewTab(bytes, name, handle){
+  // a signed one stays as it is: rewriting it on opening would quietly break its signature
+  const rd = await readablePdf(bytes), freed = rd.state === 'decrypted' && !rd.signed;
   const prev = active;
   stashActive();
   const d = blankDoc(); d.name = name; d.handle = handle;
   docs.push(d); active = docs.length - 1; applyDoc(d);
-  try { await loadDoc(bytes, {name}); }
+  try { await loadDoc(freed ? rd.bytes : bytes, {name}); }
   catch (e) {
     docs.splice(active, 1);
     if (docs.length) { active = clamp(prev, 0, docs.length - 1); applyDoc(docs[active]); mountDoc({scroll:'restore', scrollTop:docs[active].scrollTop, scrollLeft:docs[active].scrollLeft}); }
     else { active = -1; showWelcome(); }
     throw e;
   }
+  if (freed) toast('這份 PDF 有「限制編輯」的保護：PDF 工作台已解除，修改後另存的新檔不會再有這個保護', 'long');
+  const pdf = S.pdf;
+  pdf.getMetadata().then(m => { if (m && m.info && m.info.IsCollectionPresent) toast('這是 PDF 包：裡面的檔案在左側「附件」分頁，可以按〔開啟〕', 'long'); }).catch(() => {});
 }
 async function closeTab(i){
   const d = docs[i]; if (!d) return;
@@ -2620,18 +2645,32 @@ async function mutate(label, fn, opts = {}){
   if (NP) await closeNote(true);
   if (S.signed && !(await confirmDlg('此文件已數位簽署', '繼續修改會使現有的數位簽章失效。確定要繼續？', '繼續修改'))) return false;
   busy(true, '處理中…');
+  const cur0 = S.current;
   try {
     const doc = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false});
     const res = await fn(doc);
     if (res === false) return false;
     const out = await doc.save();
-    S.undo.push({bytes:S.bytes, signed:S.signed, cur:S.current}); if (S.undo.length > 30) S.undo.shift();
+    const was = {redo:S.redo, signed:S.signed, dirty:S.dirty};
+    S.undo.push({bytes:S.bytes, signed:S.signed, cur:S.current});
     S.redo = []; S.signed = false; S.dirty = true;
-    await loadDoc(out, {keepView:true, scrollToCurrent:!!opts.scrollToCurrent});
+    try { await loadDoc(out, {keepView:true, scrollToCurrent:!!opts.scrollToCurrent}); }
+    catch (e) {   // the result cannot be shown: the document stays as it was, with no undo step and not marked changed
+      S.undo.pop(); S.redo = was.redo; S.signed = was.signed; S.dirty = was.dirty; S.current = cur0; updateUI();
+      throw e;
+    }
+    if (S.undo.length > 30) S.undo.shift();
     if (opts.highlight) highlightPages(opts.highlight.from, opts.highlight.count, opts.highlight.label);
     if (label) toast(label);
     return true;
-  } catch (e) { console.error(e); toast('操作失敗：' + (e.message || e), 'err'); return false; }
+  } catch (e) {
+    console.error(e);
+    // still encrypted (a signed 「限制編輯」 file, or one that could not be decrypted): pdf-lib cannot change it
+    if (e && e.name === 'PasswordException' || hasText(S.bytes, '/Encrypt')) toast('這份 PDF 有加密保護，PDF 工作台無法修改它', 'err');
+    else toast('操作失敗：' + (e.message || e), 'err');
+    S.current = cur0;
+    return false;
+  }
   finally { busy(false); }
 }
 
@@ -8873,6 +8912,15 @@ async function buildAnnsPanel(){
   });
 }
 
+// a PDF file's bytes: "%PDF-" within the first 1024 bytes
+const isPdfBytes = b => !!b && b.length > 8 && hasText(b.subarray(0, 1024), '%PDF-');
+// an attached PDF (in a PDF portfolio, or any attachment) opens in a new tab
+async function openAttachment(a){
+  busy(true, '開啟中…');
+  try { await openInNewTab(new Uint8Array(a.content), a.filename, null); toast('已開啟附件「' + a.filename + '」（修改不會動到原本的文件，完成後請另存新檔）'); }
+  catch (e) { toast(e && e.name === 'PasswordException' ? '這個附件受密碼保護，目前版本尚不支援' : '無法開啟這個附件：' + (e.message || e), 'err'); }
+  finally { busy(false); }
+}
 async function buildAttsPanel(){
   const panel = $('#p-atts'), ver = S.version;
   if (!S.pdf) { panel.innerHTML = '<div class="empty-note">尚未開啟檔案</div>'; return; }
@@ -8885,7 +8933,8 @@ async function buildAttsPanel(){
   list.forEach(a => {
     const d = document.createElement('div'); d.className = 'att';
     d.innerHTML = `<div class="nm">${esc(a.filename)}</div><div class="meta">${fmtSize(a.content ? a.content.length : 0)}${a.description && a.description !== a.filename ? ' · ' + esc(a.description) : ''}</div>
-      <div class="row"><button class="mini" data-x="dl">下載</button><button class="mini danger" data-x="rm">移除</button></div>`;
+      <div class="row">${isPdfBytes(a.content) ? '<button class="mini" data-x="open">開啟</button>' : ''}<button class="mini" data-x="dl">下載</button><button class="mini danger" data-x="rm">移除</button></div>`;
+    if (isPdfBytes(a.content)) d.querySelector('[data-x=open]').onclick = () => openAttachment(a);
     d.querySelector('[data-x=dl]').onclick = () => saveFile(a.filename, new Blob([a.content]));
     d.querySelector('[data-x=rm]').onclick = async () => { if (await confirmDlg('移除附件', `確定要從 PDF 中移除「${a.filename}」？`, '移除')) removeAttachment(a.filename); };
     panel.appendChild(d);
@@ -11659,6 +11708,7 @@ function setTheme(t){
 if (DESK && DESK.setTheme) DESK.setTheme(THEME).then(applyTheme); else applyTheme();
 paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {
+  setNoDecrypt:v => { NO_DECRYPT = !!v; },
   people:() => ({names:PEOPLE ? [...PEOPLE.names] : [], def:PEOPLE ? PEOPLE.def : '', author:AUTHOR}),
   settingsSnapshot, parseSettingsFile, presets:k => PRESETS[k],
   apText:async (i, id) => {   // (tests) the drawing an object shows: its upright one when turned, else its normal appearance
