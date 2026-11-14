@@ -309,5 +309,52 @@ await win.locator('.dtab', {hasText:'fold a'}).first().click(); await win.waitFo
 const openA = await Ev(() => document.querySelectorAll('#p-layers .ly-obj').length);
 check('a folded list belongs to its own document: another tab\'s list stays open', foldedB === 0 && openA > 0, {foldedB, openA});
 
+// ---- part 5 (v1.0.51): a locked layer keeps its objects; a nudge before a panel action -----------------------------------
+const d5 = await PDFDocument.create(), c5 = d5.context, q5 = d5.addPage([595, 842]);
+const ap5 = rgb => c5.register(c5.stream(`${rgb} rg 0 0 100 100 re f`, {Type:'XObject', Subtype:'Form', BBox:[0, 0, 100, 100]}));
+const LT = c5.register(c5.obj({Type:'OCG', Name:PDFString.of('Top')})), LM = c5.register(c5.obj({Type:'OCG', Name:PDFString.of('Mid'), PDFE_Lock:true})), LB = c5.register(c5.obj({Type:'OCG', Name:PDFString.of('Bottom')}));
+d5.catalog.set(N('OCProperties'), c5.obj({OCGs:[LT, LM, LB], D:{Order:[LT, LM, LB], ON:[LT, LM, LB]}}));
+const sq5 = (rect, rgb, oc) => c5.register(c5.obj({Type:'Annot', Subtype:'Square', Rect:rect, F:4, AP:{N:ap5(rgb)}, OC:oc}));
+q5.node.set(N('Annots'), c5.obj([sq5([50, 450, 150, 550], '0 0 1', LB), sq5([200, 450, 300, 550], '1 1 0', LM), sq5([350, 450, 450, 550], '1 0 0', LT), sq5([50, 650, 150, 750], '0 1 0', LB)]));
+const PDF5 = path.join(TMP, 'stack5.pdf'); fs.writeFileSync(PDF5, await d5.save());
+await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), PDF5);
+await win.waitForFunction(() => /stack5/.test(window.__pdfapp.S.name), null, {timeout:30000}); await win.waitForTimeout(2500);
+await tool('select');
+const [iB1, iM1, iT1, iB2] = await ids(), ocOf = async id => ((await order()).find(o => o.id === id) || {}).oc;
+const lyRow5 = name => win.locator('#p-layers .ly-row', {hasText:name}).first();
+const layerMenu = async (name, m) => { await lyRow5(name).click({button:'right'}); await win.waitForTimeout(400); await win.click(`#ctx button[data-m="${m}"]`); await win.waitForTimeout(900); };
+// an arrow-key nudge not yet written, then a panel action: the nudge is kept, and the object stays selected
+await see(0, 100, 142);
+const bx0 = (await Ev(i => window.__pdfapp.getAnns(0), 0)).find(a => a.id === iB2);
+await win.mouse.click(...await P(0, bx0.x + 6, bx0.y + bx0.h / 2)); await win.waitForTimeout(600);
+for (let k = 0; k < 3; k++) await win.keyboard.press('ArrowRight');
+await row(iB1).click({button:'right'}); await win.waitForTimeout(120); await win.click('#ctx button[data-m="z-front"]'); await win.waitForTimeout(2500);
+const bx1 = (await Ev(i => window.__pdfapp.getAnns(0), 0)).find(a => a.id === iB2), ordB = await ids();
+check('a nudge, then a panel action at once: both are done (the nudge first), and the object stays selected', Math.abs(bx1.x - (bx0.x + 3)) < .3 && ordB.indexOf(iB1) > ordB.indexOf(iB2) && (await selId()) === iB2, {x0:bx0.x, x1:bx1.x, ordB, sel:await selId()});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+
+// an object on a locked layer: the panel offers no 隱藏 or 刪除, and its eye refuses
+await row(iM1).click({button:'right'}); await win.waitForTimeout(400);
+const offM = await Ev(() => ['hide', 'del'].map(k => { const b = document.querySelector(`#ctx button[data-m="${k}"]`); return !!b && b.disabled; }));
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+const uE = await undos();
+await win.locator(`#p-layers .ly-obj[data-oid="${iM1}"] .ly-oeye`).click(); await win.waitForTimeout(1200);
+const tEye = await toastText();
+check('an object on a locked layer: 隱藏 and 刪除 are off in its menu; its eye refuses, and says so', offM.every(Boolean) && (await undos()) === uE && /已鎖定/.test(tEye), {offM, tEye});
+// merging a layer into the locked one below it: refused
+await layerMenu('Top', 'merge');
+const tMerge = await toastText(), ocT1 = await ocOf(iT1);
+check('合併到下方圖層 when the layer below is locked: refused, and said so', /已鎖定/.test(tMerge) && ocT1 !== (await ocOf(iM1)) && (await undos()) === uE, {tMerge, ocT1});
+// deleting a layer, keeping its objects: they go to the nearest layer that is not locked
+await layerMenu('Top', 'del');
+const kept = await Ev(() => [...document.querySelectorAll('#modal .mf button')].map(b => b.textContent));
+await win.click('#modal .mf button:has-text("保留物件")'); await win.waitForTimeout(1800);
+check('刪除圖層, keeping its objects: offered and moved to the nearest layer that is not locked (Bottom, not the locked Mid)', kept.some(t => /Bottom/.test(t)) && !kept.some(t => /Mid/.test(t)) && (await ocOf(iT1)) === (await ocOf(iB1)), {kept, t1:await ocOf(iT1), b1:await ocOf(iB1)});
+// a locked layer cannot be deleted (its objects would go with it)
+const uD = await undos();
+await layerMenu('Mid', 'del');
+const tDel = await toastText(), askedD = await Ev(() => document.querySelector('#mask').classList.contains('show'));
+if (askedD) { await win.keyboard.press('Escape'); await win.waitForTimeout(400); }
+check('刪除圖層 on a locked layer: refused, and said so', !askedD && /已鎖定/.test(tDel) && (await undos()) === uD && !!(await ocOf(iM1)), {askedD, tDel});
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

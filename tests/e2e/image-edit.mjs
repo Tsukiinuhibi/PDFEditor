@@ -65,6 +65,22 @@ page(content('q 100 0 0 50 100 600 cm /ImH1 Do Q\nq 100 0 0 50 300 600 cm /ImH2 
 // pages 17 and 18: one picture each
 page(content('q 100 0 0 50 100 600 cm /ImG Do Q\n'), ctx.obj({XObject:{ImG:image(70, 20)}}));
 page(content('q 100 0 0 50 100 600 cm /ImK Do Q\n'), ctx.obj({XObject:{ImK:image(72, 20)}}));
+// ---- pages for part 6 (v1.0.51) ----
+// page 19: one picture drawn twice (the question comes up)
+page(content('q 100 0 0 50 100 600 cm /ImW Do Q\nq 100 0 0 50 300 600 cm /ImW Do Q\n'), ctx.obj({XObject:{ImW:image(74, 20)}}));
+// page 20: a Type3 font without resources of its own: its glyph draws the page's picture by name
+const t3proc = ctx.register(ctx.stream('1000 0 d0 q 1000 0 0 1000 0 0 cm /ImT3 Do Q\n'));
+const t3 = ctx.register(ctx.obj({Type:'Font', Subtype:'Type3', FontBBox:[0, 0, 1000, 1000], FontMatrix:[0.001, 0, 0, 0.001, 0, 0], CharProcs:{a:t3proc}, Encoding:{Type:'Encoding', Differences:[97, 'a']}, FirstChar:97, LastChar:97, Widths:[1000]}));
+page(content('q 100 0 0 50 100 600 cm /ImT3 Do Q\nBT /F3 50 Tf 300 600 Td (a) Tj ET\n'), ctx.obj({XObject:{ImT3:image(76, 20)}, Font:{F3:t3}}));
+// page 21: a soft mask group without resources of its own: it draws the page's picture by name
+const smG = ctx.register(ctx.stream('q 100 0 0 50 300 600 cm /ImS3 Do Q\n', {Type:'XObject', Subtype:'Form', BBox:[0, 0, 595, 842], Group:{S:'Transparency', CS:'DeviceGray'}}));
+page(content('q 100 0 0 50 100 600 cm /ImS3 Do Q\nq /GS1 gs 0 0 1 rg 300 600 100 50 re f Q\n'), ctx.obj({XObject:{ImS3:image(78, 20)}, ExtGState:{GS1:{Type:'ExtGState', SMask:{Type:'Mask', S:'Luminosity', G:smG}}}}));
+// pages 22 and 23: an outer form drawn on both draws an inner form that a note's appearance on page 22 also draws
+const FmI = ctx.register(ctx.flateStream(Buffer.from('q 100 0 0 50 100 600 cm /ImN Do Q\n'), {Type:'XObject', Subtype:'Form', BBox:[0, 0, 595, 842], Resources:{XObject:{ImN:image(82, 20)}}}));
+const FmO = ctx.register(ctx.flateStream(Buffer.from('q /FmI Do Q\n'), {Type:'XObject', Subtype:'Form', BBox:[0, 0, 595, 842], Resources:{XObject:{FmI}}}));
+const apN = ctx.register(ctx.stream('/FmI Do\n', {Type:'XObject', Subtype:'Form', BBox:[0, 0, 595, 842], Resources:{XObject:{FmI}}}));
+page(content('q /FmO Do Q\n'), ctx.obj({XObject:{FmO}})).node.set(N('Annots'), ctx.obj([ctx.register(ctx.obj({Type:'Annot', Subtype:'Square', Rect:[0, 0, 297.5, 421], F:4, AP:{N:apN}}))]));
+page(content('q /FmO Do Q\n'), ctx.obj({XObject:{FmO}}));
 const PDF = path.join(TMP, 'imgedit.pdf'); fs.writeFileSync(PDF, await doc.save());
 
 const { app } = await launchPath(PDF);
@@ -243,6 +259,42 @@ if (fcs.length) { await fcs[0].setFiles(WIDE); await win.waitForTimeout(900); bl
 const gone18 = blob18 ? await Ev(async u => { try { await fetch(u); return false; } catch (_) { return true; } }, blob18) : false;
 check('更換圖片… pressed twice: one file chooser; replaced once', fcs.length === 1 && (await draws(17)).some(d => d.px.w === 80), {choosers:fcs.length, d:await draws(17)});
 check('the picked picture\'s preview (its object URL) is let go once the dialog closes', /^blob:/.test(blob18) && gone18, {blob18, gone18});
+
+// ---- part 6 (v1.0.51) ----------------------------------------------------------------------------------------------------
+const xoNames = i => Ev(async i => { const d = await PDFLib.PDFDocument.load(window.__pdfapp.S.bytes, {ignoreEncryption:true}), r = d.getPage(i).node.Resources(), x = r && r.lookup(PDFLib.PDFName.of('XObject'));
+  return x ? x.keys().map(k => String(k).slice(1)) : []; }, i);
+// 刪除圖片 while its question is up, and another window takes its place: the first question counts as cancelled
+await pick(18, {x:100, y:192, w:100, h:50}); await del();
+const q19 = await modal();
+await Ev(() => { window.__pdfapp.openModal({title:'另一個視窗'}); });
+await win.waitForTimeout(400); await win.keyboard.press('Escape'); await win.waitForTimeout(500);
+await pick(18, {x:100, y:192, w:100, h:50}); await del();
+const q19b = await modal(); if (q19b) await press('取消');
+check('刪除圖片: its question replaced by another window counts as cancelled; the button works again', !!q19 && /出現 2 次/.test(q19.body) && !!q19b && /出現 2 次/.test(q19b.body), {q19, q19b});
+// pressed again while the question is up: said so
+await pick(18, {x:100, y:192, w:100, h:50});
+await Ev(() => { const b = document.querySelector('.xbar [data-x="del"]'); b.click(); b.click(); });
+await win.waitForTimeout(700);
+const tAgain = await Ev(() => [...document.querySelectorAll('.toast')].map(t => t.textContent).join(' | '));
+if (await modal()) await press('取消');
+check('刪除圖片 pressed again while the first is under way: the person is told', /還在處理/.test(tAgain), {tAgain});
+await cancelSel();
+// a Type3 font without resources of its own draws the page's picture: deleting the page's picture keeps its name
+await pick(19, {x:100, y:192, w:100, h:50}); await del(); if (await modal()) await press('刪除'); else await settle();
+const n20 = await xoNames(19);
+check('a picture a Type3 glyph (no resources of its own) also draws: deleted from the page, its name stays', !(await draws(19)).length && n20.includes('ImT3'), {n20, d:await draws(19)});
+// a soft mask group without resources of its own draws the page's picture: its name stays too
+await pick(20, {x:100, y:192, w:100, h:50}); await del(); if (await modal()) await press('刪除'); else await settle();
+const n21 = await xoNames(20);
+check('a picture a soft mask group (no resources of its own) also draws: deleted from the page, its name stays', !(await draws(20)).filter(d => near(d.box.x, 100)).length && n21.includes('ImS3'), {n21, d:await draws(20)});
+// 全部 N 處 with an inner form a note's appearance also draws, inside an outer form drawn on two pages: one copy of it
+await pick(21, {x:100, y:192, w:100, h:50}); await del();
+const m22 = await modal(); if (m22) await press(`全部`);
+const fm22 = await Ev(async () => { const d = await PDFLib.PDFDocument.load(window.__pdfapp.S.bytes, {ignoreEncryption:true}), N = PDFLib.PDFName.of;
+  const fo = d.getPage(21).node.Resources().lookup(N('XObject')).lookup(N('FmO')), x = fo.dict.lookup(N('Resources')).lookup(N('XObject'));
+  return x.keys().map(k => String(k).slice(1)); });
+const ap22 = await pixel(21, 60, 530);
+check('全部 2 處, an inner form a note also draws inside an outer form two pages draw: copied once; both pages lose it, the note keeps it', !!m22 && fm22.filter(k => /^PDFE_Fm/.test(k)).length === 1 && !(await draws(21)).length && !(await draws(22)).length && ap22[0] > 200 && ap22[2] < 80, {m22, fm22, ap22});
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

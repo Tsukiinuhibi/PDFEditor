@@ -317,6 +317,32 @@ await win.waitForTimeout(2500);
 const left9 = (await anns(0)).filter(a => row4.some(r => r.id === a.id)).length;
 check('the bar\'s 〔刪除〕 pressed twice at once: deleted once (one undo step)', left9 === 0 && (await undos()) === u9 + 1, {left9, u:[u9, await undos()]});
 while ((await undos()) > u9) await undo();
+// ---- part 5 (v1.0.51): an arrow-key nudge not yet written is never lost ---------------------------------------------------
+await see(0, 300, 560);
+const q5nudge = async id => { const a = (await anns(0)).find(x => x.id === id); await win.mouse.click(...await P(0, a.x + 6, a.y + a.h / 2)); await win.waitForTimeout(600);
+  for (let k = 0; k < 3; k++) await win.keyboard.press('ArrowRight'); return a; };
+const q5x = async id => (await anns(0)).find(x => x.id === id).x;
+// a click on empty space at once
+const q5c = await q5nudge(row4[2].id);
+await win.mouse.click(...await P(0, 470, 470)); await win.waitForTimeout(1800);
+check('a nudge, then a click on empty space at once: the nudge is kept', near(await q5x(row4[2].id), q5c.x + 3, .3), {q5c:q5c.x, c1:await q5x(row4[2].id)});
+// 復原 at once: the nudge is what is undone, nothing before it
+const q5u = await undos(), q5d = await q5nudge(row4[2].id);
+await win.keyboard.press('Control+z'); await win.waitForTimeout(2200);
+check('a nudge, then 復原 at once: the nudge is undone, nothing else', near(await q5x(row4[2].id), q5d.x, .3) && (await undos()) === q5u, {q5d:q5d.x, d1:await q5x(row4[2].id), u:[q5u, await undos()]});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// Shift+box at once: the nudge is kept, and the box adds to it
+const q5s = await q5nudge(row4[0].id), q5r = (await anns(0)).find(x => x.id === row4[1].id);
+await win.keyboard.down('Shift'); await drag(await P(0, q5r.x + q5r.w + 20, q5r.y - 15), await P(0, q5r.x - 12, q5r.y + q5r.h + 15), {wait:1800}); await win.keyboard.up('Shift');
+const q5m = await multi();
+check('a nudge, then Shift+box at once: the nudge is kept; both selected', near(await q5x(row4[0].id), q5s.x + 3, .3) && q5m?.ids.length === 2, {q5s:q5s.x, s1:await q5x(row4[0].id), q5m});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// Ctrl+Shift+] at once: the nudge is kept, and it comes to the top
+const q5t = await q5nudge(big.id);
+await win.keyboard.press('Control+Shift+BracketRight'); await win.waitForTimeout(2200);
+const q5o = (await A(() => window.__pdfapp.annotsOrder(0))).map(o => o.id);
+check('a nudge, then Ctrl+Shift+] at once: the nudge is kept, and it comes to the top', near(await q5x(big.id), q5t.x + 3, .3) && q5o.indexOf(big.id) > q5o.indexOf(small.id), {q5t:q5t.x, t1:await q5x(big.id), q5o});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
 // closing the last tab with a group selected: the group is let go, the bar loses its object look
 await marq4();
 const hadBar = await barTitle(), hadMulti = await multi();

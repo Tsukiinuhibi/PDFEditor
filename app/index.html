@@ -1219,6 +1219,7 @@ const isTyping = e => { const t = e.target; return t && (t.tagName === 'INPUT' |
 
 let modalResolve = null;
 function openModal({title, body, buttons, width, onOpen}){
+  if (modalResolve) { const r = modalResolve; modalResolve = null; r(undefined); }   // a window not answered, replaced by this one: as if cancelled
   const ae = document.activeElement; if (ae && ae.closest && ae.closest('#findBar')) ae.blur();   // (typing goes to the window, not the find box under it)
   const m = $('#modal'); m.style.width = width ? width + 'px' : '';
   m.innerHTML = `<div class="mh">${esc(title)}</div><div class="mb"></div><div class="mf"></div>`;
@@ -1330,7 +1331,7 @@ const isBusy = () => $('#busy').classList.contains('show');
 const whenIdle = () => new Promise(res => { const t = () => isBusy() ? setTimeout(t, 120) : res(); t(); });
 function switchTab(i){
   if (i === active || !docs[i] || isBusy()) return;
-  if (PEN.strokes.length || PEN.busy || NP || TBE) { (async () => { await closeNote(true); await flushPen(); await commitTextEditor(); if (!TBE) switchTab(i); })(); return; }
+  if (PEN.strokes.length || PEN.busy || NP || TBE || NUDGE) { (async () => { await flushNudge(); await closeNote(true); await flushPen(); await commitTextEditor(); if (!TBE) switchTab(i); })(); return; }
   stashActive(); hideCtx(); hideTip(); pop.style.display = 'none';
   active = i; applyDoc(docs[i]);
   mountDoc({scroll:'restore', scrollTop:docs[i].scrollTop, scrollLeft:docs[i].scrollLeft});
@@ -1396,6 +1397,7 @@ async function openInNewTab(bytes, name, handle){
 }
 async function closeTab(i){
   const d = docs[i]; if (!d || isBusy()) return;
+  if (i === active && NUDGE) await flushNudge();   // (a nudge not written yet: written first)
   if (docField(d, 'dirty')) {
     const v = await openModal({title:'關閉分頁', body:`<div style="max-width:400px">「${esc(docField(d, 'name'))}」有尚未儲存的修改。原檔不會被修改，要先另存新檔嗎？</div>`,
       buttons:[{label:'取消', value:null}, {label:'不儲存並關閉', value:'drop'}, {label:'另存新檔', value:'save', primary:true}]});
@@ -2691,6 +2693,7 @@ pagesEl.addEventListener('pointerdown', e => {
    ==================================================================== */
 async function mutate(label, fn, opts = {}){
   if (!S.pdf) return false;
+  if (NUDGE && !opts.nudge) await flushNudge();   // an arrow-key nudge not written yet goes first
   primeWrite();
   if (!opts.fromPen && (PEN.strokes.length || PEN.busy)) await flushPen();
   if (NP) await closeNote(true);
@@ -3985,11 +3988,12 @@ const actions = {
   sample: () => makeSample(),
   async save(){
     if (!S.pdf) return;
-    await closeNote(true); await flushPen(); await commitTextEditor();
+    await flushNudge(); await closeNote(true); await flushPen(); await commitTextEditor();
     if (TBE) return;   // the text editor stays open (回去修改): nothing is saved
     await saveAsNew(S.bytes, '_已編輯');
   },
   async undo(msg){   // (msg: the notice instead of 已復原)
+    if (NUDGE) await flushNudge();   // (a nudge not written yet is what is undone)
     if (!S.undo.length) return;
     const u = S.undo.pop(); S.redo.push({bytes:S.bytes, signed:S.signed, cur:S.current, label:u.label, by:u.by});
     S.signed = u.signed; S.current = u.cur; S.dirty = true;
@@ -3997,6 +4001,7 @@ const actions = {
     await loadDoc(u.bytes, {keepView:true}); toast(typeof msg === 'string' ? msg : '已復原'); await afterEdit();
   },
   async redo(){
+    if (NUDGE) await flushNudge();
     if (!S.redo.length) return;
     const r = S.redo.pop(); S.undo.push({bytes:S.bytes, signed:S.signed, cur:S.current, label:r.label, by:r.by});
     S.signed = r.signed; S.current = r.cur; S.dirty = true;
@@ -5060,9 +5065,23 @@ const mainOf = pl => pl.reduce((m, d) => d.box.w * d.box.h > m.box.w * m.box.h ?
 function usedElsewhere(doc, seen = null){
   const ctx = doc.context, used = new Set(), done = new Set();
   const look = v => v instanceof PDFRef ? ctx.lookup(v) : v, D = (d, k) => { try { return d.lookupMaybe(N_(k), PDFDict); } catch (_) { return undefined; } };
-  const inner = res => {   // patterns and Type3 fonts: their content is not read by the walker
-    const pt = D(res, 'Pattern'); if (pt) pt.values().forEach(v => { const p = look(v); if (p && p.dict) all(p.dict.get(N_('Resources'))); });
-    const ft = D(res, 'Font'); if (ft) ft.values().forEach(v => { const f = look(v); if (f instanceof PDFDict && String(f.get(N_('Subtype'))) === '/Type3') all(f.get(N_('Resources'))); });
+  const own = (x, res) => {   // content not read: with resources of its own, all they hold; without, the names it draws from res
+    if (!x || !x.dict || done.has(x)) return; done.add(x);
+    const r = x.dict.get(N_('Resources')); if (r) return all(r);
+    const xo = D(res, 'XObject'); if (!xo) return;
+    let b; try { b = streamBytes(x); } catch (_) { return; }
+    for (const o of csTokens(b)) if (o.op === 'Do' && o.args[0] && o.args[0].name) {
+      const v = xo.get(N_(o.args[0].name)); if (!(v instanceof PDFRef)) continue;
+      used.add(v.toString()); own(ctx.lookup(v), res);
+    }
+  };
+  const inner = res => {   // patterns, Type3 glyphs and soft mask groups: their content is not read by the walker
+    const pt = D(res, 'Pattern'); if (pt) pt.values().forEach(v => own(look(v), res));
+    const ft = D(res, 'Font'); if (ft) ft.values().forEach(v => { const f = look(v); if (!(f instanceof PDFDict) || String(f.get(N_('Subtype'))) !== '/Type3') return;
+      if (f.get(N_('Resources'))) return all(f.get(N_('Resources')));
+      const cp = D(f, 'CharProcs'); if (cp) cp.values().forEach(p => own(look(p), res)); });
+    const gs = D(res, 'ExtGState'); if (gs) gs.values().forEach(v => { const g = look(v), sm = g instanceof PDFDict ? look(g.get(N_('SMask'))) : null;
+      if (sm instanceof PDFDict) own(look(sm.get(N_('G'))), res); });
   };
   const all = r => {   // everything content not read draws: every XObject in its resources, and the forms' own
     const res = look(r); if (!(res instanceof PDFDict) || done.has(res)) return; done.add(res);
@@ -5128,7 +5147,7 @@ function cloneChain(doc, d, pages, edits, memo, {all = false} = {}){
   const from = d.chain.findIndex(c => memo.elsewhere.has(c.form.toString()) || (!all && uses(c.form) > 1)); if (from < 0) return d;
   const ctx = doc.context; let parent = d.chain[from].holder;
   for (let k = from; k < d.chain.length; k++) {
-    const c = d.chain[k], mk = d.i + '|' + d.chain.slice(0, k + 1).map(y => y.s).join('/');
+    const c = d.chain[k], mk = holderKey(parent) + '|' + c.s;   // (where it is drawn: one copy for every page that draws that place)
     if (!memo.has(mk)) {
       const x = ctx.lookup(c.form), dict = {};
       x.dict.entries().forEach(([key, v]) => { const n = String(key).slice(1); if (!['Length', 'Filter', 'DecodeParms'].includes(n)) dict[n] = v; });
@@ -5232,7 +5251,7 @@ async function pruneUnused(bytes){
 // covers almost the whole page
 let IMG_JOB = false;   // 刪除圖片 / 更換圖片… under way: pressed again, nothing more happens
 async function deletePageImage(i, full){
-  if (IMG_JOB) return; IMG_JOB = true;
+  if (IMG_JOB) { toast('圖片還在處理中，請稍候'); return; } IMG_JOB = true;
   try { await deletePageImageNow(i, full); } finally { IMG_JOB = false; }
 }
 async function deletePageImageNow(i, full){
@@ -5308,7 +5327,7 @@ function openReplaceDialog(img, area, n){
 }
 // 更換圖片: the clicked picture (this place, or every place it is drawn) becomes another file
 async function replacePageImage(i, full){
-  if (IMG_JOB) return; IMG_JOB = true;
+  if (IMG_JOB) { toast('圖片還在處理中，請稍候'); return; } IMG_JOB = true;
   let img = null;
   try { img = await pickImage(); if (img) await replacePageImageNow(i, full, img); }
   finally { IMG_JOB = false; if (img && img.url) URL.revokeObjectURL(img.url); }   // (the preview in the dialog)
@@ -7417,7 +7436,7 @@ function setMulti(i, items){
   paintObjBar();
 }
 async function toggleMulti(i, a){
-  if (nudgeFrom) await flushNudge();   // an arrow-key nudge not written yet: written first (the group starts where it is now)
+  if (NUDGE) await flushNudge();   // an arrow-key nudge not written yet: written first (the group starts where it is now)
   const list = MS && MS.i === i ? MS.items.slice() : AS && AS.i === i ? [AS.a] : [], k = list.findIndex(x => x.id === a.id);
   if (k >= 0) list.splice(k, 1); else list.push(a);
   if (!list.length) { clearMulti(); deselectAnnot(); return; }
@@ -7425,7 +7444,7 @@ async function toggleMulti(i, a){
 }
 // a box dragged over empty space with the select tool (add: keep what was selected)
 function startMarquee(i, e, add, at = null){
-  const pg = S.pages[i], p0 = at || pagePoint(i, e), base = add ? (MS && MS.i === i ? MS.items.slice() : AS && AS.i === i ? [AS.a] : []) : [];
+  const pg = S.pages[i], p0 = at || pagePoint(i, e);
   const d = document.createElement('div'); d.className = 'draft marquee'; S.els[i].querySelector('.ovl').appendChild(d);
   let box = null;
   const move = ev => {
@@ -7436,6 +7455,8 @@ function startMarquee(i, e, add, at = null){
   const up = async () => {
     window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); d.remove();
     if (!box || box.w < 3 || box.h < 3) return;
+    if (NUDGE) await flushNudge();   // (a nudge not written yet: written first; Shift adds to where it is now)
+    const base = add ? (MS && MS.i === i ? MS.items.slice() : AS && AS.i === i ? [AS.a] : []) : [];
     const inside = (await getAnns(i)).filter(a => {   // (partly off the page: judged by the part on it; the box stops at the page's edge)
       const x0 = Math.max(a.x, 0), y0 = Math.max(a.y, 0), x1 = Math.min(a.x + a.w, pg.w), y1 = Math.min(a.y + a.h, pg.h);
       return movableAnn(a) && x1 >= x0 && y1 >= y0 && x0 >= box.x - .5 && y0 >= box.y - .5 && x1 <= box.x + box.w + .5 && y1 <= box.y + box.h + .5;
@@ -8190,19 +8211,25 @@ function noteIconDown(ev, i, a){
   };
   window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up0);
 }
-// arrow keys nudge the selection (Shift = 10 pt); committed once you stop pressing
-let nudgeTimer = 0, nudgeFrom = null;
+// arrow keys nudge the selection (Shift = 10 pt); written once you stop pressing, whatever is selected by then — and
+// first, before any other change, 復原／重做, saving or another tab (a nudge is never lost, nor written over another change)
+let nudgeTimer = 0, NUDGE = null;   // {doc, i, id, ob (where it was), nb (where it goes)}
 function nudgeSelected(dx, dy){
   if (!AS || !AS.movable) return;
-  if (!nudgeFrom) nudgeFrom = {...AS.box};
-  AS.box.x += dx; AS.box.y += dy; drawASel();
+  if (NUDGE && (NUDGE.i !== AS.i || NUDGE.id !== AS.a.id)) flushNudge();
+  if (!NUDGE) NUDGE = {doc:activeDoc(), i:AS.i, id:AS.a.id, ob:{...AS.box}};
+  AS.box.x += dx; AS.box.y += dy; NUDGE.nb = {...AS.box}; drawASel();
   clearTimeout(nudgeTimer);
   nudgeTimer = setTimeout(flushNudge, 500);
 }
-async function flushNudge(){   // (also before Shift+click makes a group of it)
+async function flushNudge(){
   clearTimeout(nudgeTimer);
-  const ob = nudgeFrom; nudgeFrom = null;
-  if (ob && AS) await commitAnnotBox(AS.i, AS.a, ob, {...AS.box});
+  const n = NUDGE; NUDGE = null;
+  if (!n || n.doc !== activeDoc()) return;
+  if (AS && AS.i === n.i && AS.a.id === n.id) return commitAnnotBox(n.i, AS.a, n.ob, n.nb);   // still selected: it stays selected where it went
+  let was = null;   // (let go meanwhile: what is selected now stays selected)
+  const ok = await mutate('已移動', doc => { was = pageSel(); if (!moveAnnotInDoc(doc, n.i, n.id, n.ob, n.nb)) { toast('找不到此註解', 'err'); return false; } }, {nudge:true});
+  if (ok) await reselect(was);
 }
 
 /* ---------------- handwritten signature ---------------- */
@@ -9547,12 +9574,15 @@ async function mergeDown(id){
   const lm = await layerModel(), k = lm.layers.findIndex(l => l.id === id);
   if (k < 0 || k >= lm.layers.length - 1) { toast('下方沒有可以合併的圖層', 'err'); return; }
   const below = lm.layers[k + 1];
+  if (lm.layers[k].locked || below.locked) { toast(`「${lm.layers[k].locked ? lm.layers[k].name : below.name}」已鎖定，解鎖後才能合併`, 'err'); return; }
   await layerEdit(`已合併到「${below.name}」`, doc => { const me = layerById(doc, id), to = layerById(doc, below.id); if (!me || !to) return false; removeLayer(doc, me, {moveTo:to.ref}); });
   if (S.activeLayer === id) S.activeLayer = below.id;
 }
 async function deleteLayer(id){
   const lm = await layerModel(), l = lm.layers.find(x => x.id === id); if (!l) return;
-  const n = lm.objs.filter(o => o.layer === id).length, k = lm.layers.indexOf(l), other = lm.layers[k + 1] || lm.layers[k - 1];
+  if (l.locked) { toast('這個圖層已鎖定，解鎖後才能刪除', 'err'); return; }
+  const n = lm.objs.filter(o => o.layer === id).length, k = lm.layers.indexOf(l);
+  const other = [...lm.layers.slice(k + 1), ...lm.layers.slice(0, k).reverse()].find(x => !x.locked);   // (the nearest that is not locked, below first)
   let mode = 'delete';
   if (n) {
     mode = await openModal({title:'刪除圖層', body:`<div style="max-width:400px">「${esc(l.name)}」裡有 ${n} 個物件，要怎麼處理？</div>`,
@@ -9581,12 +9611,15 @@ async function moveObjToLayer(oids, id, {front = true} = {}){
     if (!changed) return false;   // (already there: no undo step)
   });
 }
+const onLocked = (lm, list) => list.some(o => { const l = o.layer && lm.layers.find(x => x.id === o.layer); return !!(l && l.locked); });
 async function toggleObjHidden(oid){
   const lm = await layerModel(), o = lm.byId.get(oid); if (!o) return;
+  if (onLocked(lm, [o])) { toast('這個圖層已鎖定，解鎖後才能隱藏或刪除它的物件', 'err'); return; }
   await layerEdit(null, doc => { const d = annDict(doc, o); if (!d) return false; const f = d.lookupMaybe(N_('F'), PDFNumber), v = f ? f.asNumber() : 4; d.set(N_('F'), doc.context.obj(v & 2 ? v & ~2 : v | 2)); });
 }
 async function deleteObjs(oids){
   const lm = await layerModel(), list = oids.map(x => lm.byId.get(x)).filter(Boolean); if (!list.length) return;
+  if (onLocked(lm, list)) { toast('這個圖層已鎖定，解鎖後才能隱藏或刪除它的物件', 'err'); return; }
   await layerEdit('已刪除', doc => { list.forEach(o => { const ref = findAnnotRef(doc, o.i, o.id); if (ref) removeAnnotRefs(doc, o.i, ref); }); });
 }
 async function gotoObj(oid){
@@ -9727,10 +9760,10 @@ function wireLayersPanel(){
       const o = lm.byId.get(ob.dataset.oid); if (!o) return;
       const ol = o.layer ? lm.layers.find(l => l.id === o.layer) : null, held = !!(ol && ol.locked);   // (on a locked layer: it stays where it is)
       const targets = held ? [] : (lm.layers.length ? lm.layers : [{id:'__v', name:'圖層 1'}]).filter(l => l.id !== o.layer && !l.locked);
-      showLyMenu(e, `<div class="hd">${esc(o.label)} · 第 ${o.i + 1} 頁</div><button data-m="go">前往並選取</button><button data-m="hide">${o.hidden ? '顯示' : '隱藏'}這個物件</button>
+      showLyMenu(e, `<div class="hd">${esc(o.label)} · 第 ${o.i + 1} 頁</div><button data-m="go">前往並選取</button><button data-m="hide"${held ? ' disabled' : ''}>${o.hidden ? '顯示' : '隱藏'}這個物件</button>
         <hr>${held ? '<div class="hd">這個圖層已鎖定，解鎖後才能移動</div>' : ''}${Z_BTNS.map(([k, t, , kb]) => `<button data-m="${k}"${held ? ' disabled' : ''}>${t}<kbd>${kb}</kbd></button>`).join('')}
         ${targets.length ? '<hr><div class="hd">移到圖層</div>' + targets.map(l => `<button data-m="to" data-v="${l.id}">→ ${esc(l.name)}</button>`).join('') : ''}
-        ${o.layer && lm.layers.length && !held ? '<button data-m="to" data-v="__loose">→ 不分層</button>' : ''}<hr><button data-m="del" class="danger">刪除</button>`,
+        ${o.layer && lm.layers.length && !held ? '<button data-m="to" data-v="__loose">→ 不分層</button>' : ''}<hr><button data-m="del" class="danger"${held ? ' disabled' : ''}>刪除</button>`,
         (m, v) => { if (m === 'go') gotoObj(o.id); if (m === 'hide') toggleObjHidden(o.id); if (m === 'to') moveObjToLayer([o.id], v); if (m === 'del') deleteObjs([o.id]); if (Z_HOW[m]) stackObj(o.i, o.id, Z_HOW[m]); });
       return;
     }
@@ -12166,6 +12199,7 @@ paintSplitButtons(); paintActionButtons(); applyRibbon();
 window.__pdfapp = {
   setNoDecrypt:v => { NO_DECRYPT = !!v; },
   mutate:(label, fn) => mutate(label, fn),   // (tests) a change made by the test itself
+  openModal:o => openModal(o),   // (tests) another window over the one that is up
   people:() => ({names:PEOPLE ? [...PEOPLE.names] : [], def:PEOPLE ? PEOPLE.def : '', author:AUTHOR}),
   settingsSnapshot, parseSettingsFile, presets:k => PRESETS[k],
   apText:async (i, id) => {   // (tests) the drawing an object shows: its upright one when turned, else its normal appearance
