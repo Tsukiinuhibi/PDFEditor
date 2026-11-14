@@ -1789,8 +1789,14 @@ async function ensureOverlay(i){
     const d = document.createElement('div'); d.className = 'lnk'; d.title = linkText(l);
     d.style.left = pct(l.box.x, pg.w); d.style.top = pct(l.box.y, pg.h); d.style.width = pct(l.box.w, pg.w); d.style.height = pct(l.box.h, pg.h);
     const mine = ev => S.tool === 'link' && !S.spaceDown && ev.button === 0 && !ev.ctrlKey && !ev.metaKey;
-    d.addEventListener('pointerdown', ev => { if (mine(ev)) { ev.stopPropagation(); ev.preventDefault(); } });
-    d.addEventListener('click', ev => { if (mine(ev)) { ev.stopPropagation(); openLinkDialog(i, {link:l}); } });
+    let drew = false;   // this press became a new box (dragged more than 4 px): its click does not open the link
+    d.addEventListener('pointerdown', ev => {
+      if (!mine(ev)) return; ev.stopPropagation(); ev.preventDefault(); drew = false;
+      const mv = e2 => { if (Math.hypot(e2.clientX - ev.clientX, e2.clientY - ev.clientY) > 4) { drew = true; off(); startLinkDraw(i, ev); } };
+      const off = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', off); };
+      window.addEventListener('pointermove', mv); window.addEventListener('pointerup', off);
+    });
+    d.addEventListener('click', ev => { if (mine(ev)) { ev.stopPropagation(); if (!drew) openLinkDialog(i, {link:l}); } });
     ovl.appendChild(d);
   });
   if (FIND.open) paintFindPage(i);
@@ -2007,7 +2013,6 @@ function setTool(t){
   if (t !== S.tool) { cancelPoly(); cancelFillPoly(); clearTextMarks(); if (S.tool === 'pen') flushPen(); if (S.tool === 'textbox') commitTextEditor(); }
   if (t === 'image' && !PENDING_IMG) { chooseImage(); return; }
   S.tool = t; updateUI();
-  $$('[data-act="insertImage"]').forEach(b => b.classList.toggle('on', t === 'image'));
   $$('[data-menu]').forEach(b => b.classList.toggle('on', (TOOL_MENUS[b.dataset.menu] || []).includes(t)));
   paintActionButtons();
   rememberTool(t);
@@ -3946,7 +3951,6 @@ function showNoteMenu(e, i, a){
 
 const actions = {
   layers(){ showTab('layers'); },
-  insertImage(){ chooseImage(); },
   async open(){
     if (DESK) { const list = await DESK.openDialog(); for (const p of (Array.isArray(list) ? list : list ? [list] : [])) await openPath(p); return; }
     if (canPick()) {
@@ -10445,9 +10449,10 @@ function pageLinks(i){
         let dest = a.dest; if (typeof dest === 'string') dest = await pdf.getDestination(dest);
         if (Array.isArray(dest) && dest[0] != null) page = typeof dest[0] === 'number' ? dest[0] : await pdf.getPageIndex(dest[0]);
       } catch (_) {}
-      const w = a.borderStyle ? a.borderStyle.width : 0;
+      const w = a.borderStyle ? a.borderStyle.width : 0, c = a.color ? Array.from(a.color) : null;
+      const ours = w > 0 && a.hasAppearance && !!c && c[0] === 0 && c[1] === 0 && c[2] === 255;   // (the frame this program draws)
       // url: the address as written in the file (shown and changed); href: the same as pdf.js checked it (followed), or ''
-      out.push({id:a.id, box, url:a.unsafeUrl || a.url || '', href:a.url || '', page, look:w > 0 ? 'blue' : 'none'});
+      out.push({id:a.id, box, url:a.unsafeUrl || a.url || '', href:a.url || '', page, look:w > 0 ? (ours ? 'blue' : 'other') : 'none'});
     }
     ent.now = out; return out;
   }).catch(() => []);
@@ -10460,18 +10465,30 @@ pagesEl.addEventListener('pointerdown', e => {
   if (e.target.closest && e.target.closest('[contenteditable="true"],input,textarea,select,button,.abar')) return;
   const pel = e.target.closest && e.target.closest('.page'); if (!pel) return;
   const i = +pel.dataset.i, p = pagePoint(i, e);
-  const ent = S.linkCache.get(i), hit = ((ent && ent.now) || []).filter(l => p.x >= l.box.x && p.x <= l.box.x + l.box.w && p.y >= l.box.y && p.y <= l.box.y + l.box.h)
-    .sort((a, b) => a.box.w * a.box.h - b.box.w * b.box.h)[0];
-  if (!hit) return;
+  const at = list => list.filter(l => p.x >= l.box.x && p.x <= l.box.x + l.box.w && p.y >= l.box.y && p.y <= l.box.y + l.box.h).sort((a, b) => a.box.w * a.box.h - b.box.w * b.box.h)[0];
+  const ent = S.linkCache.get(i), ready = !!(ent && ent.now), hit = ready ? at(ent.now) : null;
+  if (ready && !hit) return;
   e.preventDefault(); e.stopPropagation();
-  const eat = ev => { ev.stopPropagation(); ev.preventDefault(); };
-  window.addEventListener('click', eat, {capture:true, once:true}); setTimeout(() => window.removeEventListener('click', eat, true), 800);
-  followLink(hit);
+  // this press's own click is eaten — until the next press or key, so a press that ends in a drag (no click) takes no later click
+  const eat = ev => { ev.stopPropagation(); ev.preventDefault(); off(); };
+  const off = () => { clearTimeout(t); ['click', 'pointerdown', 'keydown'].forEach(k => window.removeEventListener(k, k === 'click' ? eat : off, true)); };
+  window.addEventListener('click', eat, true); const t = setTimeout(off, 2000);   // (2 s at most: a click from the keyboard has no press before it)
+  setTimeout(() => { window.addEventListener('pointerdown', off, true); window.addEventListener('keydown', off, true); }, 0);
+  if (hit) { followLink(hit); return; }
+  pageLinks(i).then(list => { const h = at(list); if (h) followLink(h); });   // (just after a change the page's links are read again: wait for them)
 }, true);
 function followLink(l){
   if (l.page != null) { if (l.page < S.pages.length) scrollToPage(l.page); return; }
   const u = l.href || '';   // (as pdf.js checked it; l.url is the address as written)
   if (!/^(https?:\/\/|mailto:)/i.test(u)) { toast(l.url ? '這個連結不能開啟：' + l.url.slice(0, 80) : '這種連結不支援', 'err'); return; }
+  if (/^https?:/i.test(u)) {   // a web address: asked first, as other readers do (the link may not go where its text says)
+    openModal({title:'開啟網址', body:`<div style="max-width:440px;line-height:1.7">要在瀏覽器開啟這個網址嗎？<div class="lk-other" style="margin-top:6px;word-break:break-all">${esc(u.slice(0, 500))}</div></div>`,
+      buttons:[{label:'取消', value:false}, {label:'開啟', id:'lnkOpen', value:true, primary:true}]}).then(ok => { if (ok) openWeb(u); });
+    return;
+  }
+  openWeb(u);
+}
+function openWeb(u){
   if (DESK) DESK.openExternal(u); else window.open(u, '_blank', 'noopener');
   toast((/^mailto:/i.test(u) ? '寄信給：' + pctDecode(u.slice(7)) : '在瀏覽器開啟：' + u).slice(0, 120));
 }
@@ -10502,7 +10519,7 @@ async function openLinkDialog(i, {box = null, link = null} = {}){
     : linkWeb(link) ? {kind:'url', url:linkWeb(link)} : {kind:'other'};   // another file, a program, a script…: kept as it is unless a kind is picked
   const body = document.createElement('div'); body.style.width = 'min(460px, 80vw)';
   body.innerHTML = `<div class="pr-row"><div class="field"><label>連到</label><select id="lkKind"><option value="url">網址</option><option value="page">本文件的頁面</option><option value="mail">電子郵件</option>${cur.kind === 'other' ? '<option value="other">其他（保持原樣）</option>' : ''}</select></div>
-      <div class="field"><label>外觀</label><select id="lkLook"><option value="none">不顯示框</option><option value="blue">細藍框</option></select></div></div>
+      <div class="field"><label>外觀</label><select id="lkLook"><option value="none">不顯示框</option><option value="blue">細藍框</option>${link && link.look === 'other' ? '<option value="other">維持原樣</option>' : ''}</select></div></div>
     <div class="field" data-k="url"><label>網址</label><input type="text" id="lkUrl" placeholder="https://example.com" spellcheck="false" autocomplete="off"></div>
     <div class="field" data-k="page"><label>頁碼（1～${n}）</label><input type="number" id="lkPage" min="1" max="${n}"></div>
     <div class="field" data-k="mail"><label>電子郵件地址</label><input type="text" id="lkMail" placeholder="name@example.com" spellcheck="false" autocomplete="off"></div>
@@ -10540,16 +10557,30 @@ async function openLinkDialog(i, {box = null, link = null} = {}){
     body.addEventListener('keydown', e => { if (e.key === 'Enter' && !$('#lkGo').disabled) { e.preventDefault(); $('#lkGo').click(); } });
     refresh(); const f = $b(`[data-k="${cur.kind}"] input`); if (f) { f.focus(); f.select(); } else $b('#lkKind').focus();
   }});
-  if (r === 'del' && link) return mutate('已刪除連結', doc => { const ref = findAnnotRef(doc, i, link.id); if (!ref) return false; removeAnnotRefs(doc, i, ref); });
+  if (r === 'del' && link) return mutate('已刪除連結', doc => { const ref = linkRef(doc, i, link); if (!ref) return false; removeAnnotRefs(doc, i, ref); });
   if (!r || r === 'del') return;
   if (link) return mutate('已修改連結', doc => {
-    const ref = findAnnotRef(doc, i, link.id); if (!ref) return false;
+    const ref = linkRef(doc, i, link); if (!ref) return false;
     // the target is replaced unless kept (另一種連結); the look only when it was changed (/BS too: it wins over /Border)
     const d = doc.context.lookup(ref, PDFDict), retarget = r.kind !== 'other', relook = r.look !== link.look;
-    [...(retarget ? ['A', 'Dest'] : []), ...(relook ? ['Border', 'BS', 'C', 'AP'] : [])].forEach(k => d.delete(N_(k)));
+    [...(retarget ? ['A', 'Dest', 'PA'] : []), ...(relook ? ['Border', 'BS', 'C', 'AP'] : [])].forEach(k => d.delete(N_(k)));   // (/PA: the address it had before)
     Object.entries({...(retarget ? linkTarget(doc, r) : {}), ...(relook ? linkLook(doc, r, i, link.box) : {})}).forEach(([k, v]) => d.set(N_(k), doc.context.obj(v)));
   });
   return mutate('已建立連結', doc => { addAnnot(doc, i, {Type:'Annot', Subtype:'Link', Rect:visToPdf(i, box).rect, ...linkTarget(doc, r), ...linkLook(doc, r, i, box)}); });
+}
+// the link's annotation in the document: by its object number, or (a dictionary written straight into /Annots, which has
+// none) by its box, then given an object of its own in its place so it can be changed like any other. null (and a notice)
+// when it is not there any more
+function linkRef(doc, i, link){
+  const ref = findAnnotRef(doc, i, link.id); if (ref) return ref;
+  const ctx = doc.context, annots = doc.getPage(i).node.lookupMaybe(N_('Annots'), PDFArray), want = visToPdf(i, link.box).rect;
+  for (let k = 0; annots && k < annots.size(); k++) {
+    const d = annots.get(k); if (!(d instanceof PDFDict) || String(d.get(N_('Subtype'))) !== '/Link') continue;
+    const rc = d.lookupMaybe(N_('Rect'), PDFArray), r = rc ? numArr(rc) : null; if (!r) continue;
+    const rr = [Math.min(r[0], r[2]), Math.min(r[1], r[3]), Math.max(r[0], r[2]), Math.max(r[1], r[3])];
+    if (rr.every((v, j) => Math.abs(v - want[j]) < 1)) { const nr = ctx.register(d); annots.set(k, nr); return nr; }
+  }
+  toast('找不到這個連結（可能已經被刪除）', 'err'); return null;
 }
 // where a link goes, as PDF entries (strings become names in ctx.obj). An address is written as printable ASCII (the rest
 // percent-encoded) with \ ( ) escaped: PDFString.of takes its text as it will stand between the brackets.
@@ -11006,6 +11037,7 @@ async function builtinDocx({bytes, boxes}, {job, step, ocr = true}){
   } finally { pdf.destroy(); }
 }
 let WORDJOB = null;   // the conversion under way: {cancel, word, byWord}
+const wordCancelText = j => j.byWord ? (j.word ? '取消中…（正在停止 Word）' : '取消中…') : '取消中…（等目前這一頁做完）';
 const lockedDocx = name => `這個檔案正被其他程式（例如 Word）開著，或不能寫入：${name}。請先關閉它，或換一個檔名。`;
 async function openWordDialog(){
   if (!S.pdf || WORDJOB) return;
@@ -11086,7 +11118,7 @@ async function openWordDialog(){
   await openModal({title:'轉存成 Word', body, buttons:[
     {label:'取消', id:'wdCancel', handler:() => {
       const j = WORDJOB; if (!j) return null;
-      if (!j.cancel) { j.cancel = true; setSt(j.byWord ? '取消中…（正在停止 Word）' : '取消中…（等目前這一頁做完）'); if (j.word) DESK.word.cancel(j.word); }
+      if (!j.cancel) { j.cancel = true; setSt(wordCancelText(j)); if (j.word) DESK.word.cancel(j.word); }
       return undefined;
     }},
     {label:'轉存', id:'wdGo', primary:true, handler:run},
@@ -11953,6 +11985,7 @@ window.__pdfapp = {
   wordJob:() => !!WORDJOB,   // (tests) whether a 轉存 Word conversion is under way
   clRun:() => CL_RUN,   // (tests) whether a Claude call is being carried out
   urlProgress:urlProgressText,   // (tests) the download's progress line
+  wordCancelText,   // (tests) what 〔取消〕 says while a conversion stops
   claudeSaveWait:ms => { CL_SAVE_WAIT = ms; },   // (tests) pdf_save_as answers sooner
   wordFonts,
   links:async i => {   // (tests) page i's links: on screen, where they go, how they look

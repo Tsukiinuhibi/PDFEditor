@@ -79,6 +79,8 @@ check('on a page turned by /Rotate 90: the link is where the box was dragged (as
 
 // ---- part 2: seeing, changing and deleting links; Ctrl+click follows one ----------------------------------------------
 const boxes = i => Ev(i => [...window.__pdfapp.S.els[i].querySelectorAll('.lnk')].map(d => ({title:d.title, shown:getComputedStyle(d).display !== 'none'})), i);
+const askOpen = async () => { const a = await Ev(() => ({shown:document.querySelector('#mask').classList.contains('show') && !!document.querySelector('#lnkOpen'), text:(document.querySelector('#modal') || {}).textContent || ''}));
+  if (a.shown) { await win.click('#lnkOpen'); await win.waitForTimeout(700); } return a; };   // (v1.0.48: a web address is asked about first)
 const ctrlClick = async xy => { await win.keyboard.down('Control'); await win.mouse.click(...xy); await win.keyboard.up('Control'); await win.waitForTimeout(1000); };
 await see(0, 200, 140);
 let B = await boxes(0);
@@ -116,11 +118,11 @@ await Ev(() => window.__pdfapp.setTool('select')); await win.waitForTimeout(300)
 await app.evaluate(({shell}) => { global.__opened = []; shell.openExternal = u => { global.__opened.push(u); return Promise.resolve(); }; });
 await see(0, 200, 140);
 await ctrlClick(await P(0, 200, 140));
-const opened = await app.evaluate(() => global.__opened), s1 = await Ev(() => window.__pdfapp.sel());
+const s1 = await Ev(() => window.__pdfapp.sel()), asked = await askOpen(), opened = await app.evaluate(() => global.__opened);
 await see(0, 200, 280);
 await ctrlClick(await P(0, 200, 280));
 const cur = await Ev(() => window.__pdfapp.S.current);
-check('selection tool, Ctrl+click: the web link opens https://example.org in the browser (nothing selected); the page link goes to page 2', opened.length === 1 && opened[0].replace(/\/$/, '') === 'https://example.org' && !s1 && cur === 1, {opened, s1, cur});
+check('selection tool, Ctrl+click: the web link opens https://example.org in the browser after asking (nothing selected); the page link goes to page 2', asked.shown && /example\.org/.test(asked.text) && opened.length === 1 && opened[0].replace(/\/$/, '') === 'https://example.org' && !s1 && cur === 1, {opened, s1, cur});
 await see(2, 200, 127);
 await win.mouse.click(...(await P(2, 200, 127))); await win.waitForTimeout(600);
 const s3 = await Ev(() => window.__pdfapp.sel());
@@ -142,12 +144,12 @@ await win.mouse.click(...(await P(2, 200, 427))); await win.waitForTimeout(500);
 const dr = await dlg();
 await setF('#lkUrl', 'https://red.example.org'); await win.click('#lkGo'); await win.waitForTimeout(2200);
 let red = (await links(2)).find(l => /red\.example/.test(l.url || ''));
-const kept = !!red && red.url === 'https://red.example.org' && red.look === 'blue' && JSON.stringify(red.c) === '[1,0,0]';
+const kept = !!red && red.url === 'https://red.example.org' && red.look === 'other' && JSON.stringify(red.c) === '[1,0,0]';
 await see(2, 200, 427);
 await win.mouse.click(...(await P(2, 200, 427))); await win.waitForTimeout(500);
 await setF('#lkLook', 'none'); await win.click('#lkGo'); await win.waitForTimeout(2200);
 red = (await links(2)).find(l => /red\.example/.test(l.url || ''));
-check("another program's frame drawn from /BS (red, 2 pt): a new target keeps it; 不顯示框 takes it away", !!dr && dr.look === 'blue' && kept && !!red && red.look === 'none', {dr, kept, red});
+check("another program's frame drawn from /BS (red, 2 pt): shown as 維持原樣 (not 細藍框), a new target keeps it; 不顯示框 takes it away", !!dr && dr.look === 'other' && kept && !!red && red.look === 'none', {dr, kept, red});
 await see(2, 200, 527);
 const tipG = await Ev(() => [...window.__pdfapp.S.els[2].querySelectorAll('.lnk')].map(x => x.title).find(t => /other\.pdf/.test(t)) || '');
 await win.mouse.click(...(await P(2, 200, 527))); await win.waitForTimeout(500);
@@ -171,9 +173,82 @@ await win.waitForTimeout(1500);
 const shown = await Ev(() => window.__pdfapp.S.st.filter(st => st.ovlVer === window.__pdfapp.S.version).length);
 await Ev(() => window.__pdfapp.scrollToPage(0)); await win.waitForTimeout(1000);
 await app.evaluate(() => { global.__opened = []; });
-await ctrlClick(await P(0, 100, 50));
+await ctrlClick(await P(0, 100, 50)); await askOpen();
 const op = await app.evaluate(() => global.__opened);
 check("a 210-page document with every page shown once: Ctrl+click on page 1's link still opens it", shown > 200 && op.length === 1 && op[0].startsWith('https://example.org/p0'), {shown, op});
+
+// ---- part 4 (v1.0.48): links other programs wrote in other ways; Ctrl+click after a change, after a drag; drawing over a link --
+const d4 = await PDFDocument.create(), c4 = d4.context, q1 = d4.addPage([595, 842]), q2 = d4.addPage([595, 842]);
+q1.node.set(N('Annots'), c4.obj([
+  c4.obj({Type:'Annot', Subtype:'Link', Rect:[100, 700, 300, 730], Border:[0, 0, 0], A:{S:'URI', URI:PDFString.of('https://direct.example.com')}}),   // a direct dictionary (no object number)
+  c4.register(c4.obj({Type:'Annot', Subtype:'Link', Rect:[100, 600, 300, 630], Border:[0, 0, 1], A:{S:'URI', URI:PDFString.of('https://framed.example.com')}})),   // a frame, no /AP, no colour
+  c4.register(c4.obj({Type:'Annot', Subtype:'Link', Rect:[100, 500, 300, 530], Border:[0, 0, 0], A:{S:'JavaScript', JS:PDFString.of('app.alert(1)')}})),
+  c4.register(c4.obj({Type:'Annot', Subtype:'Link', Rect:[100, 400, 300, 430], Border:[0, 0, 0], Dest:[q2.ref, N('Fit')]})),
+  c4.register(c4.obj({Type:'Annot', Subtype:'Link', Rect:[100, 300, 300, 330], Border:[0, 0, 0], A:{S:'URI', URI:PDFString.of('https://old.example.com')}, PA:{S:'URI', URI:PDFString.of('https://old.example.com')}})),
+]));
+const PDF4 = path.join(TMP, 'links4.pdf'); fs.writeFileSync(PDF4, await d4.save());
+await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), PDF4);
+await win.waitForFunction(() => window.__pdfapp.S.pages.length === 2 && /links4/.test(window.__pdfapp.S.name), null, {timeout:30000}); await win.waitForTimeout(1500);
+const rawLinks = async () => { const b = Buffer.from(await Ev(() => Array.from(window.__pdfapp.S.bytes))), dd = await PDFDocument.load(b), an = dd.getPage(0).node.lookupMaybe(N('Annots'), PDFArray);
+  const out = []; for (let k = 0; an && k < an.size(); k++) { const x = an.lookup(k, PDFDict), a = x.lookupMaybe(N('A'), PDFDict), u = a && a.lookupMaybe(N('URI'), PDFString);
+    out.push({url:u ? u.decodeText() : null, pa:!!x.get(N('PA')), direct:!(an.get(k) instanceof PDFRef)}); } return out; };
+await Ev(() => window.__pdfapp.setTool('link')); await win.waitForTimeout(400);
+// a link written straight into /Annots: it can be changed and deleted
+await see(0, 200, 127); await win.mouse.click(...(await P(0, 200, 127))); await win.waitForTimeout(500);
+const dd1 = await dlg(); if (dd1) { await setF('#lkUrl', 'https://direct2.example.com'); await win.click('#lkGo'); await win.waitForTimeout(2200); }
+const afterSave = (await rawLinks()).map(l => l.url);
+await see(0, 200, 127); await win.mouse.click(...(await P(0, 200, 127))); await win.waitForTimeout(500);
+if (await dlg()) { await win.click('#lkDel'); await win.waitForTimeout(2200); }
+const afterDel = (await rawLinks()).map(l => l.url);
+check('a link written straight into /Annots (no object of its own): 〔儲存〕 changes it, 〔刪除連結〕 deletes it',
+  !!dd1 && afterSave.includes('https://direct2.example.com') && !afterSave.includes('https://direct.example.com') && !afterDel.some(u => /direct/.test(u || '')), {dd1:!!dd1, afterSave, afterDel});
+// a frame another program drew (/Border 1, no appearance): 維持原樣, not 細藍框
+await see(0, 200, 227); await win.mouse.click(...(await P(0, 200, 227))); await win.waitForTimeout(500);
+const dFr = await dlg(); await win.keyboard.press('Escape'); await win.waitForTimeout(400);
+check("another program's frame without an appearance: 「維持原樣」, not 「細藍框」", !!dFr && dFr.look === 'other', dFr);
+// a new target drops /PA (the address the link had before)
+await see(0, 200, 527); await win.mouse.click(...(await P(0, 200, 527))); await win.waitForTimeout(500);
+if (await dlg()) { await setF('#lkUrl', 'https://new.example.com'); await win.click('#lkGo'); await win.waitForTimeout(2200); }
+const pa = (await rawLinks()).find(l => l.url === 'https://new.example.com');
+check('a new target: /PA (the old address) goes too', !!pa && !pa.pa, await rawLinks());
+// with the link tool, a box dragged from inside a link makes a new link (a plain click still opens that link)
+await see(0, 200, 527);
+await drag(await P(0, 150, 520), await P(0, 420, 600));
+const dNew = await dlg(); if (dNew) { await win.keyboard.press('Escape'); await win.waitForTimeout(400); }
+check('link tool: a box dragged from inside a link: 「建立連結」 for a new one', !!dNew && dNew.title.includes('建立連結'), dNew);
+await Ev(() => window.__pdfapp.setTool('select')); await win.waitForTimeout(300);
+// a JavaScript link: nothing runs or opens; it says so
+await app.evaluate(() => { global.__opened = []; });
+await see(0, 200, 327); await ctrlClick(await P(0, 200, 327));
+const tJs = await Ev(() => [...document.querySelectorAll('#toasts .toast')].map(t => t.textContent)), oJs = await app.evaluate(() => global.__opened);
+check('Ctrl+click on a JavaScript link: nothing opens, and it says the link is not supported', !oJs.length && tJs.some(x => /不支援/.test(x)) && !(await Ev(() => document.querySelector('#mask').classList.contains('show'))), {tJs, oJs});
+// a web address: asked first; 〔取消〕 opens nothing
+await see(0, 200, 527); await ctrlClick(await P(0, 200, 527));
+const ask2 = await Ev(() => document.querySelector('#mask').classList.contains('show') && !!document.querySelector('#lnkOpen'));
+if (ask2) { await win.keyboard.press('Escape'); await win.waitForTimeout(500); }
+check('Ctrl+click on a web address: asked first; 〔取消〕 (Esc) opens nothing', ask2 && !(await app.evaluate(() => global.__opened)).length, {ask2, opened:await app.evaluate(() => global.__opened)});
+// Ctrl+press on a link that ends in a drag: the next real click is not swallowed
+await Ev(() => window.__pdfapp.scrollToPage(0)); await win.waitForTimeout(800);
+await see(0, 200, 427); await Ev(() => window.__pdfapp.setTool('link')); await win.waitForTimeout(300);
+{ const a = await P(0, 200, 427); await win.keyboard.down('Control'); await win.mouse.move(...a); await win.mouse.down(); await win.mouse.move(a[0] + 150, a[1] + 150, {steps:5}); await win.mouse.up(); await win.keyboard.up('Control'); }
+await win.waitForTimeout(150); await win.click('[data-tool="select"]'); await win.waitForTimeout(300);
+const toolNow = await Ev(() => window.__pdfapp.S.tool);
+await Ev(() => window.__pdfapp.setTool('select'));
+check('Ctrl+press on a link that ends in a drag: the next click (a tool button) still works', toolNow === 'select', toolNow);
+// Ctrl+click right after a change, before the page's links are read again: the link is still followed
+await Ev(() => window.__pdfapp.scrollToPage(0)); await win.waitForTimeout(600); await see(0, 200, 427);   // (the link mid-window, not under the status bar)
+const cur0 = await Ev(() => window.__pdfapp.S.current);
+await Ev(async () => {
+  const A = window.__pdfapp, S = A.S;
+  await A.mutate('已加入矩形', doc => { doc.getPage(0).drawRectangle({x:400, y:100, width:60, height:30}); });
+  const r = S.els[0].getBoundingClientRect(), x = r.left + 200 * S.scale, y = r.top + 427 * S.scale, t = document.elementFromPoint(x, y);
+  t.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true, cancelable:true, ctrlKey:true, button:0, clientX:x, clientY:y, pointerId:1, isPrimary:true}));
+  t.dispatchEvent(new PointerEvent('pointerup', {bubbles:true, cancelable:true, ctrlKey:true, button:0, clientX:x, clientY:y, pointerId:1, isPrimary:true}));
+  t.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, ctrlKey:true, button:0, clientX:x, clientY:y}));
+});
+await win.waitForTimeout(1500);
+const cur1 = await Ev(() => window.__pdfapp.S.current);
+check('Ctrl+click right after a change (the page\'s links not read again yet): the page link is still followed', cur0 === 0 && cur1 === 1, {cur0, cur1});
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

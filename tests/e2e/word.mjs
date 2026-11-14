@@ -397,6 +397,9 @@ await Ev(() => { const h = document.querySelector('#wdHow'); h.value = 'builtin'
 await win.click('#wdGo'); await waitSt(/存檔中/, 60000);
 const writing = await wdState(); if (await wdShown()) await win.click('#wdCancel');
 await waitSt(/轉好了|已轉存|已取消/); const lateB = await wdState();
+check('(v1.0.48) 〔取消〕 before Word has started (準備中): 「取消中…」, not 「正在停止 Word」; once Word runs: it says Word is being stopped',
+  (await Ev(() => window.__pdfapp.wordCancelText({byWord:true, word:null}))) === '取消中…' && /正在停止 Word/.test(await Ev(() => window.__pdfapp.wordCancelText({byWord:true, word:'w1'}))),
+  await Ev(() => [window.__pdfapp.wordCancelText({byWord:true, word:null}), window.__pdfapp.wordCancelText({byWord:true, word:'w1'})]));
 check('取消 while the built-in converter writes the .docx: it says the .docx was made anyway', /存檔中/.test(writing.st) && /按取消時已經轉好了/.test(lateB.st) && lateB.go === '開啟', {writing, lateB});
 await closeWord();
 
