@@ -9092,7 +9092,7 @@ async function buildAttsPanel(){
 const N_ = k => PDFName.of(k);
 const refId = r => r.objectNumber + 'R' + (r.generationNumber ? r.generationNumber : '');
 const LAYER_SKIP = new Set(['Popup', 'Link', 'Widget']);
-const LY_FOLD = new Set();   // layers whose list of objects is folded away (the lists are open)
+const LY_FOLDS = new WeakMap(), lyFold = () => { const d = activeDoc(); let f = LY_FOLDS.get(d); if (!f) LY_FOLDS.set(d, f = new Set()); return f; };   // (per document: the virtual 圖層 1 of one tab is not another's)   // layers whose list of objects is folded away (the lists are open)
 let LM = {bytes:null, p:null}, HL = {pdf:null, p:null};
 const txt = v => v && v.decodeText ? v.decodeText() : '';
 
@@ -9310,14 +9310,18 @@ async function stackObjNow(i, id, how, label){
     const up = how === 'front' || how === 'forward';
     if (!lm.objs.some(x => x.i === i && x.id !== id && (x.layer || '') === (o.layer || '') && (up ? x.k > o.k : x.k < o.k))) res = up ? 'top' : 'bottom';
   }
-  const keep = AS && AS.i === i && AS.a.id === id;
+  if (t) {   // a drop: where it already is, nothing to do (and a signed document is not asked about nothing)
+    const dry = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false});
+    if (stackPlace(dry, i, id, how) !== 'moved') return false;
+  }
+  const was = AS ? {i:AS.i, id:AS.a.id} : null;   // (the page's selection, whichever object it is, stays selected)
   const ok = !res && await mutate(label || STACK_LABEL[how] || '已調整前後順序', doc => { res = stackPlace(doc, i, id, how); if (res !== 'moved') return false; });
   if (res === 'top' || res === 'bottom') {
     const w = res === 'top' ? '上' : '下';
-    toast(l && lm.layers.length > 1 ? `已經是「${l.name}」最${w}面的物件` : `已經在最${w}層`);
+    toast(l && lm.layers.length > 1 ? `已經是「${l.name}」最${w}面的物件` : !l && lm.layers.length ? `已經是不屬於任何圖層的物件裡最${w}面的` : `已經在最${w}層`);
   }
   if (!ok) return false;
-  if (keep && S.els[i]) { const a = (await getAnns(i)).find(x => x.id === id); if (a) selectAnnot(i, a); }
+  if (was && S.els[was.i]) { const a = (await getAnns(was.i)).find(x => x.id === was.id); if (a) selectAnnot(was.i, a); }
   buildLayersPanel();
   return true;
 }
@@ -9331,7 +9335,8 @@ async function keepPlace(doc, i, oldRef, fn){
   const now = annots(); if (k < 0 || !now) return out;
   const list = now.asArray(), fresh = list.filter(r => key(r) && !had.has(key(r))); if (!fresh.length) return out;
   fresh.forEach(r => { const d = doc.context.lookupMaybe(r, PDFDict); if (!d || subOf(d) === 'Popup') return; if (oc) d.set(N_('OC'), oc); else d.delete(N_('OC')); });
-  const rest = list.filter(r => !fresh.includes(r)), under = before.slice(0, k).reverse().find(r => rest.includes(r)), at = under ? rest.indexOf(under) + 1 : 0;
+  const rest = list.filter(r => !fresh.includes(r));
+  let at = 0; for (const r of before.slice(0, k)) { const j = rest.indexOf(r, at); if (j >= 0) at = j + 1; }   // (in the old order: right above what lay under it)
   doc.getPage(i).node.set(N_('Annots'), doc.context.obj([...rest.slice(0, at), ...fresh, ...rest.slice(at)]));
   restack(doc);
   return out;
@@ -9472,6 +9477,8 @@ async function deleteLayer(id){
 }
 async function moveObjToLayer(oids, id, {front = true} = {}){
   const lm = await layerModel(), list = oids.map(x => lm.byId.get(x)).filter(Boolean); if (!list.length) return;
+  const lk = x => { const l = x && lm.layers.find(y => y.id === x); return !!(l && l.locked); };
+  if (lk(id) || list.some(o => lk(o.layer))) { toast('這個圖層已鎖定，不能把物件移進或移出', 'err'); return; }
   const name = id === '__loose' ? '不分層' : ((lm.layers.find(l => l.id === id) || {}).name || '圖層 1');
   await layerEdit(`已移到「${name}」`, doc => {
     const ref = id === '__loose' ? null : lyRef(doc, id); if (id !== '__loose' && !ref) return false;
@@ -9527,7 +9534,7 @@ async function buildLayersPanel(){
       <span class="ly-on">${esc(o.label)}${o.contents && o.sub !== 'Stamp' ? '：' + esc(o.contents.slice(0, 18)) : ''}</span></div>`;
   const objList = list => { let pg = -1; return list.map(o => (o.i !== pg ? `<div class="ly-pgh">第 ${(pg = o.i) + 1} 頁</div>` : '') + objRow(o)).join(''); };
   const row = (l, d = 0) => {
-    const list = objsOf(l.id), open = !LY_FOLD.has(l.id);
+    const list = objsOf(l.id), open = !lyFold().has(l.id);
     return `<div class="ly-row${l.id === act ? ' act' : ''}${l.visible ? '' : ' off'}${l.locked ? ' lk' : ''}"${d ? ` style="--d:${d}"` : ''} data-id="${l.id}" draggable="${l.virtual ? 'false' : 'true'}">
       <button class="ly-car${open ? ' open' : ''}" title="展開／收合物件">${list.length ? '▸' : ''}</button>
       <button class="ly-eye" title="顯示／隱藏（Alt+點：只顯示這個圖層）">${l.visible ? LY_ICON.eye : LY_ICON.eyeOff}</button>
@@ -9558,8 +9565,8 @@ async function buildLayersPanel(){
       <button data-ly="up" title="上移目前圖層">▲</button><button data-ly="down" title="下移目前圖層">▼</button>
       <button data-ly="merge" title="把目前圖層合併到下方圖層">⤓</button><button data-ly="del" title="刪除目前圖層">🗑</button></div>
     <div class="ly-list">${html.join('')}
-      ${loose.length ? `<div class="ly-row loose" data-id="__loose"><button class="ly-car${LY_FOLD.has('__loose') ? '' : ' open'}">▸</button><span class="ly-name">未分層的物件</span><span class="ly-n">${loose.length}</span></div>
-        ${LY_FOLD.has('__loose') ? '' : `<div class="ly-objs">${objList(loose)}</div>`}
+      ${loose.length ? `<div class="ly-row loose" data-id="__loose"><button class="ly-car${lyFold().has('__loose') ? '' : ' open'}">▸</button><span class="ly-name">未分層的物件</span><span class="ly-n">${loose.length}</span></div>
+        ${lyFold().has('__loose') ? '' : `<div class="ly-objs">${objList(loose)}</div>`}
         <button class="ly-adopt" data-ly="adopt">把未分層的物件放進目前圖層</button>` : ''}
       <div class="ly-row base" title="PDF 原本的頁面內容永遠在最底層"><span class="ly-car"></span><span class="ly-pg">📄</span><span class="ly-name">頁面內容</span></div>
     </div>
@@ -9599,7 +9606,7 @@ function wireLayersPanel(){
       if (t.closest('.ly-lock')) return toggleLayerLock(id);
       return;
     }
-    if (t.closest('.ly-car')) { LY_FOLD.has(id) ? LY_FOLD.delete(id) : LY_FOLD.add(id); buildLayersPanel(); return; }
+    if (t.closest('.ly-car')) { lyFold().has(id) ? lyFold().delete(id) : lyFold().add(id); buildLayersPanel(); return; }
     if (id === '__loose') return;
     if (t.closest('.ly-eye')) return toggleLayerVisible(id, e.altKey);
     if (t.closest('.ly-lock')) return toggleLayerLock(id);
@@ -9623,11 +9630,12 @@ function wireLayersPanel(){
     const lm = await layerModel();
     if (ob) {
       const o = lm.byId.get(ob.dataset.oid); if (!o) return;
-      const targets = (lm.layers.length ? lm.layers : [{id:'__v', name:'圖層 1'}]).filter(l => l.id !== o.layer);
+      const ol = o.layer ? lm.layers.find(l => l.id === o.layer) : null, held = !!(ol && ol.locked);   // (on a locked layer: it stays where it is)
+      const targets = held ? [] : (lm.layers.length ? lm.layers : [{id:'__v', name:'圖層 1'}]).filter(l => l.id !== o.layer && !l.locked);
       showLyMenu(e, `<div class="hd">${esc(o.label)} · 第 ${o.i + 1} 頁</div><button data-m="go">前往並選取</button><button data-m="hide">${o.hidden ? '顯示' : '隱藏'}這個物件</button>
-        <hr>${Z_BTNS.map(([k, t, , kb]) => `<button data-m="${k}">${t}<kbd>${kb}</kbd></button>`).join('')}
+        <hr>${held ? '<div class="hd">這個圖層已鎖定，解鎖後才能移動</div>' : ''}${Z_BTNS.map(([k, t, , kb]) => `<button data-m="${k}"${held ? ' disabled' : ''}>${t}<kbd>${kb}</kbd></button>`).join('')}
         ${targets.length ? '<hr><div class="hd">移到圖層</div>' + targets.map(l => `<button data-m="to" data-v="${l.id}">→ ${esc(l.name)}</button>`).join('') : ''}
-        ${o.layer && lm.layers.length ? '<button data-m="to" data-v="__loose">→ 不分層</button>' : ''}<hr><button data-m="del" class="danger">刪除</button>`,
+        ${o.layer && lm.layers.length && !held ? '<button data-m="to" data-v="__loose">→ 不分層</button>' : ''}<hr><button data-m="del" class="danger">刪除</button>`,
         (m, v) => { if (m === 'go') gotoObj(o.id); if (m === 'hide') toggleObjHidden(o.id); if (m === 'to') moveObjToLayer([o.id], v); if (m === 'del') deleteObjs([o.id]); if (Z_HOW[m]) stackObj(o.i, o.id, Z_HOW[m]); });
       return;
     }
@@ -9690,6 +9698,7 @@ function wireLayersPanel(){
   p.addEventListener('dragover', e => {
     if (!drag) return; clear();
     const o = objTarget(e); if (o) { e.preventDefault(); e.stopPropagation(); o.classList.add(upper(o, e.clientY) ? 'drop-a' : 'drop-b'); return; }
+    if (drag.obj && e.target.closest && e.target.closest('.ly-row.lk, .ly-obj[data-lk]')) { e.preventDefault(); e.stopPropagation(); return; }   // (let it drop, to say why nothing happens)
     const r = target(e); if (!r) return;
     e.preventDefault(); e.stopPropagation();
     if (drag.obj) r.classList.add('drop-in');
@@ -9699,6 +9708,7 @@ function wireLayersPanel(){
   p.addEventListener('drop', e => {
     if (!drag) return; e.preventDefault(); e.stopPropagation();
     const o = objTarget(e), r = target(e), d = drag; clear(); drag = null;
+    if (!o && d.obj && e.target.closest && e.target.closest('.ly-row.lk, .ly-obj[data-lk]')) { toast('這個圖層已鎖定，不能把物件移進去', 'err'); return; }
     if (o) { stackObj(d.i, d.obj, {rel:o.dataset.oid, above:upper(o, e.clientY)}, '已調整前後順序'); return; }
     if (!r) return;
     if (d.obj) moveObjToLayer([d.obj], r.dataset.id);

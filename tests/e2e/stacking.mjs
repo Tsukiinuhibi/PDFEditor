@@ -215,5 +215,61 @@ await win.waitForTimeout(2500);
 const s3 = await stackOrder(2);
 check('Ctrl+[ twice at once (a key held down): one change, one undo step', (await selId()) === S3 && JSON.stringify(s3) === JSON.stringify([N2, S3, N1, N3]) && (await undos()) === u0 + 1, {s3, undos:(await undos()) - u0});
 
+// ---- part 4 (v1.0.50): locked layers, an unlayered object, a signed document, folded lists per document, the page's selection --
+const d4 = await PDFDocument.create(), c4 = d4.context, q4 = d4.addPage([595, 842]);
+const ap4 = rgb => c4.register(c4.stream(`${rgb} rg 0 0 100 100 re f`, {Type:'XObject', Subtype:'Form', BBox:[0, 0, 100, 100]}));
+const L1 = c4.register(c4.obj({Type:'OCG', Name:PDFString.of('LayerA')})), L2 = c4.register(c4.obj({Type:'OCG', Name:PDFString.of('LayerB'), PDFE_Lock:true}));   // (locked as this program locks a layer)
+d4.catalog.set(N('OCProperties'), c4.obj({OCGs:[L1, L2], D:{Order:[L2, L1], ON:[L1, L2], Locked:[L2]}}));
+const sq4 = (rect, rgb, oc) => c4.register(c4.obj({Type:'Annot', Subtype:'Square', Rect:rect, F:4, AP:{N:ap4(rgb)}, ...(oc ? {OC:oc} : {})}));
+const U4 = sq4([50, 650, 150, 750], '0 1 0', null), Z4 = sq4([200, 650, 300, 750], '0 0 1', L1), X4 = sq4([350, 650, 450, 750], '1 0 0', L1), Y4 = sq4([50, 450, 150, 550], '1 1 0', L2);
+q4.node.set(N('Annots'), c4.obj([U4, Z4, X4, Y4]));   // the unlayered square at the very bottom
+const PDF4 = path.join(TMP, 'stack4.pdf'); fs.writeFileSync(PDF4, await d4.save());
+await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), PDF4);
+await win.waitForFunction(() => /stack4/.test(window.__pdfapp.S.name), null, {timeout:30000}); await win.waitForTimeout(2500);
+await tool('select');
+const [iU, iZ, iX, iY] = await ids();
+const lyRow = name => win.locator('#p-layers .ly-row', {hasText:name}).first();
+// an object row dropped on a locked layer's row: refused, and said so
+await row(iX).dragTo(lyRow('LayerB'), {targetPosition:{x:40, y:8}}); await win.waitForTimeout(1500);
+const tLock = await toastText(), ocX = ((await order()).find(o => o.id === iX) || {}).oc;
+check('an object dropped on a locked layer: refused, and the person is told the layer is locked', /已鎖定/.test(tLock) && ocX !== undefined && ocX !== null && (await order()).find(o => o.id === iY).oc !== ocX, {tLock, ocX});
+// 移到圖層 does not offer a locked layer, and an object on a locked layer offers no move
+const menuOf = async id => { await row(id).click({button:'right'}); await win.waitForTimeout(400);
+  const m = await Ev(() => [...document.querySelectorAll('#ctx button[data-m="to"]')].map(b => b.textContent)); await win.keyboard.press('Escape'); await win.waitForTimeout(300); return m; };
+const mX = await menuOf(iX), mY = await menuOf(iY);
+check('移到圖層: a locked layer is not offered; an object on a locked layer offers no move', !mX.some(t => /LayerB/.test(t)) && mY.length === 0, {mX, mY});
+// an unlayered object at the top of the unlayered ones, under layered objects: the message says which ones it tops
+await see(0, 100, 142); await win.mouse.click(...await P(0, 100, 142)); await win.waitForTimeout(600);
+const selU = await selId();
+await key('Control+Shift+BracketRight');
+const tTop = await toastText();
+check('an unlayered object already the top of the unlayered ones (layered objects above it): says so, not 「已經在最上層」', selU === iU && !/已經在最上層/.test(tTop) && /不屬於任何圖層|不分層/.test(tTop), {selU, tTop});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// a signed document: a row dropped where it already is asks nothing and changes nothing
+await Ev(() => { window.__pdfapp.S.signed = true; });
+const u4 = await undos();
+await row(iX).dragTo(row(iZ), {targetPosition:{x:30, y:3}}); await win.waitForTimeout(1200);
+const asked = await Ev(() => document.querySelector('#mask').classList.contains('show') ? document.querySelector('#modal .mh').textContent : '');
+if (asked) { await win.keyboard.press('Escape'); await win.waitForTimeout(500); }
+await Ev(() => { window.__pdfapp.S.signed = false; });
+check('a signed document: a row dropped where it already is asks nothing and changes nothing', !asked && (await undos()) === u4, {asked, undos:await undos(), u4});
+// the page's selection stays when the panel moves another object
+await see(0, 400, 142); await win.mouse.click(...await P(0, 400, 142)); await win.waitForTimeout(600);
+const selX = await selId();
+await row(iZ).click({button:'right'}); await win.waitForTimeout(400); await win.click('#ctx button[data-m="z-front"]'); await win.waitForTimeout(1800);
+const selAfter = await selId();
+check('the panel moving another object leaves the page\'s selection alone', selX === iX && selAfter === iX, {selX, selAfter});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// folded lists belong to their document: folding one tab's list does not fold another tab's
+const one = async name => { const d = await PDFDocument.create(), p = d.addPage([300, 300]);
+  p.node.set(N('Annots'), d.context.obj([d.context.register(d.context.obj({Type:'Annot', Subtype:'Square', Rect:[20, 20, 120, 120], F:4, AP:{N:d.context.register(d.context.stream('0 0 1 rg 0 0 100 100 re f', {Type:'XObject', Subtype:'Form', BBox:[0, 0, 100, 100]}))}}))]));
+  const f = path.join(TMP, name); fs.writeFileSync(f, await d.save()); return f; };
+for (const n of ['fold a.pdf', 'fold b.pdf']) { await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), await one(n)); await win.waitForFunction(n => window.__pdfapp.S.name === n, n, {timeout:30000}); await win.waitForTimeout(1500); }
+await Ev(() => { const c = document.querySelector('#p-layers .ly-row .ly-car'); if (c) c.click(); }); await win.waitForTimeout(800);   // fold 「fold b」's list
+const foldedB = await Ev(() => document.querySelectorAll('#p-layers .ly-obj').length);
+await win.locator('.dtab', {hasText:'fold a'}).first().click(); await win.waitForTimeout(1800);
+const openA = await Ev(() => document.querySelectorAll('#p-layers .ly-obj').length);
+check('a folded list belongs to its own document: another tab\'s list stays open', foldedB === 0 && openA > 0, {foldedB, openA});
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
