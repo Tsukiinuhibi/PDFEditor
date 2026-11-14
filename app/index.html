@@ -2615,12 +2615,18 @@ function startExtractDraw(i, e){
 viewer.addEventListener('contextmenu', async e => {
   if (!S.pdf) return;
   e.preventDefault();
-  if (e.target.closest('.npop, .abar, .xbar')) return;   // an open note, the bar beside a selection: nothing
+  if (e.target.closest('.npop')) return;   // the open note itself: nothing
+  if (e.target.closest('.abar, .xbar')) { if (NP) await closeNote(true); return; }   // the bar beside a selection or a picture: nothing (an open note is written and closed)
   const pel = e.target.closest('.page'), i = pel ? +pel.dataset.i : -1;
   const pt = pel ? pagePointXY(i, e.clientX, e.clientY) : null;   // now: leaving a tool closes its bar above, and the pages move up
-  if (pel) { const note = await noteAt(i, e.clientX, e.clientY); if (note) { if (TBE) await commitTextEditor(); showNoteMenu(e, i, note); return; } }
+  if (pel) { const note = await noteAt(i, e.clientX, e.clientY);
+    if (note) { if (TBE) await commitTextEditor(); if (NP && NP.note.id !== note.id) await closeNote(true); showNoteMenu(e, i, note); return; } }   // (another note open: written and closed first)
+  const drew = !!(POLY || FPOLY);   // (this right-click finishes a drawing: the new shape is not selected)
   await backToSelect();
-  if (pt && S.tool === 'select' && S.els[i]) { const a = await annAt(i, pt); if (a) selectAnnot(i, a); }   // on an object: select it
+  if (pt && !drew && S.tool === 'select' && S.els[i]) {   // on an object: select it
+    const d0 = activeDoc(), a = await annAt(i, pt);
+    if (a && activeDoc() === d0 && S.els[i] && S.tool === 'select') selectAnnot(i, a);
+  }
 });
 // the object under a point {x, y} of page i, the topmost one (a sticky note has its own menu; a signature field is not
 // selected)
@@ -7686,12 +7692,12 @@ async function deleteSelected(){
 }
 // drag the selection: move (snapping its edges) or resize from a handle; Shift keeps / frees the aspect ratio
 function dragAnnot(e, d, onDone){
-  const {i} = AS, pg = S.pages[i], s0 = {...AS.box}, MIN = 4;
+  const {i} = AS, pg = S.pages[i], s0 = {...AS.box}, MIN = 4, AS0 = AS;   // (the selection let go or changed meanwhile, a right-click or Esc: the drag ends, nothing moves)
   const rot = AS.rot || 0, c0 = {x:s0.x + s0.w / 2, y:s0.y + s0.h / 2};   // a turned object is resized along its own axes
   let ptr = {x:e.clientX, y:e.clientY}, moved = false, shift = e.shiftKey;
   const p0 = pagePointXY(i, ptr.x, ptr.y);
   const upd = () => {
-    if (!AS) return;
+    if (!AS || AS !== AS0) return;
     const p = pagePointXY(i, ptr.x, ptr.y), b = {...s0};
     let hx = null, hy = null;
     if (d === 'move') {
@@ -7729,13 +7735,14 @@ function dragAnnot(e, d, onDone){
   };
   let stop = () => {};
   const move = ev => {
+    if (AS !== AS0) { stop(); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); clearSnapMarks(); onDone && onDone(false); return; }
     ptr = {x:ev.clientX, y:ev.clientY}; shift = ev.shiftKey;
     if (!moved) { if (Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return; begin(); stop = dragAssist(() => ptr, upd, {}); }
     upd();
   };
   const up = async () => {
     stop(); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); clearSnapMarks();
-    if (!moved || !AS) { onDone && onDone(false); return; }
+    if (!moved || !AS || AS !== AS0) { onDone && onDone(false); return; }
     const {a, box} = AS; AS.dragging = false;
     if (Math.abs(box.x - s0.x) < .05 && Math.abs(box.y - s0.y) < .05 && Math.abs(box.w - s0.w) < .05 && Math.abs(box.h - s0.h) < .05) { selectAnnot(i, a); return; }
     await commitAnnotBox(i, a, s0, box);

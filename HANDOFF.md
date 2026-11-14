@@ -156,7 +156,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 ### 3.9.3 便利貼：人員名單、換作者、右鍵、複製貼上（v1.0.30）
 - 人員名單（設定 → 人員）：localStorage `pdfeditor.people.v1` `{names, def}`。`PEOPLE` 在模組讀取時載入（存的不是名字清單就是 `null`），`seedPeople(user)` 在啟動拿到電腦帳號（`DESK.info().user`，瀏覽器是「使用者」）時建立。預設的名字就是 `AUTHOR`：所有新註解的 `/T`。`addPerson`／`removePerson`（至少留一個，刪掉預設時第一個接手）／`setDefaultPerson`。
 - 便利貼視窗：標題的名字是按鈕（`.nau`），`showNoteAuthorMenu()` 在 `#ctx` 列出名單（目前作者在最上面打勾，不在名單裡也列）＋「其他名字…」（`#nauOther`，輸入的名字加進名單）。選的名字放在 `NP.author`，關閉時和文字一起存（`updateNote(..., author)` 只在作者改了才寫 `/T`；新便利貼 `createNote(..., {author})`）。點在 `#ctx` 裡不會關掉便利貼。垃圾桶（`.ndel`）每張都有：新的就不要，存過的刪除。
-- 右鍵：`pagesEl` 的 contextmenu 先用 `noteAt(i, x, y)` 找滑鼠下的便利貼（任何工具，圖示至少 20×20 pt），有就 `showNoteMenu`（〔編輯〕〔複製〕〔刪除〕，開著的便利貼先存），沒有就回到選取（見 3.9.4）；點在打開的便利貼裡不跳選單。
+- 右鍵：`viewer` 的 contextmenu 先用 `noteAt(i, x, y)` 找滑鼠下的便利貼（任何工具，圖示至少 20×20 pt），有就 `showNoteMenu`（〔編輯〕〔複製〕〔刪除〕，開著的便利貼先存），沒有就回到選取（見 3.9.4）；點在打開的便利貼裡不跳選單。
 - 複製貼上：`copyNote(i, a)` → `NOTE_CLIP`（文字、作者、位置、視窗大小），文字也放進系統剪貼簿；`LAST_CLIP`（`'pages'`／`'note'`）記最後複製的是什麼，Ctrl+V 照它貼（〔貼上頁〕永遠貼頁面）。`pasteNote()`：`PTR`（最後的滑鼠位置）下面是頁面就貼在那裡，否則貼在目前頁、原位置右下 16 pt；作者不變，一次復原。選取工具選到便利貼時（焦點不在縮圖區）Ctrl+C 複製、Ctrl+X 剪下它（`cutNote`）；點縮圖會取消頁面上的選取（`thumbClick`），之後的 Ctrl+C／Ctrl+X 就是頁面。
 
 ### 3.9.4 右鍵回到選取（v1.0.31）

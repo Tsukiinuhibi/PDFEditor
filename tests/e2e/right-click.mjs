@@ -118,5 +118,66 @@ await win.waitForTimeout(1500);
 const fts2 = await anns(0, 'FreeText');
 check('Windows order: typing in a text box, then a right-click (menu event on release) → the text is kept, back to 選取', fts2.length === ft1 + 1 && fts2.some(a => (a.contents || '').includes('視窗順序')) && (await curTool()) === 'select', {n:fts2.length, ft1, tool:await curTool()});
 
+// ---- part 3 (v1.0.51) -------------------------------------------------------------------------------------------------
+const errs = []; win.on('pageerror', e => errs.push(e.message));
+await win.keyboard.press('Escape'); await tool('select');
+const selNow = () => A(() => window.__pdfapp.sel());
+// more tools: 簽名 (its pad closed), 數位簽章, 直線, 箭頭, 橢圓, 雲狀 — a right-click on an empty spot goes back to 選取
+const back2 = [];
+await A(() => { const c = document.createElement('canvas'); c.width = 30; c.height = 10; window.__pdfapp.S.sigImg = c.toDataURL('image/png'); window.__pdfapp.S.sigAspect = 3; });   // (a signature drawn already: no pad)
+for (const t of ['signature', 'digisign', 'line', 'arrow', 'ellipse', 'cloud']) {
+  await tool(t); const was = await curTool();
+  await rclick(await blank());
+  back2.push({t, was, now:await curTool(), menu:await menu()});
+  if (await menu()) { await win.keyboard.press('Escape'); await win.waitForTimeout(200); }
+}
+check('more tools (簽名, 數位簽章, 直線, 箭頭, 橢圓, 雲狀): a right-click on an empty spot goes back to 選取', back2.every(r => r.was === r.t && r.now === 'select' && r.menu === null), back2);
+// 多邊形線條 with 2 points, then a right-click: drawn
+const pl0 = (await anns(0, 'PolyLine')).length;
+await tool('polyline'); await click(await see(0, 300, 640)); await click(await P(0, 380, 690));
+await rclick(await blank());
+check('多邊形線條 with 2 points, then a right-click: drawn, back to 選取', (await anns(0, 'PolyLine')).length === pl0 + 1 && (await curTool()) === 'select', {n:(await anns(0, 'PolyLine')).length, pl0});
+// a polygon finished by a right-click inside it: drawn, and not selected (the right-click was to finish it)
+const pg1 = (await anns(0, 'Polygon')).length;
+await tool('polygon'); await see(0, 470, 600);
+for (const [x, y] of [[420, 560], [520, 560], [470, 640]]) await click(await P(0, x, y));
+await rclick(await P(0, 470, 585));
+const selPoly = await selNow();
+check('多邊形 finished by a right-click inside it: drawn, back to 選取, nothing selected', (await anns(0, 'Polygon')).length === pg1 + 1 && (await curTool()) === 'select' && !selPoly, {selPoly});
+// a right-click on the selected object itself: still selected
+await tool('select'); await click(await onSq());
+await rclick(await onSq());
+check('a right-click on the selected object itself: it stays selected, no menu', (await selNow())?.id === sq.id && (await menu()) === null, {sel:await selNow()});
+// a right-click while a selected object is being dragged (left button held): the drag ends, nothing moves, no error
+const sqB = (await anns(0, 'Square')).find(a => a.id === sq.id), e0 = errs.length;
+const o0 = await onSq();
+await win.mouse.move(...o0); await win.mouse.down();
+await win.mouse.move(o0[0] + 30, o0[1] + 20, {steps:4}); await win.waitForTimeout(150);
+await win.mouse.down({button:'right'}); await win.mouse.up({button:'right'}); await win.waitForTimeout(600);
+for (let k = 1; k <= 5; k++) { await win.mouse.move(o0[0] + 30 + k * 10, o0[1] + 20 + k * 5); await win.waitForTimeout(40); }
+await win.mouse.up(); await win.waitForTimeout(1500);
+const sqA = (await anns(0, 'Square')).find(a => a.id === sq.id);
+check('a right-click while dragging a selected object: the drag ends there, nothing moves, no error', Math.abs(sqA.x - sqB.x) < .5 && Math.abs(sqA.y - sqB.y) < .5 && errs.length === e0, {sqB, sqA, errs:errs.slice(e0)});
+// Esc while dragging a selected object: the same
+await click(await onSq());
+const e1 = errs.length, o1 = await onSq();
+await win.mouse.move(...o1); await win.mouse.down();
+await win.mouse.move(o1[0] + 30, o1[1] + 20, {steps:4}); await win.waitForTimeout(150);
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+for (let k = 1; k <= 5; k++) { await win.mouse.move(o1[0] + 30 + k * 10, o1[1] + 20 + k * 5); await win.waitForTimeout(40); }
+await win.mouse.up(); await win.waitForTimeout(1500);
+const sqC = (await anns(0, 'Square')).find(a => a.id === sq.id);
+check('Esc while dragging a selected object: the drag ends there, nothing moves, no error', Math.abs(sqC.x - sqB.x) < .5 && Math.abs(sqC.y - sqB.y) < .5 && errs.length === e1, {sqB, sqC, errs:errs.slice(e1)});
+// note A open for writing, then a right-click on note B: A is written and closed before B's menu
+await tool('note'); await click(await see(0, 480, 250)); await win.keyboard.type('便利貼乙'); await rclick(await blank());
+const nA = (await anns(0, 'Text')).find(a => a.contents === '右鍵前的便利貼'), nB = (await anns(0, 'Text')).find(a => a.contents === '便利貼乙');
+await rclick(await see(0, nA.x + 6, nA.y + 6));
+if (await menu()) { await win.click('#ctx button[data-c="edit"]'); await win.waitForTimeout(700); }
+await win.keyboard.press('End'); await win.keyboard.type('改'); await win.waitForTimeout(200);
+await rclick(await see(0, nB.x + 6, nB.y + 6));
+const menuB = await menu(), openA = await A(() => !!document.querySelector('.npop'));
+await win.keyboard.press('Escape'); await win.waitForTimeout(900);
+check('note A open for writing, then a right-click on note B: A is written and closed, B\'s menu shows', !!nA && !!nB && !!menuB && !openA && (await anns(0, 'Text')).some(a => a.contents === '右鍵前的便利貼改'), {menuB, openA, texts:(await anns(0, 'Text')).map(a => a.contents)});
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});   // unsaved changes: no asking
