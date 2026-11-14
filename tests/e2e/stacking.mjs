@@ -260,6 +260,44 @@ await row(iZ).click({button:'right'}); await win.waitForTimeout(400); await win.
 const selAfter = await selId();
 check('the panel moving another object leaves the page\'s selection alone', selX === iX && selAfter === iX, {selX, selAfter});
 await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// (final review) 移到圖層 on another object from the panel's menu: done, and the page's selection stays
+await see(0, 400, 142); await win.mouse.click(...await P(0, 400, 142)); await win.waitForTimeout(600);   // X
+const selX5 = await selId();
+await row(iZ).click({button:'right'}); await win.waitForTimeout(400); await win.click('#ctx button[data-m="to"][data-v="__loose"]'); await win.waitForTimeout(1800);
+const selX6 = await selId(), zLoose = !((await order()).find(o => o.id === iZ) || {}).oc;
+check('移到圖層 on another object from the panel\'s menu: done, and the page\'s selection stays', selX5 === iX && zLoose && selX6 === iX, {selX5, selX6, zLoose});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// (final review) a group selected on the page stays when the panel moves another object
+await win.mouse.click(...await P(0, 100, 142)); await win.waitForTimeout(500);   // U
+await win.keyboard.down('Shift'); await win.mouse.click(...await P(0, 400, 142)); await win.keyboard.up('Shift'); await win.waitForTimeout(600);   // and X
+const g0 = await Ev(() => window.__pdfapp.multi());
+await row(iZ).click({button:'right'}); await win.waitForTimeout(400); await win.click('#ctx button[data-m="z-back"]'); await win.waitForTimeout(1800);
+const g1 = await Ev(() => window.__pdfapp.multi());
+check('a group selected on the page stays when the panel moves another object', g0?.ids.length === 2 && g1?.ids.length === 2 && g1.ids.includes(iU) && g1.ids.includes(iX), {g0, g1});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// (final review) an object dropped on its own layer's row while already the top of it: nothing changes; a signed document
+// is not asked
+const ord5 = await order(), ocA = (ord5.find(o => o.id === iX) || {}).oc, topA = ord5.filter(o => o.oc && o.oc === ocA).pop();
+const u5 = await undos();
+await row(topA.id).dragTo(lyRow('LayerA'), {targetPosition:{x:40, y:8}}); await win.waitForTimeout(1500);
+const u5b = await undos();
+await Ev(() => { window.__pdfapp.S.signed = true; });
+await row(topA.id).dragTo(lyRow('LayerA'), {targetPosition:{x:40, y:8}}); await win.waitForTimeout(1500);
+const asked5 = await Ev(() => document.querySelector('#mask').classList.contains('show') ? document.querySelector('#modal .mh').textContent : '');
+if (asked5) { await win.keyboard.press('Escape'); await win.waitForTimeout(500); }
+await Ev(() => { window.__pdfapp.S.signed = false; });
+check('an object dropped on its own layer\'s row, already the top of it: no undo step; a signed document is not asked', !!topA && u5b === u5 && !asked5 && (await undos()) === u5, {topA, u5, u5b, asked5});
+// (final review) an unsigned document: a drop that moves an object reads the file as often as the same move made from the
+// menu (no trial run first: that is for a signed document only)
+await Ev(() => { const L = PDFLib.PDFDocument; if (!L.__orig) { L.__orig = L.load; L.load = function(...a){ window.__loads = (window.__loads || 0) + 1; return L.__orig.apply(this, a); }; } });
+const loadsOf = async act => { await win.waitForTimeout(1200); await Ev(() => { window.__loads = 0; }); await act(); await win.waitForTimeout(2200); return Ev(() => window.__loads); };
+const ordM = await order();   // the two unlayered ones at the bottom: ordM[0] under ordM[1]
+const nMenu = await loadsOf(async () => { await row(ordM[0].id).click({button:'right'}); await win.waitForTimeout(400); await win.click('#ctx button[data-m="z-front"]'); });
+const ordM2 = await order();
+const nDrop = await loadsOf(async () => { const bb = await row(ordM2[0].id).boundingBox(); await row(ordM2[1].id).dragTo(row(ordM2[0].id), {targetPosition:{x:30, y:bb.height - 3}}); });
+const ordM3 = await order();
+await Ev(() => { const L = PDFLib.PDFDocument; if (L.__orig) { L.load = L.__orig; delete L.__orig; } });
+check('an unsigned document: a drop that moves an object reads the file as often as the same move from the menu (no trial run)', !ordM[0].oc && !ordM[1].oc && ordM2[1].id === ordM[0].id && ordM3[0].id === ordM[0].id && nDrop === nMenu, {nMenu, nDrop, ordM:ordM.map(o => o.id), ordM2:ordM2.map(o => o.id), ordM3:ordM3.map(o => o.id)});
 // folded lists belong to their document: folding one tab's list does not fold another tab's
 const one = async name => { const d = await PDFDocument.create(), p = d.addPage([300, 300]);
   p.node.set(N('Annots'), d.context.obj([d.context.register(d.context.obj({Type:'Annot', Subtype:'Square', Rect:[20, 20, 120, 120], F:4, AP:{N:d.context.register(d.context.stream('0 0 1 rg 0 0 100 100 re f', {Type:'XObject', Subtype:'Form', BBox:[0, 0, 100, 100]}))}}))]));

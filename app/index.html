@@ -7466,11 +7466,10 @@ function dragMulti(e){
     moved = true;
     els.forEach(el => { el.style.transform = `translate(${dx / pg.w * S.els[i].clientWidth}px, ${dy / pg.h * S.els[i].clientHeight}px)`; });
   };
-  const end = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('keydown', esc, true); };
-  const esc = ev => {   // Esc: back where they were, still selected, nothing written
-    if (ev.key !== 'Escape') return;
-    ev.preventDefault(); ev.stopImmediatePropagation(); end(); els.forEach(el => { el.style.transform = ''; });
-  };
+  const end = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('keydown', esc, true);
+    window.removeEventListener('pointercancel', cancel); window.removeEventListener('blur', cancel); };
+  const cancel = () => { end(); els.forEach(el => { el.style.transform = ''; }); };   // back where they were, still selected, nothing written
+  const esc = ev => { if (ev.key !== 'Escape') return; ev.preventDefault(); ev.stopImmediatePropagation(); cancel(); };   // (also when the window loses the focus mid-drag)
   const up = () => {
     end();
     if (!moved) { els.forEach(el => { el.style.transform = ''; }); return; }
@@ -7478,12 +7477,17 @@ function dragMulti(e){
     moveObjects(i, items.map(a => ({a, ob:{x:a.x, y:a.y, w:a.w, h:a.h}, nb:{x:a.x + dx, y:a.y + dy, w:a.w, h:a.h}})), `已移動 ${n} 個物件`);
   };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('keydown', esc, true);
+  window.addEventListener('pointercancel', cancel); window.addEventListener('blur', cancel);
 }
+// 〔刪除〕 or Delete pressed again while the first is under way (the group stays selected meanwhile): done once
+let MS_DEL = false;
 async function deleteMulti(){
-  if (!MS) return;
-  const {i, items} = MS;
-  const ok = await mutate(`已刪除 ${items.length} 個物件`, doc => { items.forEach(a => { const ref = findAnnotRef(doc, i, a.id); if (ref) removeAnnotRefs(doc, i, ref); }); });
-  if (ok && MS && MS.items === items) clearMulti();   // (declined: the group stays selected)
+  if (!MS || MS_DEL) return;
+  const {i, items} = MS; MS_DEL = true;
+  try {
+    const ok = await mutate(`已刪除 ${items.length} 個物件`, doc => { items.forEach(a => { const ref = findAnnotRef(doc, i, a.id); if (ref) removeAnnotRefs(doc, i, ref); }); });
+    if (ok && MS && MS.items === items) clearMulti();   // (declined: the group stays selected)
+  } finally { MS_DEL = false; }
 }
 function snapshot(i, box){
   const src = S.els[i] && S.els[i].querySelector('canvas.pc'); if (!src) return null;
@@ -9386,18 +9390,17 @@ async function stackObjNow(i, id, how, label){
     const up = how === 'front' || how === 'forward';
     if (!lm.objs.some(x => x.i === i && x.id !== id && (x.layer || '') === (o.layer || '') && (up ? x.k > o.k : x.k < o.k))) res = up ? 'top' : 'bottom';
   }
-  if (t) {   // a drop: where it already is, nothing to do (and a signed document is not asked about nothing)
-    const dry = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false});
-    if (stackPlace(dry, i, id, how) !== 'moved') return false;
+  if (t && S.signed) {   // a drop where it already is: a signed document is not asked about nothing (otherwise the change itself finds nothing to do)
+    try { const dry = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false}); if (stackPlace(dry, i, id, how) !== 'moved') return false; } catch (_) {}
   }
-  const was = AS ? {i:AS.i, id:AS.a.id} : null;   // (the page's selection, whichever object it is, stays selected)
+  const was = pageSel();   // (the page's selection, one object or a group, whichever they are, stays selected)
   const ok = !res && await mutate(label || STACK_LABEL[how] || '已調整前後順序', doc => { res = stackPlace(doc, i, id, how); if (res !== 'moved') return false; });
   if (res === 'top' || res === 'bottom') {
     const w = res === 'top' ? '上' : '下';
     toast(l && lm.layers.length > 1 ? `已經是「${l.name}」最${w}面的物件` : !l && lm.layers.length ? `已經是不屬於任何圖層的物件裡最${w}面的` : `已經在最${w}層`);
   }
   if (!ok) return false;
-  if (was && S.els[was.i]) { const a = (await getAnns(was.i)).find(x => x.id === was.id); if (a) selectAnnot(was.i, a); }
+  await reselect(was);
   buildLayersPanel();
   return true;
 }
@@ -9458,10 +9461,19 @@ function annDict(doc, o){ const ref = findAnnotRef(doc, o.i, o.id); return ref ?
 /* ---------------- operations (each one is a normal, undoable edit) ---------------- */
 const lyRef = (doc, id) => id === '__v' ? materialize(doc) || (readLayers(doc)[0] || {}).ref : (layerById(doc, id) || {}).ref;
 async function layerEdit(label, fn){
+  const was = pageSel();
   deselectAnnot && deselectAnnot();
   const ok = await mutate(label, async doc => { const r = await fn(doc); if (r === false) return false; restack(doc); });
   if (ok) buildLayersPanel();
+  await reselect(was);   // (the page's selection stays, where it can still be clicked)
   return ok;
+}
+// the page's selection (one object or a group) before a change made from the layers panel, picked up again after it
+const pageSel = () => MS ? {i:MS.i, ids:MS.items.map(a => a.id)} : AS ? {i:AS.i, ids:[AS.a.id]} : null;
+async function reselect(was){
+  if (!was || S.tool !== 'select' || !S.els[was.i]) return;
+  const list = (await getAnns(was.i)).filter(a => was.ids.includes(a.id));   // (hidden or locked now: not picked up)
+  if (list.length > 1) setMulti(was.i, list); else if (list.length) selectAnnot(was.i, list[0]);
 }
 function uniqueLayerName(L){ let n = L.length + 1; const names = new Set(L.map(l => l.name)); while (names.has('圖層 ' + n)) n++; return '圖層 ' + n; }
 async function addLayer(){
@@ -9556,10 +9568,17 @@ async function moveObjToLayer(oids, id, {front = true} = {}){
   const lk = x => { const l = x && lm.layers.find(y => y.id === x); return !!(l && l.locked); };
   if (lk(id) || list.some(o => lk(o.layer))) { toast('這個圖層已鎖定，不能把物件移進或移出', 'err'); return; }
   const name = id === '__loose' ? '不分層' : ((lm.layers.find(l => l.id === id) || {}).name || '圖層 1');
+  if (S.signed && id !== '__v' && list.every(o => (o.layer || '__loose') === id)) {   // already there (and on top): a signed document is not asked about nothing
+    try { const dry = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false}); if (!front || list.every(o => stackPlace(dry, o.i, o.id, 'front') !== 'moved')) return; } catch (_) {}
+  }
   await layerEdit(`已移到「${name}」`, doc => {
     const ref = id === '__loose' ? null : lyRef(doc, id); if (id !== '__loose' && !ref) return false;
-    list.forEach(o => { const d = annDict(doc, o); if (!d) return; if (ref) d.set(N_('OC'), ref); else d.delete(N_('OC')); });
-    if (front) list.forEach(o => stackPlace(doc, o.i, o.id, 'front'));   // on top of the layer it went into
+    let changed = false;
+    list.forEach(o => { const d = annDict(doc, o); if (!d) return; const cur = d.get(N_('OC'));
+      if (ref ? String(cur) !== String(ref) : !!cur) changed = true;
+      if (ref) d.set(N_('OC'), ref); else d.delete(N_('OC')); });
+    if (front) list.forEach(o => { if (stackPlace(doc, o.i, o.id, 'front') === 'moved') changed = true; });   // on top of the layer it went into
+    if (!changed) return false;   // (already there: no undo step)
   });
 }
 async function toggleObjHidden(oid){

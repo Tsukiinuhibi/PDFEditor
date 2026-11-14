@@ -298,6 +298,25 @@ await win.keyboard.press('Delete'); await win.waitForTimeout(1800);
 const leftDel = (await anns(0)).filter(a => row4.some(r => r.id === a.id)).length;
 check('…and Delete deletes the group', leftDel === 0, {leftDel});
 await undo();
+// (final review) a group drag cut off by the window losing the focus: it ends there, nothing moves, Esc works again
+await marq4();
+const f0 = await box4(), u8 = await undos();
+await win.mouse.move(...await P(0, f0[0].x + 6, f0[0].y + f0[0].h / 2)); await win.mouse.down();
+await win.mouse.move(...await P(0, f0[0].x + 46, f0[0].y + f0[0].h / 2 + 30), {steps:6}); await win.waitForTimeout(200);
+await A(() => window.dispatchEvent(new Event('blur')));
+await win.mouse.up(); await win.waitForTimeout(1500);
+const f1 = await box4(), mBlur = await multi();
+await win.keyboard.press('Escape'); await win.waitForTimeout(400);
+check('a group drag cut off by the window losing the focus: nothing moves, the group stays, Esc then works as usual', f0.every((b, k) => near(f1[k].x, b.x) && near(f1[k].y, b.y)) && (await undos()) === u8 && mBlur?.ids.length === 3 && (await multi()) === null, {f0, f1, mBlur, m:await multi()});
+if ((await undos()) !== u8) await undo();
+// (final review) the bar's 〔刪除〕 pressed twice at once: deleted once
+await marq4();
+const u9 = await undos();
+await A(() => { const b = document.querySelector('#hint.multi [data-ma="del"]'); if (b) { b.click(); b.click(); } });
+await win.waitForTimeout(2500);
+const left9 = (await anns(0)).filter(a => row4.some(r => r.id === a.id)).length;
+check('the bar\'s 〔刪除〕 pressed twice at once: deleted once (one undo step)', left9 === 0 && (await undos()) === u9 + 1, {left9, u:[u9, await undos()]});
+while ((await undos()) > u9) await undo();
 // closing the last tab with a group selected: the group is let go, the bar loses its object look
 await marq4();
 const hadBar = await barTitle(), hadMulti = await multi();

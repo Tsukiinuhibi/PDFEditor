@@ -90,7 +90,9 @@ await win.screenshot({path:TMP + '/real_styled.png', clip:{x:box.x, y:box.y, wid
 // 4. a character the font does not have: falls back to the picture text box
 p = await at('Title'); await win.mouse.click(p.x, p.y); await win.waitForTimeout(800);
 await win.keyboard.press('End'); await win.keyboard.type('😀');
-await win.keyboard.press('Escape'); await win.waitForTimeout(3000);
+await win.keyboard.press('Escape');
+for (let k = 0; k < 30 && !/FreeText:/.test(await anns()); k++) await win.waitForTimeout(500);   // (the picture text box takes longer on a busy machine)
+await win.waitForTimeout(800);
 console.log('emoji fallback ', await anns());
 console.log('blocks         ', JSON.stringify(await blocks()));
 
