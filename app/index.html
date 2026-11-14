@@ -11909,15 +11909,18 @@ let SET = null;   // the open settings window
    stored, and read back (importSettings) */
 const SETTINGS_SKIP = new Set(['pdfeditor.fontcat.v2', 'pdfeditor.seenversion.v1']);   // this computer's font list cache; which version's notes were seen
 function settingsSnapshot(){
-  const settings = {};
+  const settings = {}; let read = true;
   try {
     for (let k = 0; k < localStorage.length; k++) { const key = localStorage.key(k); if (key && key.startsWith('pdfeditor.') && !SETTINGS_SKIP.has(key)) settings[key] = localStorage.getItem(key); }
-  } catch (_) {}
-  return {app:'PDF 工作台', kind:'settings', version:UPD.info ? UPD.info.version : '', exported:new Date().toISOString(), settings};
+  } catch (_) { read = false; }
+  const snap = {app:'PDF 工作台', kind:'settings', version:UPD.info ? UPD.info.version : '', exported:new Date().toISOString(), settings};
+  if (!read) Object.defineProperty(snap, 'unreadable', {value:true});   // (not written into the file)
+  return snap;
 }
 async function exportSettings(){
-  const d = new Date(), name = `PDF工作台-設定-${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}.json`;
-  const bytes = new TextEncoder().encode(JSON.stringify(settingsSnapshot(), null, 2));
+  const d = new Date(), name = `PDF工作台-設定-${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}.json`, snap = settingsSnapshot();
+  if (snap.unreadable) { toast('讀不到這台電腦上的設定，沒有匯出', 'err'); return null; }
+  const bytes = new TextEncoder().encode(JSON.stringify(snap, null, 2));
   if (DESK) {
     let where = null;
     const avoid = [S.handle, ...docs.filter((d, k) => k !== active).map(d => d.handle)].filter(Boolean).flatMap(h => [h.path, h.orig]).filter(Boolean);   // never over an opened PDF
@@ -11934,8 +11937,28 @@ async function exportSettings(){
 function parseSettingsFile(text){
   let j = null; try { j = JSON.parse(text); } catch (_) { return {ok:false}; }
   if (!j || j.app !== 'PDF 工作台' || j.kind !== 'settings' || !j.settings || typeof j.settings !== 'object' || Array.isArray(j.settings)) return {ok:false};
-  const entries = Object.entries(j.settings).filter(([k, v]) => k.startsWith('pdfeditor.') && !SETTINGS_SKIP.has(k) && typeof v === 'string');
-  return entries.length ? {ok:true, version:String(j.version || ''), exported:String(j.exported || ''), entries} : {ok:false};
+  const all = Object.entries(j.settings).filter(([k, v]) => k.startsWith('pdfeditor.') && !SETTINGS_SKIP.has(k) && typeof v === 'string');
+  const entries = all.filter(([k, v]) => settingShapeOk(k, v));
+  return entries.length ? {ok:true, version:String(j.version || ''), exported:String(j.exported || ''), entries, skipped:all.length - entries.length} : {ok:false};
+}
+// what a known setting must look like to be taken from a file (a value of the wrong shape would break the tools, the keys or
+// the pickers until a good file is imported); keys not listed are taken as they are
+const isPlainObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
+const SETTING_SHAPE = {
+  'pdfeditor.theme':s => s in THEME_NAMES, 'pdfeditor.pagecolor':s => s in PAGE_NAMES,   // (plain text)
+  'pdfeditor.lasttool.v1':j => isPlainObj(j) && Object.values(j).every(t => typeof t === 'string'),
+  'pdfeditor.lastact.v1':j => isPlainObj(j) && Object.values(j).every(n => Number.isInteger(n)),
+  'pdfeditor.bindings.v1':j => isPlainObj(j) && Object.values(j).every(a => Array.isArray(a) && a.every(k => typeof k === 'string')),
+  'pdfeditor.stamp.v1':j => isPlainObj(j) && typeof j.t === 'string' && typeof j.c === 'string' && typeof j.kind === 'string',
+  'pdfeditor.colors.v1':j => isPlainObj(j) && (j.fav == null || (Array.isArray(j.fav) && j.fav.every(c => typeof c === 'string'))) && (j.use == null || isPlainObj(j.use)),
+  'pdfeditor.people.v1':j => isPlainObj(j) && Array.isArray(j.names) && j.names.every(n => typeof n === 'string') && (j.def == null || typeof j.def === 'string'),
+  'pdfeditor.fonts.recent.v1':j => Array.isArray(j) && j.every(n => typeof n === 'string'),
+  ...Object.fromEntries(['textbox.v1', 'styles.v1', 'ribbon.v1', 'view.v1', 'print.v1', 'find.v1', 'export.v1', 'fontid.v1'].map(k => ['pdfeditor.' + k, isPlainObj])),
+};
+function settingShapeOk(k, v){
+  const f = SETTING_SHAPE[k]; if (!f) return true;
+  if (k === 'pdfeditor.theme' || k === 'pdfeditor.pagecolor') return f(v);
+  try { return !!f(JSON.parse(v)); } catch (_) { return false; }
 }
 function chooseSettingsFile(){
   const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json,application/json';
@@ -11945,17 +11968,25 @@ function chooseSettingsFile(){
 // asked first; the settings in the file replace the ones there, the others stay; then the program reloads (the usual
 // question about unsaved changes comes first)
 async function importSettings(file){
+  if (file && file.size > 2 * 1024 * 1024) { toast('這個檔案太大（超過 2 MB），不是 PDF 工作台的設定檔', 'err'); return false; }
   let text = ''; try { text = await file.text(); } catch (_) {}
   const r = parseSettingsFile(text);
   if (!r.ok) { toast('這不是 PDF 工作台的設定檔', 'err'); return false; }
   if (anyDirty()) { toast('有還沒另存的修改：請先另存新檔，再匯入設定（匯入後程式會重新載入）', 'err'); return false; }
-  if ($('#mask').classList.contains('show')) closeModal(true);   // the settings window: one window at a time, and the program reloads anyway
+  // (the question takes the place of the window that is open, the settings window, as if it were closed)
   const when = r.exported && !isNaN(Date.parse(r.exported)) ? zhDateTime(new Date(r.exported)) : '';
-  const body = `<div style="max-width:440px;line-height:1.7">要匯入「${esc(file.name)}」的設定嗎？<br>這個檔案${r.version ? `由 v${esc(r.version)} ` : ''}${when ? `在 ${esc(when)} ` : ''}匯出，會取代目前的 ${r.entries.length} 項設定。
+  const has = k => { try { return localStorage.getItem(k) != null; } catch (_) { return false; } };
+  const nOld = r.entries.filter(([k]) => has(k)).length, nNew = r.entries.length - nOld, ppl = r.entries.some(([k]) => k === PEOPLE_KEY);
+  const body = `<div style="max-width:440px;line-height:1.7">要匯入「${esc(file.name)}」的設定嗎？<br>這個檔案${r.version ? `由 v${esc(r.version)} ` : ''}${when ? `在 ${esc(when)} ` : ''}匯出，會取代目前的 ${nOld} 項設定${nNew ? `、新增 ${nNew} 項` : ''}${ppl ? '（包括人員名單與預設作者）' : ''}。${r.skipped ? `<br>另有 ${r.skipped} 項格式不對，會略過。` : ''}
     <div class="note" style="margin-top:10px">匯入後程式會重新載入，開著的文件會關閉。</div></div>`;
   const ok = await openModal({title:'匯入設定', body, buttons:[{label:'取消', value:false}, {spacer:true}, {label:'匯入並重新載入', value:true, primary:true}]});
   if (!ok) return false;
-  try { r.entries.forEach(([k, v]) => localStorage.setItem(k, v)); } catch (err) { toast('匯入失敗：' + (err.message || err), 'err'); return false; }
+  const before = r.entries.map(([k]) => { try { return [k, localStorage.getItem(k)]; } catch (_) { return [k, null]; } });
+  try { r.entries.forEach(([k, v]) => localStorage.setItem(k, v)); }
+  catch (err) {   // (nothing half written: what was there is put back)
+    before.forEach(([k, v]) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (_) {} });
+    toast('匯入失敗，設定沒有改變：' + (err.message || err), 'err'); return false;
+  }
   location.reload();
   return true;
 }
@@ -12229,7 +12260,7 @@ window.__pdfapp = {
   mutate:(label, fn) => mutate(label, fn),   // (tests) a change made by the test itself
   openModal:o => openModal(o),   // (tests) another window over the one that is up
   people:() => ({names:PEOPLE ? [...PEOPLE.names] : [], def:PEOPLE ? PEOPLE.def : '', author:AUTHOR}),
-  settingsSnapshot, parseSettingsFile, presets:k => PRESETS[k],
+  settingsSnapshot, parseSettingsFile, importSettings, exportSettings, presets:k => PRESETS[k],
   apText:async (i, id) => {   // (tests) the drawing an object shows: its upright one when turned, else its normal appearance
     const doc = await geoDoc(), ref = findAnnotRef(doc, i, id); if (!ref) return null;
     const d = doc.context.lookup(ref, PDFDict), t = boxTurn(d), ap = d.lookupMaybe(N_('AP'), PDFDict), n = t ? t.base : ap && ap.get(N_('N'));

@@ -91,5 +91,57 @@ const dz = {dirty0, title:await title(), toast:(await toasts()).some(t => t.incl
 if (dz.title === '匯入設定') { await win.click('#modal .mf button:has-text("取消")'); await win.waitForTimeout(400); }
 check('a document with unsaved changes: refused first (save it), nothing written, no reload', dz.dirty0 === true && dz.title !== '匯入設定' && dz.toast && dz.theme === 'light' && dz.marker === 1, dz);
 
+// ---- part 3 (v1.0.51) -------------------------------------------------------------------------------------------------
+await A(() => { window.__pdfapp.S.dirty = false; localStorage.setItem('pdfeditor.theme', 'light'); window.__marker3 = 1; document.querySelectorAll('#toasts .toast').forEach(t => t.remove()); });
+const write = (n, settings) => { const f = path.join(TMP, n); fs.writeFileSync(f, JSON.stringify({app:'PDF 工作台', kind:'settings', version:'1.0.50', exported:new Date().toISOString(), settings})); return f; };
+const closeQ = async () => { if ((await title()) === '匯入設定') { await win.click('#modal .mf button:has-text("取消")'); await win.waitForTimeout(500); } };
+// values of the wrong shape (valid JSON): left out, and the question says so
+const shapes = write('shapes.json', {'pdfeditor.theme':'dark', 'pdfeditor.bindings.v1':'{"undo":"ctrl+z"}', 'pdfeditor.colors.v1':'{"fav":"red"}', 'pdfeditor.stamp.v1':'[1,2]',
+  'pdfeditor.lasttool.v1':'{"draw":5}', 'pdfeditor.lastact.v1':'{"out":"a"}'});
+await pick(shapes);
+const bS = await bodyText();
+await closeQ();
+const pS = await A(t => window.__pdfapp.parseSettingsFile(t), fs.readFileSync(shapes, 'utf8'));
+check('settings of the wrong shape (keys, colours, stamp, last tools): left out, and the question says how many', /1 項/.test(bS) && /5 項/.test(bS) && /略過/.test(bS) && JSON.stringify(pS.entries) === JSON.stringify([['pdfeditor.theme', 'dark']]), {bS, pS});
+// the question counts what it replaces and what is new, and says the people list comes from the file
+await A(() => localStorage.removeItem('pdfeditor.newkey.test'));
+const mixed = write('mixed.json', {'pdfeditor.theme':'dark', 'pdfeditor.newkey.test':'x', 'pdfeditor.people.v1':JSON.stringify({names:['root', '陳'], def:'陳'})});
+await pick(mixed);
+const bM = await bodyText();
+await closeQ();
+check('the question: how many it replaces and how many are new; the people list and default author come from the file', /取代目前的 2 項/.test(bM) && /新增 1 項/.test(bM) && /人員名單/.test(bM) && /預設作者/.test(bM), {bM});
+// a storage error part-way: nothing half written, no reload
+await A(() => { const S = Storage.prototype; S.__set = S.setItem; S.setItem = function(k, v){ if (k === 'pdfeditor.zzz.test') throw new Error('quota'); return S.__set.call(this, k, v); }; });
+const half = write('half.json', {'pdfeditor.theme':'dark', 'pdfeditor.zzz.test':'y'});
+await pick(half);
+if ((await title()) === '匯入設定') { await win.click('#modal .mf button:has-text("匯入並重新載入")'); await win.waitForTimeout(1500); }
+const hz = {theme:await LS('pdfeditor.theme'), marker:await A(() => window.__marker3 ?? null), toast:(await toasts()).some(t => t.includes('匯入失敗'))};
+await A(() => { const S = Storage.prototype; if (S.__set) { S.setItem = S.__set; delete S.__set; } });
+check('a storage error part-way through the import: nothing changed (the first setting put back), said so, no reload', hz.theme === 'light' && hz.marker === 1 && hz.toast, hz);
+// a file far too large for a settings file: refused before it is read
+const big = path.join(TMP, 'big.json'); fs.writeFileSync(big, JSON.stringify({app:'PDF 工作台', kind:'settings', settings:{'pdfeditor.theme':'dark', 'pdfeditor.pad.test':'x'.repeat(3 * 1024 * 1024)}}));
+await A(() => document.querySelectorAll('#toasts .toast').forEach(t => t.remove()));
+await pick(big);
+const tBig = await title(), toBig = await toasts();
+await closeQ();
+check('a file over 2 MB: refused before it is read, and said so', tBig !== '匯入設定' && toBig.some(t => /太大/.test(t)), {tBig, toBig});
+// the question takes another window's place as a cancel (it does not answer that window 「yes」)
+await A(() => { if (document.querySelector('#mask').classList.contains('show')) document.querySelector('#modal .mf button:last-child').click(); });
+await win.waitForTimeout(400);
+await A(() => { window.__r = 'pending'; window.__pdfapp.openModal({title:'X', buttons:[{label:'是', value:'yes'}]}).then(v => { window.__r = v === undefined ? 'cancelled' : v; }); });
+await A(t => { window.__pdfapp.importSettings(new File([t], 'settings.json')); }, fs.readFileSync(FILE, 'utf8'));   // (not waited for: it asks)
+await win.waitForTimeout(800);
+const rX = await A(() => window.__r), tX = await title();
+await closeQ();
+check('the import question over another window: that window counts as cancelled, not answered 「yes」', rX === 'cancelled' && tX === '匯入設定', {rX, tX});
+// 匯出 with the settings unreadable: nothing written, said so
+await answerSave(path.join(TMP, 'unread.json'));
+await A(() => { const S = Storage.prototype; S.__key = S.key; S.key = function(){ throw new Error('blocked'); }; document.querySelectorAll('#toasts .toast').forEach(t => t.remove()); });
+await A(() => { window.__pdfapp.exportSettings(); });
+await win.waitForTimeout(800);
+const ux = {asked:(await asked()) || [], toast:await toasts()};
+await A(() => { const S = Storage.prototype; if (S.__key) { S.key = S.__key; delete S.__key; } });
+check('匯出 with the settings unreadable: no file, and said so (not 「已匯出」)', ux.asked.length === 0 && !ux.toast.some(t => t.includes('已匯出')) && ux.toast.some(t => /讀不到/.test(t)) && !fs.existsSync(path.join(TMP, 'unread.json')), ux);
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

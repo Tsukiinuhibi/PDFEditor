@@ -167,6 +167,12 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 ### 3.9.5 設定檔（v1.0.32）
 - 設定 → 設定檔：〔匯出設定…〕`exportSettings()` 把 `settingsSnapshot()` 存成「PDF工作台-設定-YYYYMMDD.json」（桌面版走另存新檔，瀏覽器版下載）：`{app:'PDF 工作台', kind:'settings', version, exported, settings:{鍵: localStorage 原文}}`，收所有 `pdfeditor.` 開頭的鍵，`SETTINGS_SKIP`（字型清單快取 `fontcat.v2`、版本記錄 `seenversion.v1`）除外。新增的設定鍵自動包含；只屬於這台電腦的新鍵要加進 `SETTINGS_SKIP`。
 - 〔匯入設定…〕`chooseSettingsFile()` → `importSettings(file)`：`parseSettingsFile` 不是本程式的設定檔或沒有可用項目就提示「這不是 PDF 工作台的設定檔」；有還沒另存的修改（`anyDirty()`）就先擋下、什麼都不寫（重新載入時若在「不儲存並關閉」按取消，設定會只套用一半）；否則先關掉設定視窗（一次只開一個視窗），確認「匯入設定」後寫入檔案裡的項目（其他的不動），`location.reload()`。匯出的另存對話框帶 `avoid`（開著的 PDF 與它另存的檔），不會蓋掉原檔。
+- v1.0.51 的修正：
+  - 已知的設定各有自己的形狀（`SETTING_SHAPE`、`settingShapeOk`：按鍵、顏色、戳記、最近用的工具、人員名單…）；格式對但形狀不對的值（手改過或壞掉的檔案）會略過，問題裡說略過幾項。沒列的鍵照原樣接受。
+  - 匯入：先記下每個鍵原本的值，寫到一半出錯時全部放回（不會只寫了一半），提示「匯入失敗，設定沒有改變」，不重新載入。超過 2 MB 的檔案不讀。
+  - 問題取代設定視窗的位置（`openModal` 會把前一個沒回答的視窗算成取消，不再 `closeModal(true)` 替別的視窗按「是」）；寫出會取代幾項、新增幾項，檔案裡有人員名單時說明人員名單與預設作者也會換。
+  - 匯出：讀不到這台電腦的設定（`localStorage` 不能讀）時不寫檔，提示「讀不到」（`settingsSnapshot` 的 `unreadable` 不會寫進檔案）。
+  - 設定裡的字型名稱（文字方塊的字型、最近用的字型）是這台電腦裝的字型：別台電腦沒有時會改用替代字型，不會出錯。
 
 ### 3.9.6 選到物件時工具列換成它的編輯功能（v1.0.33）
 - 選取工具選到本程式畫的物件（有 `PDFE`）：`selectAnnot`／`deselectAnnot` 呼叫 `paintObjBar()`，`#hint.objbar` 顯示「已選取：<名稱>」＋`styleBar(kind, readObjStyle(dict), true)`（`objKind(dict)` 依 Subtype／`BE`／`LE`／主旨對到工具：rect、ellipse、cloud、line、arrow、polygon、polyline、pen、hlText、underline、strike、fill；填色只有顏色與透明度）。其他軟體的物件沒有樣式列；文字方塊、戳記、圖片、「點選區塊」的填色見 3.9.7。
