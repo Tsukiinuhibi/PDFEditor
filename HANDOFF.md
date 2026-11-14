@@ -181,6 +181,15 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - **圖片**：〔更換圖片…〕：`pickImage()`（`chooseImage` 也用它）→ `replaceImage`：新圖等比例放進舊圖自己的框裡置中（`ownPicture`，方向不變），`Contents`＝檔名。
 - **透明度（戳記、圖片）**：`CA`＋`fadeAP`：外觀外面包一層 `q /GS0 gs /B Do Q`（`PDFE_Fade` 指向裡面的外觀，BBox＝`formFrame`），再改時先拆掉舊的一層，100% 就不包。旋轉過的用 `uprightAP`／`uprightBox`／`setUpright`（`setTurn` 同角度）。
 - **區塊填色**：`refillStamp` 從外觀圖 `/Im0` 的 SMask 取回遮罩重新上色（不重新偵測區域；整塊都不透明時 pdf-lib 不寫 SMask，當作全部 255），用 `samePicture` 換上去；只換顏色時每個像素保留原本的 alpha。`fillAt` 透明度不是 100% 時寫 `CA`（給提示列顯示）。
+- v1.0.51 的修正（v1.0.33、v1.0.34 留下的）：
+  - 選的值跟物件原本的一樣（`sameStyleVal`）：`restyleAnnot`、`restyleStamp`、`refillStamp` 都不寫、不留復原步驟。
+  - 透明度清單（`opacitySel`）：不在清單上的值（預設樣式的 60%、45%）照實際值顯示並選著。v1.0.34 以前的區塊填色沒有 CA、透明度只在圖的遮罩裡：`fillAlpha` 讀遮罩最不透明的那點，物件列顯示那個值。
+  - `refillStamp`：遮罩不是一個像素一個位元組（別的程式存過）時不重填，提示「無法變更這個填色」。
+  - 戳記：找不到它的圖（外觀不是圖）時換色會提示；`ownFrame` 對不是圖的外觀回傳 null（PDFDict 也有 `.dict`，是 Map，要用 `instanceof PDFDict` 判斷）。
+  - 戳記選擇器：標準戳記換過顏色後再開，選中的是它的標準樣子；沒有重選就按〔使用此戳記〕，用的就是看到的那個（標準顏色）。
+  - 區域螢光筆（主旨「區域螢光筆」）換樣式時 `markupGeom` 不加 2 pt 邊（外框＝它的範圍，第一次換樣式不再變大）。
+  - 多邊形線條（PolyLine，沒有內部）套用有填色的預設樣式時不寫 IC。
+  - `regenAP` 的 `st` 一定要傳（拿掉沒用到的預設值）。
 
 ### 3.9.8 擷取圖片：刪除、更換；另存時清掉用不到的資料（v1.0.35）
 - **紅框**（`detectImages`）：框住圖片**看得到的部分**（跟著裁切路徑與表單的 BBox；pdf.js 的 `constructPath` 的 `minMax` 不含曲線，所以自己從路徑運算子算外框），另外記 `full`（整張圖、不裁切）。`nativeScale` 用 `full` 算像素密度。

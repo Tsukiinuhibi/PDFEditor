@@ -6731,7 +6731,11 @@ const STYLES = (() => {
 })();
 const saveStyles = () => { try { localStorage.setItem(STYLE_KEY, JSON.stringify(STYLES)); } catch (_) {} };
 
-const opacitySel = v => `<label class="sb-l">透明度<select data-s="opacity">${[1, .85, .7, .5, .35].map(o => `<option value="${o}"${+v === o ? ' selected' : ''}>${Math.round(o * 100)}%</option>`).join('')}</select></label>`;
+const opacitySel = v => {   // (a value not in the list, a preset's 60% or 45%, is shown as it is)
+  const L = [1, .85, .7, .5, .35], x = Math.round(clamp(+v || 0, 0, 1) * 100) / 100;
+  if (!L.some(o => Math.abs(o - x) < .005)) { L.push(x); L.sort((a, b) => b - a); }
+  return `<label class="sb-l">透明度<select data-s="opacity">${L.map(o => `<option value="${o}"${Math.abs(x - o) < .005 ? ' selected' : ''}>${Math.round(o * 100)}%</option>`).join('')}</select></label>`;
+};
 function styleBar(t, st = STYLES[t] || {}, obj = false){   // obj: the bar of a selected object (styleOf it), not of the tool
   const def = DRAW_TOOLS[t], k = def.kind;
   const sw = (key, allowNone) => `<button class="cpick${st[key] ? '' : ' none'}" data-cp="${key}" data-none="${allowNone ? 1 : ''}" title="選擇顏色" style="--c:${st[key] || 'transparent'}"><i></i>▾</button>`;
@@ -6950,8 +6954,8 @@ async function createTextMark(i, quads, t){
   await addGeomAnnot(i, def.label.replace('文字工具', '').replace('工具', ''), {b, ops}, baseDict(def.sub, def.label.replace('工具', ''), st, {QuadPoints:qp}), res);
 }
 // highlight / underline / strike-out over quads ([tl, tr, bl, br] in page view points)
-function markupGeom(sub, quads, st){
-  const b = bboxOf(quads.flat(), 2);
+function markupGeom(sub, quads, st, pad = 2){
+  const b = bboxOf(quads.flat(), pad);
   let ops;
   if (sub === 'Highlight') {
     ops = `/GS1 gs ${hexRgb(st.color)} rg ` + quads.map(([tl, tr, bl, br]) => `${loc(b, tl).join(' ')} m ${loc(b, tr).join(' ')} l ${loc(b, br).join(' ')} l ${loc(b, bl).join(' ')} l h f`).join(' ');
@@ -7116,6 +7120,7 @@ async function openStampPicker({spec = null, pickOnly = false} = {}){   // pickO
         <div class="field"><label>姓名</label><input type="text" id="scW" class="ex-in" style="width:120px"></div></div>
       <div class="st-prev" id="scPrev"></div></div>`;
   let tab = STAMPS.dynamic.some(s => s.t === init.t && s.kind === init.kind) ? 'dynamic' : init.custom ? 'custom' : 'standard', sel = init;
+  if (tab !== 'custom') { const m = STAMPS[tab].find(s => s.t === init.t && s.kind === init.kind); if (m) sel = m; }   // (a standard stamp in another colour: the one shown chosen)
   const $b = q => body.querySelector(q);
   $b('#scW').value = init.custom && init.who || AUTHOR;
   if (init.custom) { $b('#scT').value = init.t || '戳記'; $b('#scK').value = init.kind || 'box'; }
@@ -7603,7 +7608,7 @@ async function paintObjBar(){
   if (!AS || AS.a.id !== a.id) return;   // the selection changed meanwhile: that call paints
   const dict = ref && doc.context.lookup(ref, PDFDict), kind = dict && objKind(dict);
   if (!kind || S.tool !== 'select') return drop();
-  const o = objBarHTML(kind, dict);
+  const o = objBarHTML(kind, dict, doc);
   h.innerHTML = `<b class="sb-t">${icon(o.ic)}已選取：${esc(o.name)}</b><span class="sb-row">${o.html}</span>`;
   h.classList.add('show', 'styl', 'objbar');
   OBJBAR = {i, id:a.id, kind, doc:activeDoc(), st:o.st};
@@ -7642,15 +7647,26 @@ async function distributeSelected(axis){
   await moveObjects(i, moves, `已平均分配 ${sorted.length} 個物件`);
 }
 // the bar for one kind of object: {name, ic (icon), html, st}
-function objBarHTML(kind, dict){
+function objBarHTML(kind, dict, doc = null){
   if (kind === 'textbox') { const st = tbObjStyle(readRT(dict)); return {name:subjOf(dict) === '修改的文字' ? '修改的文字' : '文字方塊', ic:'text', html:textBarHTML(st, true), st}; }
   if (kind === 'stamp') {
     const spec = stampSpec(dict), op = readAnnStyle(dict).opacity;
     return {name:'戳記', ic:'stamp', st:{spec}, html:`<button class="pchip" data-o="stamp">更換戳記…</button>${spec ? `<span class="sb-h">顏色</span><button class="cpick" data-cp="color" title="選擇顏色" style="--c:${STAMP_COLORS[spec.c] || spec.c}"><i></i>▾</button>` : ''}${opacitySel(op)}${spec ? '' : '<span class="sb-tip">舊版蓋的戳記無法改顏色，可以更換戳記</span>'}`};
   }
   if (kind === 'image') return {name:'圖片', ic:'insImg', st:null, html:`<button class="pchip" data-o="image">更換圖片…</button>${opacitySel(readAnnStyle(dict).opacity)}`};
-  const def = DRAW_TOOLS[kind];
-  return {name:subjOf(dict) === '區域螢光筆' ? '區域螢光筆' : def.label.replace('工具', ''), ic:def.ic, html:styleBar(kind, readObjStyle(dict), true), st:null};
+  const def = DRAW_TOOLS[kind], st = readObjStyle(dict);
+  if (kind === 'fill' && subOf(dict) === 'Stamp' && !dict.get(N_('CA')) && doc) st.opacity = fillAlpha(doc, dict);   // (made before v1.0.34: the opacity is in its picture only)
+  return {name:subjOf(dict) === '區域螢光筆' ? '區域螢光筆' : def.label.replace('工具', ''), ic:def.ic, html:styleBar(kind, st, true), st:null};
+}
+// an area fill's opacity read from its picture (the most opaque pixel of its mask)
+function fillAlpha(doc, dict){
+  try {
+    const ctx = doc.context, fr = ownFrame(doc, dict), form = fr && ctx.lookup(fr.ref), res = form && form.dict && form.dict.lookupMaybe(N_('Resources'), PDFDict);
+    const xo = res && res.lookupMaybe(N_('XObject'), PDFDict), img = xo && ctx.lookup(xo.get(N_('Im0'))), sm = img && img.dict && img.dict.get(N_('SMask'));
+    if (!sm) return 1;
+    const a = PDFLib.decodePDFRawStream(ctx.lookup(sm)).decode(); let mx = 0; for (let k = 0; k < a.length; k++) if (a[k] > mx) mx = a[k];
+    return Math.round(mx / 255 * 100) / 100;
+  } catch (_) { return 1; }
 }
 function drawASel(){
   if (!AS) return;
@@ -7738,12 +7754,12 @@ function readAnnStyle(dict){
 }
 // an object of ours drawn again from its geometry and the style st (resizing: map moves its points, nb is the new
 // box; restyling: neither). A turned rectangle / ellipse / cloud is drawn upright and turned again by its angle.
-function regenAP(doc, i, dict, st = readObjStyle(dict), map = p => p, nb = null, prev = null){   // prev: the style before a restyle
+function regenAP(doc, i, dict, st, map = p => p, nb = null, prev = null){   // prev: the style before a restyle
   const ctx = doc.context, sub = subOf(dict), rot = S.pages[i].rot, turned = ROT_BOX.has(sub) && boxTurn(dict);
   if (sub === 'Highlight' || sub === 'Underline' || sub === 'StrikeOut') {
     const pts = flatPts(i, numArr(dict.lookup(N_('QuadPoints'), PDFArray))).map(map), quads = [];
     for (let k = 0; k + 3 < pts.length; k += 4) quads.push(pts.slice(k, k + 4));
-    const m = markupGeom(sub, quads, st);
+    const m = markupGeom(sub, quads, st, subjOf(dict) === '區域螢光筆' ? 0 : 2);   // (an area highlight's frame is its area)
     dict.set(N_('Rect'), ctx.obj(visToPdf(i, m.b).rect));
     dict.set(N_('AP'), ctx.obj({N:formAP(doc, m.ops, m.b.w, m.b.h, rot, m.res)}));
     return true;
@@ -7781,9 +7797,10 @@ async function restyleAnnot(i, id, patch){
     if (kind === 'stamp' || kind === 'image') return restyleStamp(doc, i, dict, kind, patch);
     if (kind === 'fill' && subOf(dict) === 'Stamp') return refillStamp(doc, i, dict, patch);
     const prev = readObjStyle(dict), st = {...prev, ...patch};
+    if (Object.keys(patch).every(k => sameStyleVal(prev[k], patch[k]))) return false;   // (the value it already has: nothing written, no undo step)
     if (kind === 'fill' && 'color' in patch) st.fill = st.color;   // a fill outline is one colour
     dict.set(N_('C'), ctx.obj(hexColor(st.color)));
-    if (st.fill) dict.set(N_('IC'), ctx.obj(hexColor(st.fill))); else dict.delete(N_('IC'));
+    if (st.fill && subOf(dict) !== 'PolyLine') dict.set(N_('IC'), ctx.obj(hexColor(st.fill))); else dict.delete(N_('IC'));   // (an open polyline has no inside)
     if ((st.opacity ?? 1) < 1) dict.set(N_('CA'), ctx.obj(st.opacity)); else dict.delete(N_('CA'));
     if (subOf(dict) === 'Line') {
       const arrow = kind === 'arrow';
@@ -7795,13 +7812,14 @@ async function restyleAnnot(i, id, patch){
     if (!regenAP(doc, i, dict, st, p => p, null, prev)) return false;
   });
 }
+const sameStyleVal = (a, b) => typeof a === 'number' || typeof b === 'number' ? Math.abs(+a - +b) < .005 : typeof a === 'string' && typeof b === 'string' ? a.toLowerCase() === b.toLowerCase() : a === b;
 // a box object's upright drawing (a turned one keeps it as PDFE_Base)
 function uprightAP(dict){ const t = boxTurn(dict); if (t) return t.base; const ap = dict.lookupMaybe(N_('AP'), PDFDict), n = ap && ap.get(N_('N')); return n instanceof PDFRef ? n : null; }
 // that drawing (an opacity layer taken off) in its own frame: its form, BBox and /Matrix (the page turn it was drawn for, which
 // is not the page's turn when the page was turned afterwards), how large it shows along its own sides (w, h) and the centre
 // of where it shows (PDF). Stamps, pictures and fills are drawn again in this frame, so they keep their size and direction.
 function ownFrame(doc, dict){
-  const ref = innerAP(doc, uprightAP(dict)), st = ref && doc.context.lookup(ref); if (!st || !st.dict) return null;
+  const ref = innerAP(doc, uprightAP(dict)), st = ref && doc.context.lookup(ref); if (!st || !(st.dict instanceof PDFDict)) return null;   // (not a drawing)
   const m = st.dict.lookupMaybe(N_('Matrix'), PDFArray), M = m ? numArr(m) : [1, 0, 0, 1, 0, 0], side = Math.abs(M[1]) > Math.abs(M[0]);
   const t = boxTurn(dict), R = t ? t.baseRect : numArr(dict.lookup(N_('Rect'), PDFArray)), rw = Math.abs(R[2] - R[0]), rh = Math.abs(R[3] - R[1]);
   const bb = st.dict.lookupMaybe(N_('BBox'), PDFArray), w = side ? rh : rw, h = side ? rw : rh;
@@ -7836,10 +7854,12 @@ function fadeAP(doc, ref, op){
 }
 // a stamp or picture restyled: opacity (CA and the layer), a stamp's colour (drawn again with its own date and name)
 async function restyleStamp(doc, i, dict, kind, patch){
-  const ctx = doc.context, op = 'opacity' in patch ? +patch.opacity : readAnnStyle(dict).opacity;
-  let ap = uprightAP(dict); if (!ap) return false;
-  if (kind === 'stamp' && 'color' in patch) {
-    const spec = stampSpec(dict), fr = ownFrame(doc, dict); if (!spec || !patch.color || !fr) return false;
+  const ctx = doc.context, op0 = readAnnStyle(dict).opacity, op = 'opacity' in patch ? +patch.opacity : op0, spec0 = kind === 'stamp' ? stampSpec(dict) : null;
+  const newColor = 'color' in patch && !(spec0 && patch.color && sameStyleVal(STAMP_COLORS[spec0.c] || spec0.c, patch.color));
+  if (!newColor && sameStyleVal(op, op0)) return false;   // (the value it already has: nothing written, no undo step)
+  let ap = uprightAP(dict); if (!ap) { if (newColor) toast('這個戳記無法換色（找不到它的圖）', 'err'); return false; }
+  if (kind === 'stamp' && newColor) {
+    const spec = spec0, fr = ownFrame(doc, dict); if (!spec || !patch.color || !fr) { toast('這個戳記無法換色（找不到它的圖）', 'err'); return false; }
     const sp = {...spec, c:patch.color}, when = new Date(spec.when);
     await ensureStampFont();
     const {canvas} = drawStamp(sp, 5, isNaN(when) ? new Date() : when), png = new Uint8Array(await (await blobOf(canvas, 'image/png')).arrayBuffer());
@@ -7854,11 +7874,19 @@ async function restyleStamp(doc, i, dict, kind, patch){
 // it is not detected again; without a new opacity each pixel keeps its own alpha
 async function refillStamp(doc, i, dict, patch){
   const ctx = doc.context, st = readAnnStyle(dict), color = patch.color || st.color, fr = ownFrame(doc, dict), ap = fr && fr.ref;
+  const curOp = dict.get(N_('CA')) ? st.opacity : fillAlpha(doc, dict);   // (before v1.0.34 the opacity was in the picture only)
+  if ((!('color' in patch) || sameStyleVal(patch.color, st.color)) && (!('opacity' in patch) || sameStyleVal(+patch.opacity, curOp))) return false;   // (nothing new)
   const form = ap && ctx.lookup(ap), res = form && form.dict && form.dict.lookupMaybe(N_('Resources'), PDFDict), xo = res && res.lookupMaybe(N_('XObject'), PDFDict);
   const im = xo && xo.get(N_('Im0')), img = im && ctx.lookup(im);
   if (!img || !img.dict) { toast('無法變更這個填色', 'err'); return false; }
   const sm = img.dict.get(N_('SMask')), mask = sm && ctx.lookup(sm);   // no mask: every pixel opaque (pdf-lib leaves it out)
-  const W = img.dict.get(N_('Width')).asNumber(), H = img.dict.get(N_('Height')).asNumber(), alpha = mask ? PDFLib.decodePDFRawStream(mask).decode() : null;
+  const W = img.dict.get(N_('Width')).asNumber(), H = img.dict.get(N_('Height')).asNumber();
+  let alpha = null;
+  if (mask) {   // (one byte a pixel, as this program writes it; another program may have saved it otherwise)
+    const bpc = mask.dict && mask.dict.get(N_('BitsPerComponent'));
+    try { alpha = (!bpc || !bpc.asNumber || bpc.asNumber() === 8) ? PDFLib.decodePDFRawStream(mask).decode() : null; } catch (_) { alpha = null; }
+    if (!alpha || alpha.length < W * H) { toast('無法變更這個填色（它的格式被別的程式改過）', 'err'); return false; }
+  }
   const op = 'opacity' in patch ? +patch.opacity : null, A = op == null ? null : Math.round(255 * op), n = parseInt(color.slice(1), 16);
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const g = c.getContext('2d'), d = g.createImageData(W, H);

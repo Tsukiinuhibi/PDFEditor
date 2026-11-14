@@ -13,7 +13,10 @@ const doc = await PDFDocument.create(), pg = doc.addPage([595, 842]);
 pg.drawRectangle({x:330, y:60, width:200, height:140, borderColor:rgb(0, 0, 0), borderWidth:2});
 const oldAP = doc.context.register(doc.context.stream('q 0.8 0.1 0.1 RG 3 w 2 2 96 36 re S Q', {Type:'XObject', Subtype:'Form', BBox:[0, 0, 100, 40]}));
 pg.node.set(PDFName.of('Annots'), doc.context.obj([doc.context.register(doc.context.obj({Type:'Annot', Subtype:'Stamp', Rect:[60, 60, 160, 100], Name:'Approved', Contents:PDFHexString.fromText('核准'),
-  Subj:PDFHexString.fromText('戳記'), T:PDFHexString.fromText('old'), F:4, AP:{N:oldAP}}))]));
+  Subj:PDFHexString.fromText('戳記'), T:PDFHexString.fromText('old'), F:4, AP:{N:oldAP}})),
+  // (v1.0.51) a stamp of ours whose drawing cannot be found (its appearance is not a drawing)
+  doc.context.register(doc.context.obj({Type:'Annot', Subtype:'Stamp', Rect:[440, 600, 540, 640], Contents:PDFHexString.fromText('壞掉的戳記'), Subj:PDFHexString.fromText('戳記'), T:PDFHexString.fromText('x'), F:4, PDFE:true,
+    PDFE_Stamp:PDFHexString.fromText(JSON.stringify({t:'核准', c:'green', kind:'box', who:'x', when:'2026-01-01T00:00:00.000Z'})), AP:{N:doc.context.register(doc.context.obj({Bad:true}))}}))]));
 const pg2 = doc.addPage([595, 842]);   // an oval frame: an area fill that is not a rectangle
 pg2.drawEllipse({x:300, y:420, xScale:120, yScale:60, borderColor:rgb(0, 0, 0), borderWidth:2});
 const PDF = path.join(TMP, 'os2.pdf'); fs.writeFileSync(PDF, await doc.save());
@@ -236,6 +239,71 @@ await fc4.setFiles(TALL); await win.waitForTimeout(600); await settle();
 fr = await frame1(I1.id); const iv2 = await now1(I1.id);
 check('page turned after: 更換圖片 keeps the direction, fits the frame, same centre', iv2?.contents === 'tall.png' && same(fr?.matrix, fr0.i?.matrix, .01) && Math.abs(fr.bbox[2] / fr.bbox[3] - .5) < .02
   && iv2.w <= iv.w + .5 && iv2.h <= iv.h + .5 && near(iv2.cx, iv.cx, 1) && near(iv2.cy, iv.cy, 1), {fr0:fr0.i, fr, iv, iv2});
+
+// ---- part 5 (v1.0.51) -------------------------------------------------------------------------------------------------
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+const undos = () => A(() => window.__pdfapp.S.undo.length), toastT = () => A(() => [...document.querySelectorAll('.toast')].map(t => t.textContent).join(' | '));
+const opText = () => A(() => { const s = document.querySelector('#hint.objbar select[data-s="opacity"]'); return s ? s.options[s.selectedIndex].textContent : null; });
+const darkness = (i, b) => A(([i, b]) => { const S = window.__pdfapp.S, c = S.els[i].querySelector('canvas.pc'), k = c.width / S.pages[i].w;
+  const d = c.getContext('2d').getImageData(Math.round(b.x * k), Math.round(b.y * k), Math.max(1, Math.round(b.w * k)), Math.max(1, Math.round(b.h * k))).data; let s = 0;
+  for (let q = 0; q < d.length; q += 4) s += 255 - (d[q] + d[q + 1] + d[q + 2]) / 3; return s / (d.length / 4); }, [i, b]);
+// a stamp: the colour it already has, picked again: nothing written, no undo step
+const spB = await boxOf(sp.id); await pick(spB);
+await cpk('color', '#1c64d9');
+const uS = await undos();
+await cpk('color', '#1c64d9');
+check('戳記: the colour it already has, picked again: no undo step', (await undos()) === uS && (await style(sp.id))?.spec?.c === '#1c64d9', {u:[uS, await undos()]});
+// a standard stamp in a new colour, 更換戳記… then 使用此戳記 without a new pick: the stamp shown chosen, in its own colour
+const t5 = (await style(sp.id))?.spec?.t;
+await win.click('#hint.objbar [data-o="stamp"]'); await win.waitForTimeout(800);
+await win.click('#modal .mf button:has-text("使用此戳記")'); await settle();
+const sp6 = await style(sp.id);
+check('更換戳記… on a recoloured standard stamp, used without a new pick: the stamp as the picker shows it (its own colour)', sp6?.spec?.t === t5 && sp6?.spec?.c !== '#1c64d9' && !/^#/.test(sp6?.spec?.c || '#'), {t5, spec:sp6?.spec});
+// a turned stamp at 50%: keeps its angle; a stamp at 50% is paler on the page
+const deg5 = (await style(sp.id))?.deg;
+if ((await sel())?.id !== sp.id) await pick(await boxOf(sp.id));
+await setSel('opacity', .5);
+check('a turned stamp at 50%: keeps its angle', Math.abs(((await style(sp.id))?.deg || 0) - (deg5 || 0)) < .5 && Math.abs(deg5 || 0) > 5 && (await style(sp.id))?.opacity === .5, {deg5, st:await style(sp.id)});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+const st5 = (await anns(0, 'Stamp')).map(a => a.id);
+await tool('stamp'); await click(await see(0, 470, 400)); await settle();
+const up5 = (await anns(0, 'Stamp')).find(a => !st5.includes(a.id));
+const dk100 = up5 && await darkness(0, up5);
+if (up5) { await pick(up5); await setSel('opacity', .5); }
+const dk50 = up5 && await darkness(0, up5);
+check('a stamp at 50%: paler on the page', !!up5 && dk50 > 0 && dk50 < dk100 * .75, {dk100, dk50});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// a stamp of ours whose drawing cannot be found: a new colour is refused, and said so
+const bad = (await anns(0, 'Stamp')).find(a => a.contents === '壞掉的戳記');
+const bxy = bad && await see(0, bad.x, bad.y);
+if (bxy) { await tool('select'); await win.mouse.click(bxy[0] + 6, bxy[1] + 6); await win.waitForTimeout(700); }
+const uB = await undos(), badBar = await has('#hint.objbar .cpick[data-cp="color"]');
+if (badBar) await cpk('color', '#e03131');
+const tBad = await toastT();
+check('a stamp whose drawing cannot be found: a new colour is refused, and said so', !!bad && badBar && (await undos()) === uB && /無法/.test(tBad), {bad, badBar, tBad});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// an area fill from before v1.0.34 (its opacity only in its picture, no CA): the bar shows that opacity
+const flB = fl && await boxOf(fl.id);
+await A(async id => window.__pdfapp.mutate('test: no CA', doc => { const d = doc.context.lookup(PDFLib.PDFRef.of(parseInt(id), 0)); d.delete(PDFLib.PDFName.of('CA')); }), fl.id);
+await win.waitForTimeout(1500);
+await pick(flB);
+const opOld = await opText();
+check('an area fill from before v1.0.34 (50% in its picture, no CA): the bar shows 50%', opOld === '50%', {opOld});
+// an area fill whose mask is not one byte a pixel (another program saved it): a new colour is refused, not garbled
+await A(async id => window.__pdfapp.mutate('test: 1-bit mask', doc => {
+  const ctx = doc.context, N = PDFLib.PDFName.of, look = v => v instanceof PDFLib.PDFRef ? ctx.lookup(v) : v;
+  const find = x => { const res = x && x.dict && look(x.dict.get(N('Resources'))), xo = res && look(res.get(N('XObject'))); if (!xo) return null;
+    for (const v of xo.values()) { const o = look(v); if (!o || !o.dict) continue; if (String(o.dict.get(N('Subtype'))) === '/Image') return o; const r = find(o); if (r) return r; } return null; };
+  const d = ctx.lookup(PDFLib.PDFRef.of(parseInt(id), 0)), img = find(look(look(d.get(N('AP'))).get(N('N'))));
+  const W = img.dict.get(N('Width')).asNumber(), H = img.dict.get(N('Height')).asNumber();
+  img.dict.set(N('SMask'), ctx.register(ctx.stream(new Uint8Array(Math.ceil(W / 8) * H).fill(255), {Type:'XObject', Subtype:'Image', Width:W, Height:H, ColorSpace:'DeviceGray', BitsPerComponent:1})));
+}), fl.id);
+await win.waitForTimeout(1500);
+await pick(flB);
+const cBefore = (await style(fl.id))?.color, uF = await undos();
+await cpk('color', '#e03131');
+const tF = await toastT();
+check('an area fill with a 1-bit mask: a new colour is refused and said so (not drawn garbled)', (await style(fl.id))?.color === cBefore && (await undos()) === uF && /無法/.test(tF), {cBefore, now:(await style(fl.id))?.color, tF});
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

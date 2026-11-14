@@ -194,5 +194,38 @@ check('then a drawing tool: its width is the tool\'s, the last selected object u
 await pick(r3); await A(() => window.__pdfapp.makeSample()); await win.waitForTimeout(2500);
 check('another document opened: no bar left behind', (await bar()) === null, await bar());
 
+// ---- part 5 (v1.0.51): an area highlight keeps its frame; no fill on a polyline; an opacity not in the list; the same value
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+const nr = (a, b, d = .6) => Math.abs(a - b) <= d, undos5 = () => A(() => window.__pdfapp.S.undo.length);
+const hl5 = (await anns(0, 'Highlight')).map(a => a.id);
+await tool('highlight'); await drag(await see(0, 300, 600), await P(0, 420, 640));
+const ar5 = (await anns(0, 'Highlight')).find(a => !hl5.includes(a.id));
+if (ar5) await pick(ar5);
+if (await bar()) await cpk('color', '#8ce99a');
+const ar5b = ar5 && (await anns(0, 'Highlight')).find(a => a.id === ar5.id);
+check('區域螢光筆 restyled: its frame stays the same size', !!ar5b && nr(ar5b.w, ar5.w) && nr(ar5b.h, ar5.h) && (await style(0, ar5.id))?.color === '#8ce99a', {ar5, ar5b});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+const pl0 = (await anns(0, 'PolyLine')).map(a => a.id);
+await tool('polyline'); await see(0, 300, 700);
+for (const [x, y] of [[100, 680], [180, 730], [260, 690]]) { await win.mouse.click(...await P(0, x, y)); await win.waitForTimeout(200); }
+await win.keyboard.press('Enter'); await win.waitForTimeout(1500);
+const pl5 = (await anns(0, 'PolyLine')).find(a => !pl0.includes(a.id));
+await tool('select'); if (pl5) await click(await P(0, pl5.x + pl5.w / 2, pl5.y + pl5.h / 2));
+const plBar = await bar();
+if (plBar) { await win.click('#hint.objbar [data-p="2"]'); await win.waitForTimeout(1500); }   // 黃底標示 (a box preset with a fill)
+check('a box preset with a fill on a polyline: its colour and width, no fill (IC) written', !!pl5 && !!plBar && (await style(0, pl5.id))?.color === '#f59f00' && !(await A(id => window.__pdfapp.annHas(0, id, 'IC'), pl5.id)), {pl5, plBar, st:pl5 && await style(0, pl5.id)});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+const ln0 = (await anns(0, 'Line')).map(a => a.id);
+await tool('line'); await drag(await see(0, 120, 560), await P(0, 260, 560));
+const ln5 = (await anns(0, 'Line')).find(a => !ln0.includes(a.id));
+await tool('select'); if (ln5) await click(await P(0, ln5.x + ln5.w / 2, ln5.y + ln5.h / 2));
+if (await bar()) { await win.click('#hint.objbar [data-p="4"]'); await win.waitForTimeout(1500); }   // 橘色半透明 (60%)
+const opShown = await A(() => { const s = document.querySelector('#hint.objbar select[data-s="opacity"]'); return s ? s.options[s.selectedIndex].textContent : null; });
+check('an opacity not in the list (a preset\'s 60%): the bar shows 60%, not 100%', !!ln5 && (await style(0, ln5.id))?.opacity === .6 && opShown === '60%', {opShown, st:ln5 && await style(0, ln5.id)});
+await cpk('color', '#1c64d9');
+const uSame = await undos5();
+await cpk('color', '#1c64d9');
+check('the colour it already has, picked again: nothing written, no undo step', (await undos5()) === uSame && (await style(0, ln5.id))?.color === '#1c64d9', {u:[uSame, await undos5()]});
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
