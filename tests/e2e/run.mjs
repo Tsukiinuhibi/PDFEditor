@@ -14,7 +14,7 @@ const wrap = process.platform === 'linux' && !process.env.DISPLAY;
 let bad = 0;
 for (const t of tests) {
   const cmd = wrap ? ['xvfb-run', ['-a', process.execPath, path.join(dir, t)]] : [process.execPath, [path.join(dir, t)]];
-  const r = spawnSync(cmd[0], cmd[1], { encoding: 'utf8', timeout: 180000 });
+  const r = spawnSync(cmd[0], cmd[1], { encoding: 'utf8', timeout: 360000 });   // (claude.mjs alone takes about 3 minutes)
   const out = (r.stdout || '') + (r.stderr || '');
   const lines = out.split('\n').filter(l => l.trim() && !/TUNNEL|dbus|Gtk-|ERROR:|DevTools|proxy|fonts\.goo/.test(l));
   // pdf.js prints some harmless "Warning: …" lines; only real errors count
