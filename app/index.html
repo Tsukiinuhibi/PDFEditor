@@ -3913,13 +3913,14 @@ function wrapText(ctx, text, maxW){
   return lines;
 }
 async function addHighlight(i, box){
-  await mutate('已加上螢光筆標示', doc => {
-    const g = visToPdf(i, box), [x1, y1, x2, y2] = g.rect, c = hexColor(S.hlColor);
-    const ap = formAP(doc, `/GS0 gs ${c.map(v => v.toFixed(3)).join(' ')} rg 0 0 ${box.w.toFixed(2)} ${box.h.toFixed(2)} re f`, box.w, box.h, g.rot,
-      {ExtGState:{GS0:{Type:'ExtGState', BM:'Multiply', ca:1}}});
-    addAnnot(doc, i, {Type:'Annot', Subtype:'Highlight', Rect:g.rect, QuadPoints:[x1, y2, x2, y2, x1, y1, x2, y1], C:c,
-      T:PDFHexString.fromText(AUTHOR), M:nowStr(), F:4, PDFE:true, Subj:PDFHexString.fromText('區域螢光筆'), AP:{N:ap}});
-  });
+  await mutate('已加上螢光筆標示', doc => highlightAnnot(doc, i, box, S.hlColor));
+}
+function highlightAnnot(doc, i, box, color){
+  const g = visToPdf(i, box), [x1, y1, x2, y2] = g.rect, c = hexColor(color);
+  const ap = formAP(doc, `/GS0 gs ${c.map(v => v.toFixed(3)).join(' ')} rg 0 0 ${box.w.toFixed(2)} ${box.h.toFixed(2)} re f`, box.w, box.h, g.rot,
+    {ExtGState:{GS0:{Type:'ExtGState', BM:'Multiply', ca:1}}});
+  addAnnot(doc, i, {Type:'Annot', Subtype:'Highlight', Rect:g.rect, QuadPoints:[x1, y2, x2, y2, x1, y1, x2, y1], C:c,
+    T:PDFHexString.fromText(AUTHOR), M:nowStr(), F:4, PDFE:true, Subj:PDFHexString.fromText('區域螢光筆'), AP:{N:ap}});
 }
 async function deleteAnnot(i, id, label = '已刪除註解'){
   return mutate(label, doc => {
@@ -10071,8 +10072,8 @@ async function replaceHits(list, repl){
   REPLACING = true;
   try { return await replaceNow(list, repl); } finally { REPLACING = false; }
 }
-async function replaceNow(list, repl){
-  const o = {...FIND.opts}, q = FIND.q, scans = list.filter(h => h.ocr).length, todo = list.filter(h => !h.ocr);
+async function replaceNow(list, repl, o = {...FIND.opts}, q = FIND.q){   // → how many were replaced, or false
+  const scans = list.filter(h => h.ocr).length, todo = list.filter(h => !h.ocr);
   if (!todo.length) { toast(scans ? '掃描頁的文字不能取代' : '沒有可以取代的文字', 'err'); return false; }
   if (!(await settleEdits())) return false;
   const groups = new Map();   // our own blocks as a whole, the page's own text a line at a time
@@ -10090,7 +10091,7 @@ async function replaceNow(list, repl){
   if (!n) { toast('這些文字無法取代', 'err'); return false; }
   const ok = await mutate(`已取代 ${n} 處`, async doc => { for (const j of jobs) await applyPageText(doc, j.i, j.x, j.y, j.prep, j.box, j.edit, j.empty, j.strut); });
   if (ok && scans) toast(`掃描頁的 ${scans} 處沒有取代`);
-  return ok;
+  return ok ? n : false;
 }
 // 取代: the current match, then the next one
 async function replaceCurrent(){
@@ -10931,7 +10932,74 @@ const CLAUDE_TOOLS = {
   },
   async pdf_go_to_page({page}){ clNeed(); const i = clPage(page); scrollToPage(i); return {text:`已跳到第 ${i + 1} 頁`}; },
   async pdf_undo(){ clNeed(); if (!S.undo.length) return {text:'沒有可以復原的修改'}; await actions.undo(); return {text:'已復原上一個修改'}; },
+  async pdf_find(a){
+    const {hits, q} = await clSearch(a);
+    if (!hits.length) return {text:`找不到「${q}」`};
+    return {text:`「${q}」共 ${hits.length} 處：\n` + hits.slice(0, 200).map(h => `第 ${h.i + 1} 頁：${clContext(h)}${h.ocr ? '（掃描頁的文字）' : ''}`).join('\n') + (hits.length > 200 ? `\n…還有 ${hits.length - 200} 處` : '')};
+  },
+  async pdf_replace(a){
+    const repl = String(a.replacement ?? ''), {hits, o, q} = await clSearch(a);
+    if (!hits.length) return {text:`找不到「${q}」，沒有取代`};
+    if (REPLACING) throw new Error('PDF 工作台正在取代別的文字，請稍後再試');
+    REPLACING = true; let n;
+    try { n = await replaceNow(hits, repl, o, q); } finally { REPLACING = false; }
+    if (!n) throw new Error(hits.every(h => h.ocr) ? '這些是掃描頁上的文字，不能取代' : '這些文字無法取代');
+    scrollToPage(hits[0].i);
+    return {text:`已把「${q}」取代成「${repl}」，共 ${n} 處（第 ${[...new Set(hits.map(h => h.i + 1))].join('、')} 頁）。可以用 pdf_undo 復原。`};
+  },
+  async pdf_highlight(a){
+    const color = /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : '#ffd43b', {hits, q} = await clSearch(a);
+    if (!hits.length) return {text:`找不到「${q}」，沒有標示`};
+    const marks = hits.flatMap(h => h.boxes.filter(b => b && b.w > 0.5 && b.h > 0.5).map(b => [h.i, b]));
+    await mutate(`Claude：已標示「${q}」${hits.length} 處`, doc => { marks.forEach(([i, b]) => highlightAnnot(doc, i, b, color)); });
+    scrollToPage(hits[0].i);
+    return {text:`已用螢光筆標示「${q}」共 ${hits.length} 處（第 ${[...new Set(hits.map(h => h.i + 1))].join('、')} 頁）。`};
+  },
+  async pdf_add_text(a){
+    clNeed();
+    const i = clPage(a.page), pg = S.pages[i], text = String(a.text ?? '');
+    if (!text.trim()) throw new Error('文字是空的');
+    const size = a.size == null ? 12 : Number(a.size); if (!(size >= 4 && size <= 200)) throw new Error('字級要在 4～200 pt 之間');
+    const color = /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color.toLowerCase() : '#000000';
+    const lines = text.split(/\r\n|\r|\n/).map(t => [{text:t, size, color, bold:!!a.bold, italic:false, underline:false, bg:'', font:''}]), box = {boxBg:'', border:false};
+    const r = await renderTextBox(lines, box), x = clCoord(a.x, 'x', Math.max(0, pg.w - r.w)), y = clCoord(a.y, 'y', Math.max(0, pg.h - r.h));
+    await mutate('Claude：已加上文字方塊', async doc => {
+      addAnnot(doc, i, {Type:'Annot', Subtype:'FreeText', T:PDFHexString.fromText(AUTHOR), CreationDate:nowStr(), Subj:PDFHexString.fromText('文字方塊'), F:4,
+        ...(await textBoxFields(doc, i, lines, box, r, {x, y, w:r.w, h:r.h}))});
+    });
+    scrollToPage(i);
+    return {text:`已在第 ${i + 1} 頁加上文字方塊，左上角在 (${x.toFixed(0)}, ${y.toFixed(0)})，大小 ${r.w.toFixed(0)}×${r.h.toFixed(0)} pt。`};
+  },
+  async pdf_add_note(a){
+    clNeed();
+    const i = clPage(a.page), pg = S.pages[i], text = String(a.text ?? '');
+    if (!text.trim()) throw new Error('便利貼的文字是空的');
+    const x = clCoord(a.x, 'x', pg.w - 20), y = clCoord(a.y, 'y', pg.h - 20);
+    await createNote(i, {x, y, w:20, h:20}, text, {x:Math.min(x + 24, Math.max(0, pg.w - 220)), y:Math.min(y, Math.max(0, pg.h - 140)), w:200, h:120}, {label:'Claude：已新增便利貼'});
+    scrollToPage(i);
+    return {text:`已在第 ${i + 1} 頁 (${x.toFixed(0)}, ${y.toFixed(0)}) 加上便利貼。`};
+  },
 };
+// a position (pt from the page's top-left corner): a number from 0, moved in so that what is placed stays on the page
+const clCoord = (v, name, max) => { const n = Number(v); if (!Number.isFinite(n) || n < 0) throw new Error(`${name} 要是 0 以上的數字（單位 pt，從頁面左上角算）`); return Math.min(n, max); };
+// the places a query is found, as 尋找 finds them (a scan's hidden text is marked ocr): {hits:[{i, li, s, e, boxes, ctx, line, ocr}], o, q}
+async function clSearch({query, match_case, whole_word, pages}){
+  clNeed();
+  const q = String(query ?? ''); if (!q.trim()) throw new Error('要找的文字是空的');
+  const o = {case:!!match_case, word:!!whole_word, width:true}, nq = normFind(q, o), hits = [];
+  for (const i of pages ? clPages(pages) : [...S.pages.keys()]) {
+    const lines = await findLines(i);
+    for (let li = 0; li < lines.length; li++) {
+      const ln = lines[li], t = normFind(ln.text, o);
+      for (let k = t.indexOf(nq); k >= 0; k = t.indexOf(nq, k + Math.max(1, nq.length))) {
+        if (o.word && (wordCh(ln.text[k - 1]) || wordCh(ln.text[k + nq.length]))) continue;
+        hits.push({i, li, s:k, e:k + nq.length, ocr:await lineHidden(i, ln), boxes:hitBoxes(ln, k, k + nq.length), ctx:ln.text, line:ln});
+      }
+    }
+  }
+  return {hits, o, q};
+}
+const clContext = h => { const a = Math.max(0, h.s - 20), b = Math.min(h.ctx.length, h.e + 20); return (a ? '…' : '') + h.ctx.slice(a, h.s) + '【' + h.ctx.slice(h.s, h.e) + '】' + h.ctx.slice(h.e, b) + (b < h.ctx.length ? '…' : ''); };
 async function runClaudeTool(tool, args){
   const f = CLAUDE_TOOLS[tool]; if (!f) return {error:'PDF 工作台還沒有這個工具：' + tool};
   if (CL_EDIT.has(tool) && ($('#mask').classList.contains('show') || TBE || NP))

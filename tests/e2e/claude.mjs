@@ -99,5 +99,46 @@ r = await tool(s, 'pdf_status');
 check('允許 off: 「關閉」; the extension says it cannot reach PDF 工作台', /關閉/.test(st2) && r.isError && /連不上 PDF 工作台/.test(r.text), {st2, text:r.text});
 s.close();
 
+// ---- part 2: editing tools -----------------------------------------------------------------------------------------
+await openClaude(); await win.click('#clOn'); await win.waitForTimeout(800);
+const MCPB2 = path.join(TMP, 'pdf2.mcpb'); await answerSave(MCPB2); await win.click('[data-cl="mcpb"]');
+for (let k = 0; k < 40 && !fs.existsSync(MCPB2); k++) await win.waitForTimeout(250);
+const man2 = JSON.parse(unzip(fs.readFileSync(MCPB2))['manifest.json'].toString('utf8'));
+await closeModal();
+const s2 = mcp({PDFE_PORT:String(man2.user_config.port.default), PDFE_KEY:man2.user_config.key.default});
+await s2.request('initialize', {protocolVersion:'2025-03-26', capabilities:{}, clientInfo:{name:'test', version:'1'}}); s2.notify('notifications/initialized');
+const undos = () => Ev(() => window.__pdfapp.S.undo.length);
+const anns = i => Ev(async i => (await window.__pdfapp.getAnns(i)).map(a => ({sub:a.subtype, contents:a.contents})), i);
+const pageText = i => Ev(async i => { const S = window.__pdfapp.S, tc = await S.pages[i].page.getTextContent(); return tc.items.map(t => t.str).join(' '); }, i);
+r = await tool(s2, 'pdf_find', {query:'Sample'});
+check('pdf_find: each place with its page and the words around it', !r.isError && /第 1 頁：/.test(r.text) && /【Sample】/.test(r.text), r.text.slice(0, 200));
+let u0 = await undos();
+r = await tool(s2, 'pdf_replace', {query:'Sample', replacement:'Example', pages:'1'}); await win.waitForTimeout(1500);
+const t1 = await pageText(0);
+check('pdf_replace (page 1): the page\'s own text changed, in one undo step', !r.isError && /已把「Sample」取代成「Example」/.test(r.text) && /Example/.test(t1) && !/Sample/.test(t1) && (await undos()) === u0 + 1, {text:r.text, t1:t1.slice(0, 120)});
+u0 = await undos();
+r = await tool(s2, 'pdf_highlight', {query:'Example', color:'#74c0fc'}); await win.waitForTimeout(1200);
+const hl = (await anns(0)).filter(a => a.sub === 'Highlight');
+check('pdf_highlight: the found text is marked (one undo step)', !r.isError && hl.length >= 1 && (await undos()) === u0 + 1, {text:r.text, hl:hl.length});
+u0 = await undos();
+r = await tool(s2, 'pdf_add_text', {page:1, x:72, y:300, text:'Claude 加的字\n第二行', size:14, color:'#e03131', bold:true}); await win.waitForTimeout(1500);
+const ft = (await anns(0)).filter(a => a.sub === 'FreeText');
+check('pdf_add_text: a text box with that text on page 1 (one undo step)', !r.isError && ft.some(a => a.contents === 'Claude 加的字\n第二行') && (await undos()) === u0 + 1, {text:r.text, ft});
+r = await tool(s2, 'pdf_add_note', {page:2, x:100, y:120, text:'請確認這一段'}); await win.waitForTimeout(1500);
+const nt = (await anns(1)).filter(a => a.sub === 'Text');
+check('pdf_add_note: a sticky note with that text on page 2', !r.isError && nt.some(a => a.contents === '請確認這一段'), {text:r.text, nt});
+const u1 = await undos();
+r = await tool(s2, 'pdf_undo'); await win.waitForTimeout(1500);
+check('pdf_undo: the last change (the note) goes', !r.isError && (await undos()) === u1 - 1 && !(await anns(1)).some(a => a.sub === 'Text'), r.text);
+// busy (a window open) and a wrong page: an error, nothing changed
+await Ev(() => { window.__pdfapp.actions.settings(); }); await win.waitForTimeout(600);
+u0 = await undos();
+r = await tool(s2, 'pdf_add_text', {page:1, x:72, y:400, text:'不該出現'});
+const busyOk = r.isError && /正在忙/.test(r.text) && (await undos()) === u0;
+await closeModal();
+r = await tool(s2, 'pdf_add_note', {page:99, x:10, y:10, text:'x'});
+check('a window open: 「PDF 工作台正在忙」 and nothing added; page 99: an error that says the range, nothing added', busyOk && r.isError && /1～\d/.test(r.text) && (await undos()) === u0, {busyOk, text:r.text});
+s2.close();
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
