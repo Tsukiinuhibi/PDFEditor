@@ -10561,7 +10561,8 @@ function linkLook(doc, t, i, box){
 // drawn (ours are pictures of their text): their text comes back per page as {rect (PDF space), lines: [[runs]]} — ours
 // from PDFE_RT, others' from /Contents. With realText (for Word, which reads text and not pictures) ours are written onto
 // the page as real text instead (realTextBox), or drawn as their picture when that cannot be done, and the text 修改原文
-// replaced (kept invisible) goes. The document is not touched. → {bytes, boxes: [[text box] per chosen page]}
+// replaced (kept invisible) goes. The document is not touched. → {bytes, boxes: [[text box] per chosen page], skipped: how many
+// annotations had no appearance to draw}
 async function flattenForExport(pages, {realText = false} = {}){
   const doc = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false}), ctx = doc.context;
   const keep = [...new Set(pages)].sort((a, b) => a - b);
