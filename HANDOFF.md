@@ -152,6 +152,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 啟動時 `checkWhatsNew(version, usedBefore)`：比對 localStorage `pdfeditor.seenversion.v1`（每次啟動都記下目前版本）。比記錄新 → 視窗「已更新到 vX.Y.Z」列出之後的每一版，〔全部版本記錄〕改列全部；沒有記錄但用過（`PROFILE_USED`：模組一開始 localStorage 就有 `pdfeditor.` 的鍵；或主程序說 Chromium 的 `Preferences` 檔在啟動前就存在）→ 這版和前一版；新安裝、裝回舊版、同一版 → 不跳。別的對話框開著（`#mask.show`）時每 0.5 秒再試。
 - 設定 → 軟體更新：〔更新內容〕在設定視窗裡展開全部版本（程式一次只開一個對話框）。
 - 下載好、還沒重新啟動時：主程序 `pointFeed` 記下 Forgejo 最新發佈（`latestRelease`），electron-updater 沒給更新內容（`latest.yml` 沒有）時用它的 `body`，提示列〔查看更新內容〕和設定頁才有內容。開發模式沒有自動更新，這段沒有自動測試。
+- v1.0.51 的修正：`notesHTML` 也把段落裡的「##」當小標題，縮排兩格的「- 」是上一項底下的清單（發佈說明現在有用到）；記不住看過的版本（`localStorage` 寫不進去）時不顯示視窗（不然每次開都會跳出來）；主程式的 `notesText` 只拿掉 HTML 標籤，「<5 MB>」這類文字留著。
 
 ### 3.9.3 便利貼：人員名單、換作者、右鍵、複製貼上（v1.0.30）
 - 人員名單（設定 → 人員）：localStorage `pdfeditor.people.v1` `{names, def}`。`PEOPLE` 在模組讀取時載入（存的不是名字清單就是 `null`），`seedPeople(user)` 在啟動拿到電腦帳號（`DESK.info().user`，瀏覽器是「使用者」）時建立。預設的名字就是 `AUTHOR`：所有新註解的 `/T`。`addPerson`／`removePerson`（至少留一個，刪掉預設時第一個接手）／`setDefaultPerson`。

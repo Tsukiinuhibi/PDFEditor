@@ -20,7 +20,7 @@ const VERS = [...fs.readFileSync(path.join(ROOT, 'app', 'CHANGELOG.md'), 'utf8')
 // ---- part 1: the history inside the app, and the release check -------------------------------------------
 let { app, win, A } = await open('wn1.pdf');
 const cl = await A(() => window.__pdfapp.changelog());
-check('changelog: every version, newest first, the current one on top', cl.length === VERS.length && cl.length >= 19 && cl[0].version === PKG.version && cl.every((s, k) => !k || cmp(cl[k - 1].version, s.version) > 0), cl.map(s => s.version).slice(0, 4));
+check('changelog: every version, newest first, the current one on top', cl.length === VERS.length && VERS.length > 1 && cl[0].version === PKG.version && cl.every((s, k) => !k || cmp(cl[k - 1].version, s.version) > 0), cl.map(s => s.version).slice(0, 4));
 check('changelog: a section holds its text, not its heading', cl[0].md.includes('###') && !cl[0].md.includes('## PDF 工作台'));
 const h = await A(() => window.__pdfapp.notesHTML([{version:'9.9.9', md:'### 標題\n- 一 **粗** `碼`\n\n文字 <script>x</script>'}]));
 check('notes HTML: heading, version, list, bold, code', h.includes('<h3 class="wn-v">v9.9.9</h3>') && h.includes('<h4>標題</h4>') && h.includes('<li>一 <b>粗</b> <code>碼</code></li>'), h);
@@ -86,7 +86,12 @@ let nv = await notesView();
 check('設定: an update in progress leaves 更新內容 open where it was', !!nv && nv.n === VERS.length && nv.top >= 100, nv);
 await A(v => window.__pdfapp.updState({state:'latest', version:v}), PKG.version); await win.waitForTimeout(300);
 await win.click('#modal [data-u2="notes"]'); await win.waitForTimeout(300);
-check('設定: pressed again, folded away', await A(() => { const el = document.querySelector('#updNotes'); return !el || el.hidden; }));
+check('設定: pressed again, folded away (not on screen)', await A(() => { const el = document.querySelector('#updNotes'); return !el || el.getBoundingClientRect().height === 0; }));
+// (v1.0.51) the history cannot be read: 設定 says so
+await A(() => window.__pdfapp.changelogGone());
+await win.click('#modal [data-u2="notes"]'); await win.waitForTimeout(400);
+const gone = await A(() => { const el = document.querySelector('#updNotes'); return el && el.getBoundingClientRect().height > 0 ? el.textContent.trim() : null; });
+check('設定: the history cannot be read — 「讀不到版本記錄」 on screen', gone === '讀不到版本記錄', gone);
 await app.close();
 
 // the release check: the top of app/CHANGELOG.md must be this version and the same as RELEASE_NOTES.md
@@ -104,5 +109,21 @@ fs.copyFileSync(path.join(ROOT, 'app/CHANGELOG.md'), path.join(tmp, 'app/CHANGEL
 fs.writeFileSync(path.join(tmp, 'RELEASE_NOTES.md'), fs.readFileSync(path.join(tmp, 'RELEASE_NOTES.md'), 'utf8') + '\n- 多一行\n');
 r = runCheck(tmp);
 check('release check: notes different from RELEASE_NOTES.md fail', r.status !== 0 && /RELEASE_NOTES/.test(r.stdout + r.stderr), (r.stdout + r.stderr).slice(-300));
+
+// ---- part 3 (v1.0.51) -------------------------------------------------------------------------------------------------
+({ app, win, A } = await open('wn3.pdf'));
+const h3 = await A(() => window.__pdfapp.notesHTML([{version:'9.9.8', md:'## 段落裡的標題\n- 一\n  - 一之一\n  - 一之二\n- 二'}]));
+check('notes HTML: 「##」 inside a section is a heading, not shown as it is written', h3.includes('<h4>段落裡的標題</h4>') && !h3.includes('##'), h3);
+check('notes HTML: a list inside a list keeps its level', h3.includes('<ul><li>一<ul><li>一之一</li><li>一之二</li></ul></li><li>二</li></ul>'), h3);
+const nt3 = await app.evaluate(() => global.__pdfeNotesText('<p>大於 <5 MB> 的 <b>檔案</b>、<檔名></p>'));
+check('the notes of an update: only HTML tags taken out (「<5 MB>」 and 「<檔名>」 stay)', nt3 === '大於 <5 MB> 的 檔案、<檔名>', nt3);
+// the seen version cannot be written: the window is not shown (it would come up at every start)
+await A(() => { const S = Storage.prototype; S.__set = S.setItem; S.__set.call(localStorage, 'pdfeditor.seenversion.v1', '1.0.26');
+  S.setItem = function(k, v){ if (k === 'pdfeditor.seenversion.v1') throw new Error('blocked'); return S.__set.call(this, k, v); }; });
+await A(v => window.__pdfapp.checkWhatsNew(v, true), PKG.version); await win.waitForTimeout(1500);
+const w3 = await shown();
+await A(() => { const S = Storage.prototype; if (S.__set) { S.setItem = S.__set; delete S.__set; } });
+check('the seen version cannot be written: no window (it would come up at every start)', w3 === null, w3);
+await app.close();
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');

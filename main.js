@@ -427,10 +427,13 @@ function initUpdater() {
   setTimeout(quietCheck, 4000);
   setInterval(quietCheck, 4 * 3600 * 1000);
 }
+global.__pdfeNotesText = n => notesText(n);   // (tests)
 function notesText(n) {
   if (!n) return '';
   const s = Array.isArray(n) ? n.map(x => x.note || '').join('\n') : String(n);
-  return s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|li|h\d)>/gi, '\n').replace(/<li>/gi, '• ').replace(/<[^>]+>/g, '').replace(/\n{3,}/g, '\n\n').trim();
+  return s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|li|h\d)>/gi, '\n').replace(/<li>/gi, '• ')
+    .replace(/<\/?[a-zA-Z][\w:-]*(\s[^<>]*)?\/?>/g, '')   // (HTML tags only: 「<5 MB>」 or 「<檔名>」 in the text stay)
+    .replace(/\n{3,}/g, '\n\n').trim();
 }
 ipcMain.handle('update:state', () => (isDev ? { state: 'dev' } : updateState));
 ipcMain.handle('update:check', async () => {

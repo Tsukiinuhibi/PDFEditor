@@ -12121,20 +12121,27 @@ function cmpVersion(a, b){
   for (let k = 0; k < Math.max(x.length, y.length); k++) { const d = (x[k] || 0) - (y[k] || 0); if (d) return d; }
   return 0;
 }
-// the notes as HTML: "###" headings, "- " lists, paragraphs, **bold** and `code`; anything else stays plain text
+// the notes as HTML: "##" / "###" headings (the version heading is split off already), "- " lists (indented two spaces:
+// a list inside the item above), paragraphs, **bold** and `code`; anything else stays plain text
 function notesHTML(sections){
   const inline = v => esc(v).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>');
   return sections.map(sec => {
-    let html = `<h3 class="wn-v">v${esc(sec.version)}</h3>`, list = false;
+    let html = `<h3 class="wn-v">v${esc(sec.version)}</h3>`, depth = 0;   // (lists open)
+    const close = to => { while (depth > to) { html += '</li></ul>'; depth--; } };
     for (const raw of String(sec.md).split('\n')) {
-      const line = raw.trim(), li = /^[-*]\s+(.*)$/.exec(line);
-      if (li) { if (!list) { html += '<ul>'; list = true; } html += `<li>${inline(li[1])}</li>`; continue; }
-      if (list) { html += '</ul>'; list = false; }
-      const h = /^#{3,}\s+(.*)$/.exec(line);
+      const li = /^(\s*)[-*]\s+(.*)$/.exec(raw);
+      if (li) {
+        const lv = Math.min(Math.floor(li[1].replace(/\t/g, '  ').length / 2) + 1, depth + 1);   // (one level deeper at most)
+        if (lv > depth) { html += '<ul>'; depth = lv; } else { close(lv); html += '</li>'; }
+        html += `<li>${inline(li[2])}`; continue;
+      }
+      close(0);
+      const line = raw.trim(), h = /^#{2,}\s+(.*)$/.exec(line);
       if (h) html += `<h4>${inline(h[1])}</h4>`;
       else if (line && !/^<!--.*-->$/.test(line)) html += `<p>${inline(line)}</p>`;
     }
-    return html + (list ? '</ul>' : '');
+    close(0);
+    return html;
   }).join('');
 }
 // which versions to show after starting version `current` (versions: newest first): those since the one last seen;
@@ -12148,7 +12155,7 @@ function whatsNewList({current, seen, used, versions}){
   if (seen) return cmpVersion(seen, current) < 0 ? upTo.filter(v => cmpVersion(v, seen) > 0) : [];
   return used ? upTo.slice(0, 2) : [];
 }
-const markSeen = v => { try { localStorage.setItem(SEEN_KEY, v); } catch (_) {} };
+const markSeen = v => { try { localStorage.setItem(SEEN_KEY, v); return true; } catch (_) { return false; } };
 // the version is recorded once its notes are on screen (notes waiting behind another window are not lost if the
 // program is closed meanwhile), or at once when there is nothing to show
 async function checkWhatsNew(current, usedBefore = false){
@@ -12165,7 +12172,7 @@ function showWhatsNew(current, list){
     if (later()) return;
     const body = document.createElement('div'); body.className = 'wn';
     body.innerHTML = notesHTML(all.filter(x => list.includes(x.version)));
-    markSeen(current);
+    if (!markSeen(current)) return;   // (what was seen cannot be remembered: not shown, or it would come up at every start)
     openModal({title:`已更新到 v${current}`, body, width:560, buttons:[
       {label:'全部版本記錄', handler:el => { body.innerHTML = notesHTML(all); body.scrollTop = 0; el.remove(); return undefined; }},
       {spacer:true}, {label:'知道了', value:true, primary:true}]});
@@ -12342,7 +12349,7 @@ window.__pdfapp = {
     return out;
   },
   clip:() => ({last:LAST_CLIP, note:NOTE_CLIP ? {contents:NOTE_CLIP.contents, author:NOTE_CLIP.author} : null}),
-  changelog:url => loadChangelog(url), notesHTML, whatsNewList, showWhatsNew, checkWhatsNew, updState:st => { UPD.state = st; renderUpdate(); },
+  changelog:url => loadChangelog(url), changelogGone:() => { changelogP = Promise.resolve([]); }, notesHTML, whatsNewList, showWhatsNew, checkWhatsNew, updState:st => { UPD.state = st; renderUpdate(); },
   fontIdState:() => { const p = OCR.panel; if (!p) return null;
     const row = r => { const b = r.querySelector('button[data-fa]'), pct = r.querySelector('.fi-pct');
       return {key:r.dataset.key || '', label:(r.querySelector('.fi-label') || r.querySelector('.fi-name') || {}).textContent || '', src:(r.querySelector('.fi-src') || {}).textContent || '',
