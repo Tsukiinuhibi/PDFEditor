@@ -3841,7 +3841,7 @@ function updateClipUI(){
 }
 function copyNote(i, a, msg = '已複製便利貼，按 Ctrl+V 貼到滑鼠所在的位置'){
   const pb = a.popupBox;
-  NOTE_CLIP = {contents:a.contents || '', author:a.author || AUTHOR, i, x:a.x, y:a.y, pw:pb ? pb.w : 300 / PX, ph:pb ? pb.h : 170 / PX};
+  NOTE_CLIP = {contents:a.contents || '', author:a.author || '', i, x:a.x, y:a.y, pw:pb ? pb.w : 300 / PX, ph:pb ? pb.h : 170 / PX};   // (no author: the copy has none either)
   LAST_CLIP = 'note';
   try { navigator.clipboard.writeText(NOTE_CLIP.contents).catch(() => {}); } catch (_) {}   // its text, for other programs
   updateClipUI();
@@ -3865,6 +3865,7 @@ async function pasteNote(){
     i = S.current;
     const pg = S.pages[i];
     icon = {x:clamp(clip.x + 16, 0, pg.w - 20), y:clamp(clip.y + 16, 0, pg.h - 20), w:20, h:20};
+    clip.x = icon.x; clip.y = icon.y;   // (the next one a step further, not on the same spot)
   }
   const box = {...noteDefaults(icon, S.pages[i]), w:clip.pw, h:clip.ph};
   await createNote(i, icon, clip.contents, box, {author:clip.author, label:'已貼上便利貼'});
@@ -3901,8 +3902,8 @@ async function pasteClip(at){
   }, {scrollToCurrent:true, highlight:{from:at, count:clip.count, label:'貼上的頁面'}});
 }
 const ctx = $('#ctx');
-function hideCtx(){ ctx.style.display = 'none'; ctx.onpointerdown = null; }
-document.addEventListener('pointerdown', e => { if (!ctx.contains(e.target)) hideCtx(); }, true);
+function hideCtx(){ ctx.style.display = 'none'; ctx.onpointerdown = null; delete ctx.dataset.for; }
+document.addEventListener('pointerdown', e => { if (!ctx.contains(e.target) && !(ctx.dataset.for === 'nau' && e.target.closest && e.target.closest('.nau'))) hideCtx(); }, true);   // (the author button closes its own list on its click)
 let ctxShownAt = 0;
 viewer.addEventListener('scroll', () => { if (performance.now() - ctxShownAt > 600) hideCtx(); });   // ignore the scroll a right-click itself causes
 function showPageMenu(e, i){
@@ -6121,6 +6122,7 @@ let PEOPLE = (() => {   // {names, def}, or null until made (nothing stored, or 
   } catch (_) { return null; }
 })();
 const savePeople = () => { try { localStorage.setItem(PEOPLE_KEY, JSON.stringify(PEOPLE)); } catch (_) {} };
+try { if (PEOPLE && localStorage.getItem(PEOPLE_KEY) !== JSON.stringify(PEOPLE)) savePeople(); } catch (_) {}   // (tidied when read: written back tidied)
 const applyPeople = () => { if (PEOPLE) AUTHOR = PEOPLE.def; };
 applyPeople();
 function seedPeople(user){
@@ -6192,14 +6194,14 @@ function openNotePopup(i, note){
     el.appendChild(pend);
   }
   const ta = pop.querySelector('textarea'); ta.value = note.contents || '';
-  const who = note.author || AUTHOR;
+  const who = note.id ? note.author || '' : note.author || AUTHOR;   // (a note another program wrote may have no author: it stays without one until one is picked)
   NP = {i, note, box, pop, call, pend, ta, orig:note.contents || '', moved:false, author:who, origAuthor:who};
   paintNoteAuthor();
   positionNote();
   const ro = new ResizeObserver(() => { if (NP && NP.pop === pop) { NP.moved = NP.moved || NP.resizedOnce; NP.resizedOnce = true; positionNote(); } });
   ro.observe(pop); NP.ro = ro;
   pop.querySelector('.nx').onclick = () => closeNote(true);
-  pop.querySelector('.nau').onclick = () => showNoteAuthorMenu();
+  pop.querySelector('.nau').onclick = () => { if (ctx.style.display === 'block' && ctx.dataset.for === 'nau') { hideCtx(); if (NP) NP.ta.focus(); } else showNoteAuthorMenu(); };   // (pressed again: closed)
   pop.querySelector('.ndel').onclick = async () => {   // a new note is dropped, a saved one deleted
     if (!NP) return;
     const {i, note} = NP;
@@ -6223,17 +6225,17 @@ function openNotePopup(i, note){
 }
 function paintNoteAuthor(){
   const b = NP && NP.pop.querySelector('.nau'); if (!b) return;
-  b.innerHTML = `<span class="nau-n">${esc(NP.author)}</span><span class="nau-a">▾</span>`;
+  b.innerHTML = `<span class="nau-n">${NP.author ? esc(NP.author) : '（沒有作者）'}</span><span class="nau-a">▾</span>`;
 }
 // the note's author: the people list (its author first, ticked, even when not on the list), or another name typed in
 // (which joins the list); the choice is written when the note closes
 function showNoteAuthorMenu(){
   if (!NP) return;
-  const cur = NP.author, names = [cur, ...(PEOPLE ? PEOPLE.names : []).filter(n => n !== cur)];
+  const cur = NP.author, names = [...(cur ? [cur] : []), ...(PEOPLE ? PEOPLE.names : []).filter(n => n !== cur)];
   ctx.innerHTML = `<div class="hd">作者</div>
     ${names.map(n => `<button data-au="${esc(n)}"${n === cur ? ' class="on"' : ''}><span class="ck">${n === cur ? '✓' : ''}</span>${esc(n)}</button>`).join('')}
     <hr><div class="nau-other"><input id="nauOther" class="ex-in" placeholder="其他名字…" maxlength="40" spellcheck="false"></div>`;
-  ctx.style.display = 'block'; ctxShownAt = performance.now();
+  ctx.style.display = 'block'; ctxShownAt = performance.now(); ctx.dataset.for = 'nau';
   const r = NP.pop.querySelector('.nau').getBoundingClientRect(), w = ctx.offsetWidth, h = ctx.offsetHeight;
   ctx.style.left = clamp(r.left, 8, innerWidth - w - 8) + 'px';
   ctx.style.top = (r.bottom + 4 + h > innerHeight - 8 ? Math.max(8, r.top - 4 - h) : r.bottom + 4) + 'px';
@@ -6291,7 +6293,7 @@ async function createNote(i, icon, text, box, {author = AUTHOR, label = '已新�
   return mutate(label, doc => {
     const g = visToPdf(i, icon), now = nowStr();
     const ap = formAP(doc, NOTE_ICON_OPS, 20, 20, g.rot);
-    const ref = addAnnot(doc, i, {Type:'Annot', Subtype:'Text', Rect:g.rect, Contents:PDFHexString.fromText(text), T:PDFHexString.fromText(author),
+    const ref = addAnnot(doc, i, {Type:'Annot', Subtype:'Text', Rect:g.rect, Contents:PDFHexString.fromText(text), ...(author ? {T:PDFHexString.fromText(author)} : {}),
       M:now, CreationDate:now, Name:'Comment', Subj:PDFHexString.fromText('便利貼'), C:[1, 0.92, 0.23], F:4, Open:false, AP:{N:ap}});
     addPopupAnnot(doc, i, ref, box);
   }, {by});
@@ -12230,7 +12232,8 @@ $('#updBar').addEventListener('click', e => {
 if (!DESK) seedPeople('');
 if (DESK) {
   $('#grpApp').style.display = '';
-  DESK.info().then(info => { UPD.info = info; seedPeople(info.user); $('#stVer').textContent = 'v' + info.version; $('#stVer').title = '檢查更新'; checkWhatsNew(info.version, !!info.usedBefore); });
+  DESK.info().then(info => { UPD.info = info; seedPeople(info.user); $('#stVer').textContent = 'v' + info.version; $('#stVer').title = '檢查更新'; checkWhatsNew(info.version, !!info.usedBefore); },
+    () => seedPeople(''));   // (the computer's user name not readable: the list is made all the same)
   $('#stVer').addEventListener('click', () => actions.checkUpdate());
   DESK.update.on(st => {
     const prev = UPD.state.state; UPD.state = st; renderUpdate();

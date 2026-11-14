@@ -245,5 +245,65 @@ await rclick(0, (await anns(0, 'Text'))[0]); await win.click('#ctx [data-c="copy
 await win.click('#bPaste'); await win.waitForTimeout(2500);
 check('〔貼上頁〕 pastes pages even when a note was copied last', (await nPages()) === np0 + 1 && (await anns(0, 'Text')).length === t0, {n:await nPages(), np0});
 
+// ---- part 4 (v1.0.51) -------------------------------------------------------------------------------------------------
+await win.keyboard.press('Escape'); await tool('select');
+const q4def = (await people()).def;
+// a note another program wrote: no author (no /T) and no appearance of its own
+const q4foreign = (t, rect, author) => A(([t, rect, author]) => window.__pdfapp.mutate('test: a note from another program', doc => {
+  const ctx = doc.context, N = PDFLib.PDFName.of, page = doc.getPage(0);
+  const ref = ctx.register(ctx.obj({Type:'Annot', Subtype:'Text', Rect:rect, Contents:PDFLib.PDFHexString.fromText(t), F:4, ...(author ? {T:PDFLib.PDFHexString.fromText(author)} : {})}));
+  let an = page.node.lookup(N('Annots')); if (!an) { an = ctx.obj([]); page.node.set(N('Annots'), an); } an.push(ref);
+}), [t, rect, author]);
+await q4foreign('別的程式', [400, 100, 420, 120]); await win.waitForTimeout(1500);
+const q4fn = await byText(0, '別的程式');
+await openNote(0, q4fn);
+const q4au = await author();
+await win.click('.npop .nau'); await win.waitForTimeout(300);
+const q4m = await auMenu();
+check('a note with no author (another program, no appearance): it opens; no name shown as its author, none ticked', !!q4fn && !!q4au && !q4au.text.includes(q4def) && !!q4m && q4m.items.every(x => !x.on), {q4fn, q4au, q4m, q4def});
+if (q4m) { await win.click(`#ctx [data-au="${q4def}"]`); await win.waitForTimeout(200); }
+await win.keyboard.press('Escape'); await win.waitForTimeout(1500);
+check('…picking the default name for it: written as its author', (await byText(0, '別的程式'))?.author === q4def, await byText(0, '別的程式'));
+// a copy of a note with no author stays without one
+await q4foreign('沒有作者', [440, 100, 460, 120]); await win.waitForTimeout(1500);
+const q4na = await byText(0, '沒有作者');
+await rclick(0, q4na); await win.click('#ctx [data-c="copy"]'); await win.waitForTimeout(300);
+const q4n = (await anns(0, 'Text')).length;
+await win.mouse.move(...(await see(0, 300, 200))); await win.keyboard.press('Control+v'); await win.waitForTimeout(2000);
+const q4pasted = (await anns(0, 'Text')).filter(x => x.contents === '沒有作者' && x.id !== q4na.id);
+check('a copy of a note with no author: pasted without one (not the default name)', (await anns(0, 'Text')).length === q4n + 1 && q4pasted.length === 1 && !q4pasted[0].author, q4pasted);
+// Ctrl+V again and again with the mouse off the page: each copy a step further
+await win.mouse.move(6, 6); await win.waitForTimeout(200);
+for (let k = 0; k < 3; k++) { await win.keyboard.press('Control+v'); await win.waitForTimeout(1800); }
+const q4xs = (await anns(0, 'Text')).filter(x => x.contents === '沒有作者' && x.id !== q4na.id).sort((p, q) => parseInt(p.id) - parseInt(q.id)).map(x => Math.round(x.x));
+check('Ctrl+V three times with the mouse off the page: each copy a step further, not on one spot', q4xs.length === 4 && new Set(q4xs.slice(1)).size === 3, q4xs);
+// the author button closes its own open list
+const q4any = await byText(0, '別的程式');
+await openNote(0, q4any);
+await win.click('.npop .nau'); await win.waitForTimeout(300);
+const q4o1 = !!(await auMenu());
+await win.click('.npop .nau'); await win.waitForTimeout(300);
+const q4o2 = !!(await auMenu());
+check('the author button pressed again: its list closes', q4o1 && !q4o2, {q4o1, q4o2});
+await win.keyboard.press('Escape'); await win.waitForTimeout(800);
+// the note menu's header shows an author with < > as text
+await q4foreign('角括號', [480, 100, 500, 120], '<b>甲</b>'); await win.waitForTimeout(1500);
+await rclick(0, await byText(0, '角括號'));
+const q4hd = await A(() => { const h = document.querySelector('#ctx .hd'); return h ? {text:h.textContent, b:!!h.querySelector('b')} : null; });
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+check('the note menu\'s header: an author with < > shown as text', !!q4hd && q4hd.text.includes('<b>甲</b>') && !q4hd.b, q4hd);
+// a people list stored with spaces and a name twice: tidied when read, and written back tidied at once
+await app.evaluate(({dialog}) => { dialog.showMessageBoxSync = () => 0; });   // (unsaved changes: 「不儲存並關閉」 lets the page reload)
+await A(() => { window.__pdfapp.S.dirty = false; localStorage.setItem('pdfeditor.people.v1', JSON.stringify({names:[' 甲 ', '甲', '乙'], def:'乙'})); });
+await win.reload(); await win.waitForTimeout(3500);
+const q4st = await A(() => JSON.parse(localStorage.getItem('pdfeditor.people.v1')));
+check('a people list stored untidy: written back tidied when read', JSON.stringify(q4st) === JSON.stringify({names:['甲', '乙'], def:'乙'}), q4st);
+// the computer's user name cannot be read: the people list is still made
+await app.evaluate(({ipcMain}) => { ipcMain.removeHandler('app:info'); ipcMain.handle('app:info', () => { throw new Error('no info'); }); });
+await A(() => { window.__pdfapp.S.dirty = false; localStorage.removeItem('pdfeditor.people.v1'); });
+await win.reload(); await win.waitForTimeout(3500);
+const q4pf = await people();
+check('the user name cannot be read: the people list is still made (使用者), the default author', q4pf.names.length === 1 && q4pf.def === q4pf.names[0] && q4pf.author === q4pf.names[0], q4pf);
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});   // the document has unsaved changes: no asking
