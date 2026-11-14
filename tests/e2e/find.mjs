@@ -6,7 +6,7 @@ import { createRequire } from 'module';
 import path from 'path';
 import fs from 'fs';
 const require = createRequire(import.meta.url);
-const { PDFDocument, PDFName, PDFHexString } = require('pdf-lib');
+const { PDFDocument, PDFName, PDFHexString, StandardFonts, degrees } = require('pdf-lib');
 const fontkit = require('@pdf-lib/fontkit');
 
 let failed = 0;
@@ -210,6 +210,106 @@ await win.mouse.click(...bx); await win.waitForTimeout(600); await win.keyboard.
 await win.keyboard.press('Control+f'); await win.waitForTimeout(500);
 check('Ctrl+F while typing in a text box: left to the text box', !(await st()).open && !!(await Ev(() => window.__pdfapp.TBE())), await st());
 await win.keyboard.press('Escape'); await win.waitForTimeout(500);
+
+// ---- part 5 (v1.0.49): what replace really did, keys in the find boxes, full-width whole words, the 搜尋 tab, one message,
+// scans (blank, turned, stopped), a long file -------------------------------------------------------------------------------
+const d5 = await PDFDocument.create(); d5.registerFontkit(fontkit);
+const f5 = await d5.embedFont(fs.readFileSync(path.join(ROOT, 'app', 'fonts', 'NotoSansTC-Regular.ttf')), {subset:true}), h5 = await d5.embedFont(StandardFonts.Helvetica);
+const q1 = d5.addPage([595, 842]);
+q1.drawText('Alpha beta gamma', {x:72, y:700, size:16, font:h5});
+q1.drawText('ＡＢＣ and AB here', {x:72, y:500, size:16, font:f5});
+{ const src = await PDFDocument.create(), sh = await src.embedFont(StandardFonts.Helvetica), sp = src.addPage([300, 40]); sp.drawText('beta', {x:4, y:14, size:16, font:sh});
+  q1.drawPage(await d5.embedPage(sp), {x:72, y:600}); }   // text inside a form object: it cannot be taken out of the page
+d5.addPage([595, 842]);   // a blank page
+const scanImg = await d5.embedPng(Buffer.from(scan, 'base64'));
+for (let k = 0; k < 3; k++) d5.addPage([595, 842]).drawImage(scanImg, {x:0, y:0, width:595, height:842});
+const PDF5 = path.join(TMP, 'find5.pdf'); fs.writeFileSync(PDF5, await d5.save());
+await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), PDF5);
+await win.waitForFunction(() => window.__pdfapp.S.pages.length === 5 && /find5/.test(window.__pdfapp.S.name), null, {timeout:30000}); await win.waitForTimeout(1500);
+await Ev(() => window.__pdfapp.setTool('select')); await Ev(() => window.__pdfapp.scrollToPage(0)); await win.waitForTimeout(500);
+const setOpt = (k, on) => Ev(([k, on]) => { const b = document.querySelector(`#findBar [data-fo="${k}"]`); if (b.classList.contains('on') !== on) b.click(); }, [k, on]);
+const lastLabel = () => Ev(() => { const u = window.__pdfapp.S.undo; return u.length ? u[u.length - 1].label : ''; });
+await key('Control+f'); for (const [k, on] of [['case', false], ['word', false], ['width', false], ['scans', false]]) await setOpt(k, on);
+if (await Ev(() => document.querySelector('#findRepRow').hidden)) { await win.click('#findBar [data-fa="rep"]'); await win.waitForTimeout(300); }
+// replace all with nothing: one 「beta」 sits inside a form object and cannot be taken out
+await type('beta'); await setRepl(''); u0 = await undos();
+await press('#findBar [data-fa="all"]', 5000);
+const t5a = await toasts(), lab5 = await lastLabel(), u5 = await undos(), l5 = await lines(0);
+check('replace all where one place cannot be done (inside a form object): counted as done only where done, and the page of the other is named',
+  u5 === u0 + 1 && lab5 === '已取代 1 處' && /第 1 頁.*1 處無法取代|1 處無法取代.*第 1 頁/.test(t5a) && !l5.some(t => /Alpha beta gamma/.test(t)), {u5, u0, lab5, t5a, l5});
+await type('beta'); await setRepl(''); u0 = await undos();   // (only the one in the form object is left)
+await press('#findBar [data-fa="all"]', 2500);
+const t5b = await toasts();
+check('replace all where nothing can be done: no undo step, and it says so', (await undos()) === u0 && /無法取代/.test(t5b), {undos:await undos(), u0, t5b});
+// full-width letters with 全形＝半形 and 全字相符: AB is not a word inside ＡＢＣ
+await setOpt('width', true); await setOpt('word', true); await type('AB');
+const n5 = (await st()).n;
+await setOpt('width', false); await setOpt('word', false);
+check('全形＝半形 with 全字相符: 「AB」 is found on its own, not inside 「ＡＢＣ」', n5 === 1, n5);
+// keys in the find boxes: Ctrl+P is the program's; F3 and Ctrl+F work in the replace box; Ctrl+F works in another box
+await type('Alpha'); await Ev(() => document.querySelector('#findQ').focus());
+await win.keyboard.press('Control+p'); await win.waitForTimeout(1500);
+const prT = await Ev(() => document.querySelector('#mask').classList.contains('show') ? document.querySelector('#modal .mh').textContent : '');
+if (prT) { await win.keyboard.press('Escape'); await win.waitForTimeout(600); }
+const afterPrint = await st(); await Ev(() => document.querySelector('#findQ').focus()); await type('a'); await Ev(() => document.querySelector('#findR').focus());
+await win.keyboard.press('Control+f'); await win.waitForTimeout(300);
+const focusQ = await Ev(() => document.activeElement && document.activeElement.id);
+await Ev(() => document.querySelector('#findR').focus()); const cur5 = (await st()).cur;
+await win.keyboard.press('F3'); await win.waitForTimeout(400);
+const f3moved = (await st()).cur, n5b = (await st()).n;
+await key('Escape');
+await Ev(() => { const z = document.querySelector('#zIn'); z.focus(); z.select(); }); await win.keyboard.press('Control+f'); await win.waitForTimeout(500);
+const openedFromZoom = (await st()).open;
+check('in the find boxes Ctrl+P prints (not swallowed); in the replace box Ctrl+F goes to the find box and F3 steps; Ctrl+F from another box opens the bar',
+  /列印/.test(prT) && focusQ === 'findQ' && (n5b < 2 || f3moved !== cur5) && openedFromZoom, {prT, focusQ, cur5, f3moved, n5b, openedFromZoom, afterPrint:{open:afterPrint.open, q:afterPrint.q}});
+// the 搜尋 tab: with the bar closed it shows how to search, not an old list
+await type('Alpha'); await win.click('#side .tab[data-tab="find"]'); await win.waitForTimeout(600);
+const tabOpen = await Ev(() => document.querySelectorAll('#p-find .fd-hit').length);
+await key('Escape'); await win.waitForTimeout(400);
+const tabClosed = await Ev(() => ({hits:document.querySelectorAll('#p-find .fd-hit').length, note:(document.querySelector('#p-find .empty-note') || {}).textContent || ''}));
+check('the 搜尋 tab: the list while the bar is open; with the bar closed, how to search (no old list)', tabOpen >= 1 && tabClosed.hits === 0 && /Ctrl\+F/.test(tabClosed.note), {tabOpen, tabClosed});
+// the same message twice at once: shown once
+const same = await Ev(() => { window.__pdfapp.toast('同一個訊息只要一次', 'err'); window.__pdfapp.toast('同一個訊息只要一次', 'err'); return [...document.querySelectorAll('.toast')].filter(t => t.textContent === '同一個訊息只要一次').length; });
+check('the same message twice at once (e.g. a font notice for every line of a replace all): shown once', same === 1, same);
+// scans: a blank page is not sent to OCR; while the scans are read, stepping keeps the progress, and 〔停止〕 stops it
+await key('Control+f'); await setOpt('scans', true);
+const runs0 = await Ev(() => window.__pdfapp.ocrRuns());
+await type('Hello');
+await win.waitForFunction(() => /辨識掃描頁/.test((document.querySelector('#findN') || {}).textContent || ''), null, {timeout:20000, polling:50}).catch(() => {});
+await win.waitForFunction(() => window.__pdfapp.find().n > 0, null, {timeout:60000, polling:100}).catch(() => {});
+await win.keyboard.press('F3'); await win.waitForTimeout(150);
+const keepLabel = await label();
+const stopBtn = await Ev(() => { const b = document.querySelector('#findBar [data-fa="stopocr"]'); return !!b && !b.hidden; });
+if (stopBtn) await win.click('#findBar [data-fa="stopocr"]');
+await win.waitForTimeout(4000);
+const afterStop = {label:await label(), runs:(await Ev(() => window.__pdfapp.ocrRuns())) - runs0};
+check('scans being read: stepping keeps 「辨識掃描頁…」; 〔停止〕 stops it before every scan is read', /辨識掃描頁/.test(keepLabel) && stopBtn && !/辨識掃描頁/.test(afterStop.label) && afterStop.runs < 3, {keepLabel, stopBtn, afterStop});
+await setOpt('scans', false); await setOpt('scans', true); await type('Helloo'); await type('Hello');
+await win.waitForFunction(() => !/辨識掃描頁/.test((document.querySelector('#findN') || {}).textContent || ''), null, {timeout:90000, polling:200}).catch(() => {});
+const runsAll = (await Ev(() => window.__pdfapp.ocrRuns())) - runs0;
+check('every scan read once, the blank page never sent to OCR (3 scans → 3 runs)', runsAll === 3, runsAll);
+// a scan turned by 90°: read again (its old reading has the wrong places)
+const rBefore = await Ev(() => window.__pdfapp.ocrRuns());
+await key('Escape');
+await Ev(() => window.__pdfapp.mutate('已旋轉', doc => { const p = doc.getPage(2); p.setRotation(PDFLib.degrees((p.getRotation().angle + 90) % 360)); })); await win.waitForTimeout(1500);
+await key('Control+f'); await type('Hellp'); await type('Hello');
+await win.waitForFunction(() => !/辨識掃描頁/.test((document.querySelector('#findN') || {}).textContent || ''), null, {timeout:90000, polling:200}).catch(() => {});
+const rAfter = await Ev(() => window.__pdfapp.ocrRuns());
+check('a scan turned by 90°: read again by OCR', rAfter > rBefore, {rBefore, rAfter});
+await setOpt('scans', false); await key('Escape');
+// a long file (410 pages): a second search reads no page again (the line cache keeps them all)
+const d6 = await PDFDocument.create(), h6 = await d6.embedFont(StandardFonts.Helvetica);
+for (let k = 0; k < 410; k++) d6.addPage([300, 200]).drawText(`Long file page ${k + 1}`, {x:20, y:100, size:12, font:h6});
+const PDF6 = path.join(TMP, 'find6.pdf'); fs.writeFileSync(PDF6, await d6.save());
+await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), PDF6);
+await win.waitForFunction(() => window.__pdfapp.S.pages.length === 410, null, {timeout:60000}); await win.waitForTimeout(1500);
+await key('Control+f'); await type('page 405');
+await win.waitForFunction(() => { const f = window.__pdfapp.find(); return f.n === 1 && /405/.test(f.hits[0].text); }, null, {timeout:60000}).catch(() => {});
+const reads1 = await Ev(() => window.__pdfapp.findReads());
+await type('page 406'); await win.waitForFunction(() => { const f = window.__pdfapp.find(); return f.n === 1 && /406/.test(f.hits[0].text); }, null, {timeout:60000}).catch(() => {});
+const reads2 = await Ev(() => window.__pdfapp.findReads());
+check('a 410-page file: a second search reads no page again', reads2 === reads1, {reads1, reads2});
+await key('Escape');
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

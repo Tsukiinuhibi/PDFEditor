@@ -1020,7 +1020,7 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
     <div class="fb-row"><input type="text" id="findQ" placeholder="尋找" spellcheck="false" autocomplete="off"><span class="fb-n" id="findN"></span>
       <button data-fa="prev" title="上一筆（Shift+Enter）">▲</button><button data-fa="next" title="下一筆（Enter）">▼</button>
       <button class="fb-o" data-fo="case" title="區分大小寫">Aa</button><button class="fb-o" data-fo="word" title="全字相符（英文、數字）">全字</button><button class="fb-o" data-fo="width" title="全形、半形視為相同">全＝半</button><button class="fb-o" data-fo="scans" title="也搜尋掃描頁：沒有文字的頁用文字辨識讀（只能找，不能取代）">掃描頁</button>
-      <button data-fa="rep" title="取代">取代 ▸</button><button data-fa="close" title="關閉（Esc）">✕</button></div>
+      <button data-fa="stopocr" title="停止辨識其餘的掃描頁" hidden>停止辨識</button><button data-fa="rep" title="取代">取代 ▸</button><button data-fa="close" title="關閉（Esc）">✕</button></div>
     <div class="fb-row" id="findRepRow" hidden><input type="text" id="findR" placeholder="取代為（空白＝刪除）" spellcheck="false" autocomplete="off">
       <button data-fa="one" title="取代目前這一筆，再到下一筆（Enter）">取代</button><button data-fa="all" title="全部取代（一個復原步驟）">全部取代</button></div>
   </div>
@@ -1202,6 +1202,7 @@ const viewer = $('#viewer'), pagesEl = $('#pages');
 
 /* ---------------- small UI helpers ---------------- */
 function toast(msg, kind){
+  if ([...$('#toasts').children].some(x => x.textContent === msg)) return;   // (already showing: e.g. a font notice for every line of a replace all)
   const t = document.createElement('div'); t.className = 'toast' + (kind === 'err' ? ' err' : ''); t.textContent = msg;
   $('#toasts').appendChild(t); setTimeout(() => t.remove(), kind === 'long' ? 6500 : kind === 'err' ? 4200 : 2400);
 }
@@ -2114,9 +2115,10 @@ window.addEventListener('keydown', e => {
   if (!S.pdf) return;
   if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); actions.save(); return; }
   if (mod && !e.shiftKey && e.code === 'KeyP') { e.preventDefault(); actions.print(); return; }
+  const inBox = !isTyping(e) || /^(INPUT|SELECT)$/.test(e.target && e.target.tagName);   // (a field, not a text box or note being written)
+  if (inBox && mod && !e.shiftKey && e.code === 'KeyF') { e.preventDefault(); openFind(); return; }
+  if (inBox && e.key === 'F3' && FIND.open) { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1); return; }
   if (isTyping(e)) return;
-  if (mod && !e.shiftKey && e.code === 'KeyF') { e.preventDefault(); openFind(); return; }
-  if (e.key === 'F3' && FIND.open) { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1); return; }
   if (e.code === 'Space') {
     e.preventDefault();
     if (!S.spaceDown) { S.spaceDown = true; viewer.classList.add('pan-ready'); }
@@ -2692,9 +2694,10 @@ async function mutate(label, fn, opts = {}){
     const sigNote = !S.signed && !S.sigChecked && signedDoc(doc);
     const res = await fn(doc);
     if (res === false) return false;
+    const lbl = res && typeof res === 'object' && typeof res.label === 'string' ? res.label : label;   // (what was really done)
     const out = await doc.save();
     const was = {redo:S.redo, signed:S.signed, dirty:S.dirty};
-    S.undo.push({bytes:S.bytes, signed:S.signed, cur:S.current, label, by:opts.by === 'claude' ? 'claude' : ''});   // (Claude's own changes say so)
+    S.undo.push({bytes:S.bytes, signed:S.signed, cur:S.current, label:lbl, by:opts.by === 'claude' ? 'claude' : ''});   // (Claude's own changes say so)
     S.redo = []; S.signed = false; S.dirty = true;
     try { await loadDoc(out, {keepView:true, scrollToCurrent:!!opts.scrollToCurrent}); }
     catch (e) {   // the result cannot be shown: the document stays as it was, with no undo step and not marked changed
@@ -2705,7 +2708,7 @@ async function mutate(label, fn, opts = {}){
     if (S.undo.length > 30) S.undo.shift();
     S.sigChecked = true;
     if (opts.highlight) highlightPages(opts.highlight.from, opts.highlight.count, opts.highlight.label);
-    if (label) toast(label);
+    if (lbl) toast(lbl);
     if (sigNote) toast('這份文件有數位簽章，修改後簽章會失效。原檔不會被修改；按「復原」可以回到簽署時的內容。', 'long');
     return true;
   } catch (e) {
@@ -10043,7 +10046,9 @@ const saveFindOpts = () => { try { localStorage.setItem(FIND_KEY, JSON.stringify
 // a page's lines, top to bottom: {items, text, at:[{item, from, to}]} (at: where each piece's characters are in text)
 function findLines(i){
   const key = S.version + ':' + i; if (FIND.lines.has(key)) return FIND.lines.get(key);
-  if (FIND.lines.size > 400) FIND.lines.clear();
+  FIND.reads = (FIND.reads || 0) + 1;   // (tests: how many pages were read)
+  const cap = Math.max(400, S.pages.length * 2);
+  if (FIND.lines.size > cap) { const v = S.version + ':'; for (const k of [...FIND.lines.keys()]) if (!k.startsWith(v)) FIND.lines.delete(k); if (FIND.lines.size > cap) FIND.lines.clear(); }
   const p = pageTextItems(i).then(items => {
     const done = new Set(), out = [];
     for (const it of items) {
@@ -10061,7 +10066,7 @@ function normFind(t, o){
   if (o.width) t = t.replace(/[！-～]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/　/g, ' ');
   return o.case ? t : t.replace(/\p{Lu}/gu, c => { const l = c.toLowerCase(); return l.length === c.length ? l : c; });
 }
-const wordCh = c => !!c && /[\p{L}\p{N}_]/u.test(c) && !CJK_RE.test(c);
+const wordCh = c => !!c && (/[０-９Ａ-Ｚａ-ｚ＿]/.test(c) || (/[\p{L}\p{N}_]/u.test(c) && !CJK_RE.test(c)));   // (full-width letters count, Chinese does not)
 // how far into a piece of text character c starts, as a share of the piece: by the characters' widths in a sans-serif face
 // (close to most fonts' proportions; Chinese characters all one em), not by counting characters
 const FIND_MEASURE = document.createElement('canvas').getContext('2d');
@@ -10086,15 +10091,24 @@ function findWorker(){
       langPath:u('ocr/lang'), gzip:true, cacheMethod:'none', workerBlobURL:false}); }
   return FIND.worker;
 }
+// a page picture with nothing on it: no pixel of a small copy darker than paper
+function blankImage(c){
+  const s = document.createElement('canvas'); s.width = 96; s.height = Math.max(1, Math.round(96 * c.height / c.width));
+  const g = s.getContext('2d'); g.drawImage(c, 0, 0, s.width, s.height); const d = g.getImageData(0, 0, s.width, s.height).data;
+  for (let k = 0; k < d.length; k += 4) if (Math.min(d[k], d[k + 1], d[k + 2]) < 225) return false;
+  return true;
+}
 // a page without text read by OCR (only when 掃描頁 is on): lines like findLines, each character with its own box
 const FIND_OCR = new WeakMap();   // document → Map(page object → promise of lines)
 function ocrLines(i){
-  const d = activeDoc(), ref = S.pages[i].page.ref, key = ref ? ref.num + 'R' + ref.gen : 'p' + i;
+  const d = activeDoc(), pg0 = S.pages[i], ref = pg0.page.ref, key = (ref ? ref.num + 'R' + ref.gen : 'p' + i) + `:${pg0.rot}:${Math.round(pg0.w)}x${Math.round(pg0.h)}`;   // (turned: read again)
   if (!FIND_OCR.has(d)) FIND_OCR.set(d, new Map());
   const memo = FIND_OCR.get(d); if (memo.has(key)) return memo.get(key);
   const p = (async () => {
     const pg = S.pages[i], img = await ocrImage(i, {x:0, y:0, w:pg.w, h:pg.h}), k = (img.width - 48) / pg.w, m = 24;   // ocrImage: a 24 px white margin
+    if (blankImage(img)) return [];   // (nothing on it: not worth an OCR run)
     const w = await findWorker(); await w.setParameters({tessedit_pageseg_mode:'3', preserve_interword_spaces:'1'});
+    FIND.ocrRuns = (FIND.ocrRuns || 0) + 1;   // (tests: how many pages went to OCR)
     const {data} = await w.recognize(img, {}, {text:true, blocks:true}), byLine = new Map();
     ocrSymbols(data, false).forEach(y => { if (!byLine.has(y.li)) byLine.set(y.li, []); byLine.get(y.li).push(y); });
     return [...byLine.values()].map(list => {
@@ -10158,17 +10172,21 @@ async function searchDoc(){
   paintFind(); buildFindPanel();
   if (FIND.cur >= 0 && same < 0) showHit(FIND.cur);
   if (!o.scans || !scans.length) return;
-  for (let n = 0; n < scans.length; n++) {   // the scanned pages, read one at a time; the matches so far stay usable
-    setFindLabel(`${FIND.hits.length ? `第 ${FIND.cur + 1}／${FIND.hits.length} 筆 · ` : ''}辨識掃描頁…（${n + 1}／${scans.length}）`);
-    const lines = await ocrLines(scans[n]); if (seq !== FIND.seq) return;
-    const cur = FIND.hits[FIND.cur]; look(scans[n], lines); publish();
-    FIND.cur = cur ? FIND.hits.indexOf(cur) : FIND.hits.length ? Math.max(0, FIND.hits.findIndex(h => h.i >= S.current)) : -1;
-    paintFind(); buildFindPanel();
-  }
+  FIND.scanSeq = seq; FIND.stopOcr = false;
+  try {
+    for (let n = 0; n < scans.length; n++) {   // the scanned pages, read one at a time; the matches so far stay usable
+      FIND.scanNote = `辨識掃描頁…（${n + 1}／${scans.length}）`; setFindLabel(FIND.hits.length ? `第 ${FIND.cur + 1}／${FIND.hits.length} 筆` : '');
+      const lines = await ocrLines(scans[n]); if (seq !== FIND.seq) return;
+      const cur = FIND.hits[FIND.cur]; look(scans[n], lines); publish();
+      FIND.cur = cur ? FIND.hits.indexOf(cur) : FIND.hits.length ? Math.max(0, FIND.hits.findIndex(h => h.i >= S.current)) : -1;
+      paintFind(); buildFindPanel();
+      if (FIND.stopOcr) break;   // 〔停止辨識〕: the page in hand is done, the rest are left
+    }
+  } finally { if (FIND.scanSeq === seq) { FIND.scanNote = ''; if (seq === FIND.seq) paintFind(); } }   // (a newer search shows its own label)
 }
 function buildFindPanel(){
   const p = $('#p-find'); if (!p || !p.classList.contains('on')) return;
-  if (!FIND.q || !S.pdf) { p.innerHTML = '<div class="empty-note">按 Ctrl+F 輸入要找的字，符合的地方會列在這裡。</div>'; return; }
+  if (!FIND.open || !FIND.q || !S.pdf) { p.innerHTML = '<div class="empty-note">按 Ctrl+F 輸入要找的字，符合的地方會列在這裡。</div>'; return; }
   if (!FIND.hits.length) { p.innerHTML = `<div class="empty-note">找不到「${esc(FIND.q)}」。</div>`; return; }
   let pg = -1;
   p.innerHTML = `<div class="fd-sum">「${esc(FIND.q)}」共 ${FIND.hits.length} 筆</div>` + FIND.hits.map((h, k) => {
@@ -10263,16 +10281,23 @@ async function replaceNow(list, repl, o = {...FIND.opts}, q = FIND.q, {prefix = 
     if (!groups.has(key)) groups.set(key, {own, k, i:h.i, hits:[]});
     groups.get(key).hits.push(h);
   }
-  const jobs = [], memo = new Map();
+  const jobs = [], memo = new Map(), undone = [];   // undone: {i, n} of the places that could not be done
   busy(true, '準備取代…');
-  try { for (const g of groups.values()) { const j = g.own ? await blockJob(g.i, g.k, g.hits, repl, o, q, memo) : await lineJob(g.i, g.hits, repl, o, q, memo); if (j) jobs.push(j); } }
+  try { for (const g of groups.values()) { const j = g.own ? await blockJob(g.i, g.k, g.hits, repl, o, q, memo) : await lineJob(g.i, g.hits, repl, o, q, memo); if (j) jobs.push(j); else undone.push({i:g.i, n:g.hits.length}); } }
   catch (e) { console.error(e); }
   finally { busy(false); }
+  const pagesOf = l => [...new Set(l.map(u => u.i + 1))].sort((a, b) => a - b).join('、'), count = l => l.reduce((a, u) => a + u.n, 0);
   const n = jobs.reduce((a, j) => a + j.n, 0);
-  if (!n) { toast(prefix + '這些文字無法取代', 'err'); return false; }
-  const ok = await mutate(`${prefix}已取代 ${n} 處`, async doc => { for (const j of jobs) await applyPageText(doc, j.i, j.x, j.y, j.prep, j.box, j.edit, j.empty, j.strut); }, {by});
+  if (!n) { toast(prefix + (undone.length ? `這些文字無法取代（第 ${pagesOf(undone)} 頁）` : '這些文字無法取代'), 'err'); return false; }
+  let done = 0;
+  const ok = await mutate(`${prefix}已取代 ${n} 處`, async doc => {
+    for (const j of jobs) { if ((await applyPageText(doc, j.i, j.x, j.y, j.prep, j.box, j.edit, j.empty, j.strut)) === false) undone.push({i:j.i, n:j.n}); else done += j.n; }   // (false: it could not be taken out)
+    return done ? {label:`${prefix}已取代 ${done} 處`} : false;
+  }, {by});
+  if (!ok && !done && undone.length) toast(prefix + `這些文字無法取代（第 ${pagesOf(undone)} 頁）`, 'err');
+  if (ok && undone.length) toast(`${prefix}第 ${pagesOf(undone)} 頁有 ${count(undone)} 處無法取代（例如在表單物件裡的文字）`, 'long');
   if (ok && scans) toast(`${prefix}掃描頁的 ${scans} 處沒有取代`);
-  return ok ? n : false;
+  return ok ? done : false;
 }
 // 取代: the current match, then the next one
 async function replaceCurrent(){
@@ -10283,7 +10308,11 @@ async function replaceCurrent(){
   if (!(await replaceHits([h], repl))) FIND.after = null;
 }
 function scheduleFind(ms = 150){ clearTimeout(FIND.timer); FIND.timer = setTimeout(searchDoc, ms); }
-function setFindLabel(t){ const n = $('#findN'); if (n) n.textContent = t; }
+function setFindLabel(t){   // (while scans are read for this search, their progress stays at the end, and 〔停止辨識〕 shows)
+  const live = !!FIND.scanNote && FIND.scanSeq === FIND.seq, n = $('#findN'), b = $('#findBar [data-fa="stopocr"]');
+  if (n) n.textContent = live ? (t ? t + ' · ' : '') + FIND.scanNote : t;
+  if (b) b.hidden = !live;
+}
 function paintFind(){
   $$('.fhit').forEach(d => d.remove());
   if (FIND.open) S.els.forEach((_, i) => paintFindPage(i));
@@ -10324,27 +10353,34 @@ function openFind(){
 }
 // let go of 尋找's OCR worker (it holds a few hundred MB); the next scanned page starts a new one
 function dropFindWorker(){ if (FIND.worker) { const w = FIND.worker; FIND.worker = null; w.then(x => x.terminate()).catch(() => {}); } }
+const progKey = e => (e.ctrlKey || e.metaKey) && !e.altKey && ['KeyS', 'KeyO', 'KeyP'].includes(e.code);
 function closeFind(){
   FIND.open = false; FIND.seq++; clearTimeout(FIND.timer); $('#findBar').hidden = true; $$('.fhit').forEach(d => d.remove());
-  dropFindWorker();
+  dropFindWorker(); buildFindPanel();
   viewer.focus({preventScroll:true});
 }
 (() => {
   const bar = $('#findBar'), q = $('#findQ');
   q.addEventListener('input', () => { FIND.q = q.value; scheduleFind(250); });
   q.addEventListener('keydown', e => {
+    if (progKey(e) || $('#mask').classList.contains('show')) return;   // (Ctrl+S / O / P: the program's, as everywhere; a window open over the bar has the keys)
     e.stopPropagation();   // the app's own keys stay out of the box
     if (e.key === 'Enter') { e.preventDefault(); clearTimeout(FIND.timer); FIND.q = q.value; if (FIND.done !== findKey()) searchDoc(); else stepFind(e.shiftKey ? -1 : 1); }
     if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
     if (e.key === 'F3') { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1); }
   });
   // Enter replaces and keeps the box for the next one; after 〔取代〕 the focus stays on the button, so Ctrl+Z undoes the change
-  $('#findR').addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); replaceCurrent().then(() => $('#findR').focus()); } if (e.key === 'Escape') { e.preventDefault(); closeFind(); } });
+  $('#findR').addEventListener('keydown', e => {
+    if (progKey(e) || $('#mask').classList.contains('show')) return;
+    if (e.key === 'F3') { e.preventDefault(); e.stopPropagation(); stepFind(e.shiftKey ? -1 : 1); return; }
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.code === 'KeyF') { e.preventDefault(); e.stopPropagation(); q.focus(); q.select(); return; }
+    e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); replaceCurrent().then(() => $('#findR').focus()); } if (e.key === 'Escape') { e.preventDefault(); closeFind(); } });
   bar.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
     if (b.dataset.fa === 'next') stepFind(1);
     if (b.dataset.fa === 'prev') stepFind(-1);
     if (b.dataset.fa === 'close') closeFind();
+    if (b.dataset.fa === 'stopocr') FIND.stopOcr = true;
     if (b.dataset.fa === 'rep') { const r = $('#findRepRow'); r.hidden = !r.hidden; b.textContent = r.hidden ? '取代 ▸' : '取代 ▾'; if (!r.hidden) $('#findR').focus(); }
     if (b.dataset.fa === 'one') replaceCurrent();
     if (b.dataset.fa === 'all') replaceHits(FIND.hits.slice(), $('#findR').value);
@@ -11993,6 +12029,7 @@ window.__pdfapp = {
   urlProgress:urlProgressText,   // (tests) the download's progress line
   wordCancelText,   // (tests) what 〔取消〕 says while a conversion stops
   urlWhy,   // (tests) the download window's message for a failure
+  toast, findReads:() => FIND.reads || 0, ocrRuns:() => FIND.ocrRuns || 0,   // (tests)
   pageLinksNow:i => { const e = S.linkCache.get(i); return e ? (e.now ? 'ready' : 'pending') : 'none'; },   // (tests) whether page i's links are known
   failLinks:i => { S.linkCache.delete(i); const pg = S.pages[i].page, g = pg.getAnnotations; pg.getAnnotations = () => Promise.reject(new Error('test'));   // (tests) a read that fails
     return pageLinks(i).then(() => { pg.getAnnotations = g; }); },
