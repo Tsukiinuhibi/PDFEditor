@@ -10915,7 +10915,7 @@ const clPages = txt => { const n = S.pages.length, r = parseRange(String(txt ?? 
 const CLAUDE_TOOLS = {
   async pdf_status(){
     if (!S.pdf) return {text:'PDF 工作台現在沒有開啟的文件。可以用 pdf_open 開啟一個 PDF。'};
-    const documents = docs.map((d, k) => k === active ? {name:S.name, pages:S.pages.length, unsaved:!!S.dirty, active:true} : {name:d.name, pages:(d.pages || []).length, unsaved:!!d.dirty, active:false});
+    const documents = docs.map((d, k) => ({name:docField(d, 'name'), pages:(docField(d, 'pages') || []).length, unsaved:!!docField(d, 'dirty'), active:k === active}));
     return {text:JSON.stringify({documents, active:{name:S.name, pages:S.pages.length, current_page:S.current + 1, unsaved:!!S.dirty,
       page_sizes:S.pages.map(p => [+p.w.toFixed(1), +p.h.toFixed(1)])}, units:'pt, from the top-left corner of the page as shown'})};
   },
@@ -10980,6 +10980,52 @@ const CLAUDE_TOOLS = {
     return {text:`已在第 ${i + 1} 頁 (${x.toFixed(0)}, ${y.toFixed(0)}) 加上便利貼。`};
   },
 };
+Object.assign(CLAUDE_TOOLS, {
+  async pdf_rotate_pages(a){
+    clNeed();
+    const list = clPages(a.pages), deg = Number(a.degrees);
+    if (![90, 180, 270].includes(deg)) throw new Error('角度要是 90、180 或 270（順時針）');
+    await mutate(`Claude：第 ${rangeText(list)} 頁已旋轉 ${deg}°`, doc => { list.forEach(i => { const p = doc.getPage(i); p.setRotation(degrees((p.getRotation().angle + deg) % 360)); }); });
+    scrollToPage(list[0]);
+    return {text:`已把第 ${rangeText(list)} 頁順時針旋轉 ${deg}°。`};
+  },
+  async pdf_delete_pages(a){
+    clNeed();
+    const list = clPages(a.pages);
+    if (list.length >= S.pages.length) throw new Error('不能刪除全部頁面，文件至少要留一頁');
+    await mutate(`Claude：已刪除第 ${rangeText(list)} 頁`, doc => {
+      [...list].sort((x, y) => y - x).forEach(i => doc.removePage(i));
+      S.current = clamp(S.current - list.filter(i => i < S.current).length, 0, doc.getPageCount() - 1);
+    });
+    return {text:`已刪除第 ${rangeText(list)} 頁，現在共 ${S.pages.length} 頁。可以用 pdf_undo 復原。`};
+  },
+  async pdf_insert_blank_page(a){
+    clNeed();
+    const n = S.pages.length, after = Number(a.after);
+    if (!Number.isInteger(after) || after < 0 || after > n) throw new Error(`after 要在 0～${n} 之間（0 表示加在最前面）`);
+    await mutate(`Claude：已加上空白頁`, doc => {   // as large and as turned as the page it follows (the first page when it goes first)
+      const ref = doc.getPage(Math.max(0, after - 1)), {width, height} = ref.getSize();
+      doc.insertPage(after, [width, height]).setRotation(degrees(ref.getRotation().angle));
+    });
+    scrollToPage(after);
+    return {text:`已在${after ? `第 ${after} 頁後面` : '最前面'}加上一張空白頁（第 ${after + 1} 頁），現在共 ${S.pages.length} 頁。`};
+  },
+  async pdf_open(a){
+    const p = String(a.path ?? '').trim();
+    if (!/\.pdf$/i.test(p)) throw new Error('只能開啟 .pdf 檔（收到：' + p + '）');
+    if (!DESK) throw new Error('這個版本不能開啟電腦裡的檔案');
+    let r; try { r = await DESK.readFile(p); } catch (_) { throw new Error('讀不到這個檔案：' + p); }
+    await openFile(new File([r.data], r.name, {type:'application/pdf'}), desktopHandle(p, r.name));
+    if (!S.pdf || S.name !== r.name) throw new Error('這個檔案打不開（可能不是 PDF，或檔案已損壞）：' + p);
+    return {text:`已開啟「${r.name}」（${S.pages.length} 頁），它現在是目前的文件。`};
+  },
+  async pdf_save_as(){   // the 另存新檔 window, as Ctrl+S opens it: the person picks the place (never the original)
+    clNeed();
+    const saving = saveAsNew(S.bytes, '_已編輯'), r = await Promise.race([saving, new Promise(res => setTimeout(() => res('wait'), 150000))]);
+    if (r === 'wait') return {text:'已在 PDF 工作台跳出「另存新檔」視窗，使用者還沒有選好位置。'};
+    return r ? {text:`已另存新檔：${S.handle && S.handle.path || S.name}`} : {text:'沒有存檔：使用者取消了另存新檔。'};
+  },
+});
 // a position (pt from the page's top-left corner): a number from 0, moved in so that what is placed stays on the page
 const clCoord = (v, name, max) => { const n = Number(v); if (!Number.isFinite(n) || n < 0) throw new Error(`${name} 要是 0 以上的數字（單位 pt，從頁面左上角算）`); return Math.min(n, max); };
 // the places a query is found, as 尋找 finds them (a scan's hidden text is marked ocr): {hits:[{i, li, s, e, boxes, ctx, line, ocr}], o, q}

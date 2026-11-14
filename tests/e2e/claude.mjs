@@ -140,5 +140,38 @@ r = await tool(s2, 'pdf_add_note', {page:99, x:10, y:10, text:'x'});
 check('a window open: 「PDF 工作台正在忙」 and nothing added; page 99: an error that says the range, nothing added', busyOk && r.isError && /1～\d/.test(r.text) && (await undos()) === u0, {busyOk, text:r.text});
 s2.close();
 
+// ---- part 3: pages, opening a file, 另存新檔, no document ------------------------------------------------------------
+const s3 = mcp({PDFE_PORT:String(man2.user_config.port.default), PDFE_KEY:man2.user_config.key.default});
+await s3.request('initialize', {protocolVersion:'2024-11-05', capabilities:{}, clientInfo:{name:'test', version:'1'}}); s3.notify('notifications/initialized');
+const n0 = await Ev(() => window.__pdfapp.S.pages.length);
+r = await tool(s3, 'pdf_rotate_pages', {pages:'1', degrees:90}); await win.waitForTimeout(1200);
+check('pdf_rotate_pages 1 by 90°: page 1 turned', !r.isError && (await Ev(() => window.__pdfapp.S.pages[0].rot)) === 90, r.text);
+r = await tool(s3, 'pdf_insert_blank_page', {after:1}); await win.waitForTimeout(1200);
+const sz = await Ev(() => window.__pdfapp.S.pages.slice(0, 2).map(p => [Math.round(p.w), Math.round(p.h)]));
+check('pdf_insert_blank_page after 1: one page more, page 2 as large and turned as page 1', !r.isError && (await Ev(() => window.__pdfapp.S.pages.length)) === n0 + 1 && JSON.stringify(sz[0]) === JSON.stringify(sz[1]), {text:r.text, sz});
+r = await tool(s3, 'pdf_delete_pages', {pages:'2'}); await win.waitForTimeout(1200);
+const nAfter = await Ev(() => window.__pdfapp.S.pages.length);
+const all = await tool(s3, 'pdf_delete_pages', {pages:`1-${nAfter}`});
+check('pdf_delete_pages 2: one page fewer; deleting every page: refused', !r.isError && nAfter === n0 && all.isError && /至少要留一頁/.test(all.text) && (await Ev(() => window.__pdfapp.S.pages.length)) === n0, {text:r.text, all:all.text});
+await app.evaluate(({ipcMain}, dir) => { global.__saved = null; ipcMain.removeHandler('file:save-as'); ipcMain.handle('file:save-as', (_e, name, data) => { global.__saved = {name, head:Buffer.from(data).subarray(0, 5).toString('latin1')}; return dir + '/c_已編輯.pdf'; }); }, TMP);
+r = await tool(s3, 'pdf_save_as');
+const saved = await app.evaluate(() => global.__saved);
+check('pdf_save_as: the 另存新檔 window gets the document (a PDF), and the answer names the new file', !r.isError && !!saved && saved.head === '%PDF-' && /c_已編輯\.pdf/.test(r.text), {text:r.text, saved});
+// no document: every tab closed (without saving)
+for (let k = 0; k < 4 && (await Ev(() => document.querySelectorAll('.dtab').length)) > 0; k++) {
+  await win.keyboard.press('Control+W'); await win.waitForTimeout(600);
+  if (await Ev(() => document.querySelector('#mask').classList.contains('show'))) { await win.click('#modal button:has-text("不儲存並關閉")'); await win.waitForTimeout(800); }
+}
+r = await tool(s3, 'pdf_status');
+const r2 = await tool(s3, 'pdf_read_text', {});
+check('no document open: pdf_status says so, and a reading tool says to open one first', !r.isError && /沒有開啟的文件/.test(r.text) && r2.isError && /pdf_open/.test(r2.text), {text:r.text, r2:r2.text});
+const OTHER = path.join(TMP, '另一份 文件.pdf'); fs.copyFileSync(path.join(ROOT, 'tests', 'e2e', 'fixtures', 'sample.pdf'), OTHER);
+r = await tool(s3, 'pdf_open', {path:OTHER}); await win.waitForTimeout(1500);
+const st3 = await tool(s3, 'pdf_status'); let j3 = null; try { j3 = JSON.parse(st3.text); } catch (_) {}
+const bad1 = await tool(s3, 'pdf_open', {path:path.join(TMP, 'notes.txt')}), bad2 = await tool(s3, 'pdf_open', {path:path.join(TMP, 'missing.pdf')});
+check('pdf_open: a PDF by its path (Chinese and a space in it) opens and becomes the current document; not a .pdf, or no such file: an error',
+  !r.isError && !!j3 && j3.active && j3.active.name === '另一份 文件.pdf' && bad1.isError && /\.pdf/.test(bad1.text) && bad2.isError && /讀不到/.test(bad2.text), {text:r.text, active:j3 && j3.active && j3.active.name, bad1:bad1.text, bad2:bad2.text});
+s3.close();
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
