@@ -218,6 +218,15 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 列印視窗的 `@page` 與每一面用公釐（紙張本身的大小），每一面比紙短 0.3 mm，避免多出空白頁；每一面的圖只載入不先解碼（大文件不一次佔用全部記憶體）。
 - **還沒在真的印表機上試過**（開發環境沒有印表機，測試用 `printToPDF` 代替）：要在 Windows 上用 Microsoft Print to PDF 和一台實體印表機各印一次 A4 直式、手冊、每面 2 頁、雙面，看張數、方向、縮放對不對。
 - 測試接口：主程式的 `global.__pdfePrinters`（印表機清單）、`global.__pdfePrintHook(wc, opts, cb)`（送印）；`print.mjs` 用 `printToPDF({preferCSSPageSize:true})` 檢查印出的張數與紙張大小。`__pdfapp.printState()`、`printPlanNow()`、`printPlan(st)`、`parseRange`。
+- v1.0.49 的修正：
+  - 頁碼：超出範圍說「頁碼要在 1～N 之間」，剛選「自訂」還沒輸入時不顯示紅字。
+  - 數字欄位：`printNum` 在 change 時把空白、太小、太大改成實際使用的值並顯示在欄位上（份數 1～999、比例 1～1000、放大 10～1000、重疊 0～50）。讀回存著的設定時也一樣，選項只收視窗有的值（品質 150／300、邊界 0／5／10、多頁合一 2／4／6／9／16）。
+  - 頁面畫在紙上的位置取整數像素，不重新取樣。
+  - 一般與多頁合一的雙面列印，每一面標「第 K 張正面／背面」。
+  - `PRINTOPEN`：尋找印表機時顯示忙碌，再按 Ctrl+P 不會開第二個視窗。
+  - 印表機一直沒回應：〔取消〕和 Esc 結束等待（`job.wake`）。
+  - 列印視窗開著時，從檔案總管開啟的 PDF 等視窗關掉才開（`openFile` 等 `PR`），列印的仍是原本的文件。
+  - 瀏覽器版的列印按鈕用 `title` 說明為什麼不能用。
 
 ### 3.9.12 尋找與取代（v1.0.39）
 - 入口：Ctrl+F（打字中不搶；已加進 `RESERVED`，連同 F3、Shift+F3）。尋找列 `#findBar` 浮在 `#vwrap` 右上角；Enter／Shift+Enter、F3、〔▲〕〔▼〕上下筆，Esc 關閉（輸入框裡的按鍵不會觸發程式的快速鍵）。選項 `FIND.opts`（`case`、`word`、`width`、`scans`）存在 `pdfeditor.find.v1`。

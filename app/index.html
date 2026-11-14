@@ -1533,6 +1533,7 @@ const samePath = (a, b) => !!a && !!b && (a === b || (/^[A-Za-z]:[\\/]/.test(a) 
 async function openFile(file, handle = null, {rethrow = false} = {}){
   if (!file) return;
   await whenIdle();   // (a file sent while a change is being made opens after it)
+  while (PR || PRINTOPEN) await new Promise(r => setTimeout(r, 250));   // (the print window prints the document it was opened for)
   // the same file is already open: just switch to its tab
   const same = handle && handle.path && docs.findIndex(d => { const h = docField(d, 'handle'); return h && samePath(h.path, handle.path); });
   if (same >= 0) { switchTab(same); toast('「' + file.name + '」已經開啟'); return; }
@@ -2107,7 +2108,11 @@ new ResizeObserver(() => {
 }).observe(viewer);
 
 window.addEventListener('keydown', e => {
-  if ($('#mask').classList.contains('show')) { if (e.key === 'Escape' && !S.exporting && !capture) closeModal(undefined); return; }
+  if ($('#mask').classList.contains('show')) {
+    if (e.key === 'Escape' && !S.exporting && !capture) closeModal(undefined);
+    else if (e.key === 'Escape' && PR && PR.job) { PR.job.cancel = true; if (PR.job.wake) PR.job.wake(); }   // (printing: Esc is 〔取消〕)
+    return;
+  }
   if ($('#busy').classList.contains('show')) { if (e.ctrlKey || e.metaKey || e.altKey || e.key === 'Tab' || e.key === 'Delete') e.preventDefault(); return; }   // (working: e.g. Ctrl+W would close the tab under it)
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.shiftKey && e.code === 'KeyO') { e.preventDefault(); actions.openUrl(); return; }
@@ -9732,9 +9737,17 @@ function printPrefs(){
   try { const v = JSON.parse(localStorage.getItem(PRINT_KEY)); if (v && typeof v === 'object') return {last:typeof v.last === 'string' ? v.last : '', by:v.by && typeof v.by === 'object' ? v.by : {}}; } catch (_) {}
   return {last:'', by:{}};
 }
+// the number settings: a range for typed ones, the offered values for chosen ones (a hand-edited settings file stays usable)
+const PRINT_NUM = {pct:[1, 1000], ppct:[10, 1000], overlap:[0, 50], copies:[1, 999]}, PRINT_ONE = {quality:[150, 300], margin:[0, 5, 10], nup:[2, 4, 6, 9, 16]};
+function printNum(k, v){
+  if (PRINT_ONE[k]) return PRINT_ONE[k].includes(+v) ? +v : PRINT_DEF[k];
+  const [lo, hi] = PRINT_NUM[k] || [-Infinity, Infinity], n = typeof v === 'string' && !v.trim() ? NaN : +v;
+  if (!Number.isFinite(n)) return k === 'copies' ? 1 : PRINT_DEF[k];
+  return clamp(k === 'copies' ? Math.round(n) : n, lo, hi);
+}
 function printerSettings(name){
   const b = printPrefs().by[name] || {}, out = {...PRINT_DEF};
-  Object.keys(PRINT_DEF).forEach(k => { if (b[k] !== undefined && typeof b[k] === typeof PRINT_DEF[k]) out[k] = b[k]; });
+  Object.keys(PRINT_DEF).forEach(k => { if (b[k] !== undefined && typeof b[k] === typeof PRINT_DEF[k]) out[k] = typeof PRINT_DEF[k] === 'number' ? printNum(k, b[k]) : b[k]; });
   if (!PAPERS[out.paper]) out.paper = PRINT_DEF.paper;
   return out;
 }
@@ -9834,6 +9847,7 @@ function printPlan(st){
     if (st.layout === 'booklet' && duplex !== 'simplex') { const pairs = []; for (let k = 0; k < sides.length; k += 2) pairs.push(sides.slice(k, k + 2)); sides = pairs.reverse().flat(); }
     else sides.reverse();
   }
+  if ((st.layout === 'normal' || st.layout === 'nup') && duplex !== 'simplex') sides = sides.map((s, n) => ({...s, label:`第 ${Math.floor(n / 2) + 1} 張${n % 2 ? '背面' : '正面'}${s.label ? '：' + s.label : ''}`}));
   return {paper, sides, duplex, sheets:duplex === 'simplex' ? sides.length : Math.ceil(sides.length / 2)};
 }
 // part of a page drawn for printing: the page at scale s (turned rot), the rectangle r of that picture (pixels)
@@ -9866,7 +9880,7 @@ async function drawSide(plan, side, k, st, {cache = false} = {}){
     const [w, h] = pageWH(it.i), s = (it.rot % 180 ? it.w / h : it.w / w) * k;
     const r = {x:Math.floor((x0 - it.x) * k), y:Math.floor((y0 - it.y) * k), w:Math.ceil((x1 - x0) * k), h:Math.ceil((y1 - y0) * k)};
     const pc = await printPiece(it.i, s, it.rot, st.annots !== 'none', r, cache);
-    g.drawImage(pc, it.x * k + r.x, it.y * k + r.y);
+    g.drawImage(pc, Math.round(it.x * k + r.x), Math.round(it.y * k + r.y));   // (whole pixels: not resampled)
     if (it.border) { g.strokeStyle = '#000'; g.lineWidth = Math.max(1, .6 * k); g.strokeRect(it.x * k, it.y * k, it.w * k, it.h * k); }
   }
   if (side.poster && side.items[0]) {   // marks at the corners of the printed part, and which tile this is, in the margin
@@ -9939,7 +9953,11 @@ function wirePrint(){
     refreshPrint();
   };
   body.addEventListener('input', e => { if (e.target.type !== 'checkbox' && e.target.tagName !== 'SELECT') take(e); });
-  body.addEventListener('change', take);
+  body.addEventListener('change', e => {
+    const el = e.target.closest && e.target.closest('input[type="number"][data-p]');
+    if (el && PR) { const v = printNum(el.dataset.p, el.value); el.value = String(v); }   // (emptied, under the least, over the most: what is used)
+    take(e);
+  });
   body.querySelector('#prBack').onclick = () => { if (PR.cur > 0) { PR.cur--; refreshPrint(); } };
   body.querySelector('#prFwd').onclick = () => { if (PR.plan && PR.cur < PR.plan.sides.length - 1) { PR.cur++; refreshPrint(); } };
 }
@@ -9947,7 +9965,8 @@ function wirePrint(){
 function refreshPrint(){
   if (!PR) return;
   const {st, body} = PR;
-  PR.err = st.range === 'custom' && !printPages({...st, subset:'all'}).length ? '頁面範圍的格式不對，例如：1-3, 5, 8-' : '';
+  const nP = S.pages.length, past = (String(st.custom).match(/\d+/g) || []).some(d => +d < 1 || +d > nP);
+  PR.err = st.range !== 'custom' || !String(st.custom).trim() ? '' : past ? `頁碼要在 1～${nP} 之間` : !printPages({...st, subset:'all'}).length ? '頁面範圍的格式不對，例如：1-3, 5, 8-' : '';
   PR.plan = printPlan(st);
   const n = PR.plan.sides.length; PR.cur = clamp(PR.cur, 0, Math.max(0, n - 1));
   body.querySelector('.pr-err').textContent = PR.err;
@@ -9961,7 +9980,8 @@ function refreshPrint(){
   body.querySelector('#prBack').disabled = PR.cur <= 0; body.querySelector('#prFwd').disabled = PR.cur >= n - 1;
   const sum = $('#prSum'); if (sum && !PR.job) sum.textContent = n ? `共 ${PR.plan.sheets} 張紙${+st.copies > 1 ? ` × ${+st.copies} 份` : ''}` : '';
   const go = $('#prGo'), sys = $('#prSys');
-  if (go && !PR.job) { sys.disabled = !!PR.err || !n || !DESK || !DESK.print; go.disabled = sys.disabled || !PR.printers.length; go.textContent = '列印'; }
+  if (go && !PR.job) { sys.disabled = !!PR.err || !n || !DESK || !DESK.print; go.disabled = sys.disabled || !PR.printers.length; go.textContent = '列印';
+    sys.title = go.title = !DESK || !DESK.print ? '瀏覽器版不能直接列印：請用桌面版，或另存新檔後再列印' : ''; }
   PR.bigOk = false;
   previewPrint();
 }
@@ -9974,17 +9994,24 @@ async function previewPrint(){
   c.style.width = c.width / dpr + 'px'; c.style.height = c.height / dpr + 'px';
   box.innerHTML = ''; box.appendChild(c);
 }
+let PRINTOPEN = false;   // the print window is up or coming up
 async function openPrint(){
-  if (!S.pdf || PR) return;
+  if (!S.pdf || PR || PRINTOPEN) return;
+  PRINTOPEN = true;
+  try { await printWindow(); } finally { PRINTOPEN = false; }
+}
+async function printWindow(){
   if (!(await settleEdits())) return;
   let printers = [];
+  busy(true, '尋找印表機…');
   try { printers = DESK && DESK.print ? await DESK.print.printers() : []; } catch (_) { printers = []; }   // the window says so (no printers)
+  finally { busy(false); }
   const prefs = printPrefs(), printer = printers.some(p => p.name === prefs.last) ? prefs.last : '';
   PR = {st:{printer, ...printerSettings(printer), copies:1, collate:true, range:'all', custom:'', subset:'all', reverse:false}, printers, cur:0, plan:null, err:'', job:null};
   const body = document.createElement('div'); body.id = 'prDlg'; body.className = 'pr-grid';
   body.innerHTML = printFormHTML(PR.st, printers); PR.body = body;
   await openModal({title:'列印', body, width:1060, buttons:[
-    {label:'取消', id:'prCancel', handler:() => { if (PR && PR.job) { PR.job.cancel = true; return; } return null; }},
+    {label:'取消', id:'prCancel', handler:() => { if (PR && PR.job) { PR.job.cancel = true; if (PR.job.wake) PR.job.wake(); return; } return null; }},
     {label:'印表機內容…', id:'prSys', handler:async () => (await runPrint({dialog:true})) ? true : undefined},
     {label:'列印', id:'prGo', primary:true, handler:async () => (await runPrint({dialog:false})) ? true : undefined},
   ], onOpen:(mb, mf) => { const sum = document.createElement('span'); sum.id = 'prSum'; sum.className = 'pr-sum'; mf.prepend(sum); wirePrint(); refreshPrint(); }});
@@ -10018,8 +10045,8 @@ async function runPrint({dialog}){
     }
     if (stopped()) throw new Error('cancel');
     sum.textContent = '正在送到印表機…';
-    const r = await DESK.print.run({dialog, deviceName:st.printer || '', copies:clamp(Math.round(+st.copies || 1), 1, 999), collate:!!st.collate,
-      duplexMode:plan.duplex, color:st.color !== 'gray', landscape:land, pageSize:{width:Math.round(Math.min(pa, pb) * 1000), height:Math.round(Math.max(pa, pb) * 1000)}});
+    const r = await Promise.race([new Promise(res => { job.wake = () => res({ok:false, why:'cancel'}); }), DESK.print.run({dialog, deviceName:st.printer || '', copies:clamp(Math.round(+st.copies || 1), 1, 999), collate:!!st.collate,
+      duplexMode:plan.duplex, color:st.color !== 'gray', landscape:land, pageSize:{width:Math.round(Math.min(pa, pb) * 1000), height:Math.round(Math.max(pa, pb) * 1000)}})]);   // (a printer that never answers: 〔取消〕 / Esc stop waiting)
     if (!r || !r.ok) { if (!(r && /cancel/i.test(r.why || ''))) toast('列印失敗：' + ((r && r.why) || '印表機沒有回應'), 'err'); return false; }
     toast(`已送到「${printerLabel(st.printer)}」`);
     return true;
@@ -12050,6 +12077,8 @@ window.__pdfapp = {
   },
   find:() => ({open:FIND.open, q:FIND.q, n:FIND.hits.length, cur:FIND.cur, hits:FIND.hits.map(h => ({i:h.i, ocr:!!h.ocr, text:h.ctx}))}),
   parseRange, printPlan, printPlanNow:() => PR && PR.plan,
+  printSt:() => PR && {...PR.st},   // (tests) the print window's settings as they stand
+  printDraw:n => drawSide(PR.plan, PR.plan.sides[n], (+PR.st.quality || 300) / 72, PR.st),   // (tests) side n drawn as for printing
   printState:() => PR && PR.plan ? {open:true, sides:PR.plan.sides.length, sheets:PR.plan.sheets, pos:PR.cur, paper:PR.plan.paper, duplex:PR.plan.duplex, error:PR.err,
     items:(PR.plan.sides[PR.cur] || {items:[]}).items, label:(PR.plan.sides[PR.cur] || {}).label || ''} : {open:false},
   annotsOrder:async i => {   // (tests) page i's /Annots as it stands: each entry's id, subtype, the object a note window belongs to, its layer

@@ -77,7 +77,7 @@ await set('range', 'custom'); await set('custom', '2-3');
 const s23 = await pst();
 await set('custom', '9');
 const bad = await Ev(() => ({err:(document.querySelector('#prDlg .pr-err') || {}).textContent || '', go:document.querySelector('#prGo').disabled}));
-check('自訂「2-3」: 2 sides; 「9」 (past the end): a red message and 〔列印〕 off', s23.sides === 2 && bad.err.includes('頁面範圍') && bad.go, {s23, bad});
+check('自訂「2-3」: 2 sides; 「9」 (past the end): a red message (v1.0.49: 「頁碼要在 1～N 之間」) and 〔列印〕 off', s23.sides === 2 && /頁碼要在 1～\d+ 之間/.test(bad.err) && bad.go, {s23, bad});
 await set('range', 'all'); await set('subset', 'odd');
 const sOdd = await pst();
 await set('subset', 'all'); await set('reverse', true);
@@ -224,6 +224,78 @@ check('more than 100 sheets: the first 〔列印〕 only asks again (「確定�
 await set('ppct', '999');
 check('a change after that: the button is 〔列印〕 again', (await Ev(() => document.querySelector('#prGo').textContent)) === '列印');
 await close();
+
+// ---- part 6 (v1.0.49): page numbers, the number boxes, whole pixels, stored settings, two-sided labels, one window, a printer
+// that never answers, a file opened meanwhile ----------------------------------------------------------------------------------
+const nP = await Ev(() => window.__pdfapp.S.pages.length);
+await open();
+await set('range', 'custom');
+const justCustom = (await pst()).error;
+await set('custom', String(nP + 4));
+const tooFar = (await pst()).error;
+check('自訂 with nothing typed yet: no red line; a page past the last: 「頁碼要在 1～N 之間」', !justCustom && tooFar === `頁碼要在 1～${nP} 之間`, {justCustom, tooFar});
+await set('range', 'all'); await set('layout', 'normal'); await set('scale', 'custom');
+const commit = (k, v) => Ev(([k, v]) => { const el = document.querySelector(`#prDlg [data-p="${k}"]`); el.value = v; el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); }, [k, v]);
+await commit('pct', ''); await commit('copies', '5000'); await win.waitForTimeout(500);
+const boxes6 = {pct:await val('pct'), copies:await val('copies'), st:await Ev(() => { const s = window.__pdfapp.printSt(); return {pct:s.pct, copies:s.copies}; })};
+check('the number boxes: emptied → its usual value; 5000 copies → 999; the box shows what is used', boxes6.pct === '100' && boxes6.copies === '999' && boxes6.st.pct === 100 && +boxes6.st.copies === 999, boxes6);
+await commit('copies', '1'); await set('scale', 'fit'); await set('margin', '5');
+const frac = await Ev(async () => {
+  const P = CanvasRenderingContext2D.prototype, orig = P.drawImage, seen = [];
+  P.drawImage = function(img, x, y, ...rest){ if (!rest.length) seen.push([x, y]); return orig.call(this, img, x, y, ...rest); };
+  try { await window.__pdfapp.printDraw(0); } finally { P.drawImage = orig; }
+  return seen.filter(([x, y]) => x % 1 || y % 1);
+});
+check('a page placed on the paper is drawn at whole pixels (no resampling, sharp at 300 dpi)', frac.length === 0, frac);
+await set('duplex', 'longEdge');
+const lab6 = (await pst()).label;
+await set('duplex', 'simplex');
+check('two-sided printing (not only booklets): each side says 「第 K 張正面／背面」', /第 1 張正面/.test(lab6), lab6);
+await close();
+// stored settings out of range (a hand-edited settings file): brought back into range
+await Ev(() => { const k = 'pdfeditor.print.v1'; let p = {}; try { p = JSON.parse(localStorage.getItem(k)) || {}; } catch (_) {}
+  p.by = p.by || {}; const who = p.last || ''; p.by[who] = {...(p.by[who] || {}), quality:100000, pct:-5, ppct:99999, overlap:-3, margin:999, nup:7}; localStorage.setItem(k, JSON.stringify(p)); });
+await open();
+const stored = await Ev(() => window.__pdfapp.printSt());
+await close();
+check('stored print settings out of range: brought back to allowed values', [150, 300].includes(stored.quality) && stored.pct >= 1 && stored.ppct <= 1000 && stored.overlap >= 0 && [0, 5, 10].includes(stored.margin) && [2, 4, 6, 9, 16].includes(stored.nup),
+  {quality:stored.quality, pct:stored.pct, ppct:stored.ppct, overlap:stored.overlap, margin:stored.margin, nup:stored.nup});
+// Ctrl+P twice while the printers are being found: one window, with the busy sign meanwhile
+await app.evaluate(() => { global.__savedPrinters = global.__pdfePrinters; global.__pdfePrinters = async () => { await new Promise(r => setTimeout(r, 1500)); return global.__savedPrinters(); }; });
+await win.keyboard.press('Control+p'); await win.waitForTimeout(200);
+const busyLoading = await Ev(() => document.querySelector('#busy').classList.contains('show'));
+await win.keyboard.press('Control+p'); await win.waitForTimeout(3500);
+if (await Ev(() => !!document.querySelector('#prCancel') && document.querySelector('#mask').classList.contains('show'))) { await win.click('#prCancel'); await win.waitForTimeout(800); }
+const leftOver = await Ev(() => document.querySelector('#mask').classList.contains('show'));
+if (leftOver) { await win.keyboard.press('Escape'); await win.waitForTimeout(600); }
+await win.keyboard.press('Control+p'); await win.waitForTimeout(3500);
+const againOpen = (await pst()).open;
+await app.evaluate(() => { global.__pdfePrinters = global.__savedPrinters; });
+if (againOpen) await close();
+check('Ctrl+P twice while the printers are being found: one window (busy sign meanwhile); after closing it, Ctrl+P opens it again', busyLoading && !leftOver && againOpen, {busyLoading, leftOver, againOpen});
+// a printer that never answers: 〔取消〕 (and Esc) stop the waiting
+await app.evaluate(() => { global.__savedHook = global.__pdfePrintHook; global.__pdfePrintHook = () => {}; });
+const waitSend = () => win.waitForFunction(() => /正在送到印表機/.test((document.querySelector('#prSum') || {}).textContent || ''), null, {timeout:30000}).catch(() => {});
+const afterStop = () => Ev(() => ({open:window.__pdfapp.printState().open, sum:(document.querySelector('#prSum') || {}).textContent || '', go:(document.querySelector('#prGo') || {}).disabled}));
+await open(); await win.click('#prGo'); await waitSend();
+await win.click('#prCancel'); await win.waitForTimeout(1200);
+const byBtn = await afterStop();
+await win.click('#prGo'); await waitSend();
+await win.keyboard.press('Escape'); await win.waitForTimeout(1200);
+const byEsc = await afterStop();
+await app.evaluate(() => { global.__pdfePrintHook = global.__savedHook; });
+if (byEsc.open) await close();
+check('a printer that never answers: 〔取消〕 and Esc stop waiting, and the window can be used again', byBtn.open && !/正在送到/.test(byBtn.sum) && byBtn.go === false && byEsc.open && !/正在送到/.test(byEsc.sum), {byBtn, byEsc});
+// a PDF opened from Explorer while the print window is open: it opens when the window closes (the print keeps its document)
+const od = await PDFDocument.create(); od.addPage([300, 300]); const OTHER = path.join(TMP, 'other while printing.pdf'); fs.writeFileSync(OTHER, await od.save());
+await open();
+const tabs0 = await Ev(() => document.querySelectorAll('.dtab').length);
+await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), OTHER);
+await win.waitForTimeout(2500);
+const tabsDuring = await Ev(() => document.querySelectorAll('.dtab').length), stillOpen = (await pst()).open;
+await close(); await win.waitForTimeout(3000);
+const tabsAfter = await Ev(() => document.querySelectorAll('.dtab').length);
+check('a PDF opened from Explorer while the print window is open: opened after the window closes', stillOpen && tabsDuring === tabs0 && tabsAfter === tabs0 + 1, {tabs0, tabsDuring, stillOpen, tabsAfter});
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
