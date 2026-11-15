@@ -434,21 +434,26 @@
   // timeout: for each request and font file; deadline: for the whole call (what has come by then is kept). Once a
   // request fails before any has been answered, no further ones are asked (no network: one round of waiting, not three)
   async function loadGoogle(entries, chars, {fetchCss = url => fetch(url), timeout = 8000, deadline = 12000, stop = null} = {}){
-    const cands = [], failed = [], todo = []; let answered = 0, dead = false;
+    const cands = [], failed = [], todo = []; let answered = 0, dead = false, refused = false;
     for (const e of entries) { const c = gfCache.get(e.family + '|' + chars); if (c) cands.push(c); else todo.push(e); }
     if (!todo.length) return {cands, failed, offline:false};
     const t0 = performance.now(), left = () => Math.max(1, Math.min(timeout, deadline - (performance.now() - t0)));
-    const over = () => dead || performance.now() - t0 >= deadline || (stop && stop());
+    const over = () => dead || refused || performance.now() - t0 >= deadline || (stop && stop());
     const byFamily = new Map(todo.map(e => [e.family, e]));
     const give = batch => batch.forEach(e => failed.push(e.family));
-    // one request for a batch of families; a batch Google refuses (a bad name) is asked again one family at a time
+    // one request for a batch of families; a batch with a bad name (400, 404) or too long a request (413, 414) is asked
+    // again one family at a time. Refused (429 too many requests, 403 forbidden, …): nothing more is asked
     const ask = async batch => {
       if (over()) { give(batch); return; }
       const url = 'https://fonts.googleapis.com/css2?' + batch.map(familyParam).join('&') + '&text=' + encodeURIComponent(chars);
       let res; try { res = await withTimeout(Promise.resolve(fetchCss(url)), left()); } catch (_) { if (!answered) dead = true; give(batch); return; }
       if (!res || res.status >= 500) { if (!answered) dead = true; give(batch); return; }
       answered++;
-      if (!res.ok) { if (batch.length > 1) { for (const e of batch) await ask([e]); } else give(batch); return; }
+      if (!res.ok) {
+        if (![400, 404, 413, 414].includes(res.status)) { refused = true; give(batch); return; }
+        if (batch.length > 1) { for (const e of batch) await ask([e]); } else give(batch);
+        return;
+      }
       let css = ''; try { css = await withTimeout(Promise.resolve(res.text()), left()); } catch (_) { give(batch); return; }
       const faces = parseFaces(css);
       await Promise.all(batch.map(async e => {

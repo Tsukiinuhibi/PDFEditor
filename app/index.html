@@ -6005,7 +6005,7 @@ async function pdfFontsIn(i, box){
     let f = null; try { f = pg.page.commonObjs.has(key) ? pg.page.commonObjs.get(key) : null; } catch (_) {}
     const names = decodeFontName(f && f.name).map(cleanFontName);
     if (names.some(n => /^GlyphLessFont$/i.test(n))) { hidden += chars; continue; }
-    const generic = !!(f && f.isType3Font) || !names[0] || GENERIC_FONT.test(names[0]);
+    const generic = !f || !!f.isType3Font || !names[0] || GENERIC_FONT.test(names[0]);   // (!f: the page has not loaded this font: nothing can be read)
     let name = generic ? names[0] : plainFontName(names[0]), local = null, google = null;
     if (!generic) {
       for (const n of names) {
@@ -6016,7 +6016,7 @@ async function pdfFontsIn(i, box){
       if (!local) google = googleByName(name);
     }
     const id = generic ? '\0' + key : name, cur = byName.get(id);   // the same font in several font objects: one row
-    if (cur) cur.chars += chars; else byName.set(id, {key, name, chars, embedded:!(f && f.missingFile), generic, local, google});
+    if (cur) cur.chars += chars; else byName.set(id, {key, name, chars, embedded:f ? !f.missingFile : null, generic, unread:!f, local, google});
   }
   return {fonts:[...byName.values()].sort((a, b) => b.chars - a.chars), hidden};
 }
@@ -8702,7 +8702,7 @@ async function openDigiSign(i, box){
    tesseract.js + the LSTM builds of tesseract.js-core, language data in app/ocr/lang
    (Traditional Chinese, vertical Traditional Chinese, English).
    ==================================================================== */
-const OCR = {worker:null, langs:'', job:0, panel:null, mark:null, i:-1, box:null, dir:'h', progress:null};
+const OCR = {worker:null, langs:'', job:0, panel:null, mark:null, i:-1, box:null, dir:'h', progress:null, reading:0, pr:null};   // reading: the job being read; pr: its progress
 async function ocrWorker(langs){
   if (OCR.worker && OCR.langs === langs) return OCR.worker;
   if (OCR.worker) { const w = OCR.worker; OCR.worker = null; try { await w.terminate(); } catch (_) {} }
@@ -8799,7 +8799,7 @@ function startOcrDraw(i, e){
 // read the text in box on page i: the PDF's own text unless `image` is asked for; dir 'h' / 'v' forces the writing direction
 async function readRegion(i, box, {image = false, dir = null} = {}){
   const job = ++OCR.job;
-  let finished; OCR.readP = new Promise(r => { finished = r; }); OCR.glyphs = null;   // 字型 waits for this reading
+  let finished; OCR.readP = new Promise(r => { finished = r; }); OCR.glyphs = null; OCR.reading = job; OCR.pr = null;   // 字型 waits for this reading
   try {
     ocrPanel(i, box);
     setOcr({status:'讀取中…', progress:null, text:'', busy:true});
@@ -8822,7 +8822,7 @@ async function readRegion(i, box, {image = false, dir = null} = {}){
       console.error(err);
       if (job === OCR.job) setOcr({status:'辨識失敗：' + (err && err.message || err), progress:null, busy:false});
     }
-  } finally { finished(); }
+  } finally { if (OCR.reading === job) OCR.reading = 0; finished(); }
 }
 // read the picture twice, as it is and with the specks filtered out, and keep the more confident reading: on poor
 // scans the filtered one wins by far, on clean ones the original (measured on noisy, small-print and clean samples).
@@ -8922,7 +8922,8 @@ function setOcr({text, src, status, progress, busy, canImage}){
   if (text != null) { const ta = p.querySelector('.ocr-tx'); ta.value = text; if (text) { ta.focus(); ta.select(); } }
   if (src != null) p.querySelector('.ocr-src').textContent = src;
   if (status != null) p.querySelector('.ocr-msg').textContent = status;
-  if (progress !== undefined) { const bar = p.querySelector('.ocr-bar'); bar.style.display = progress == null ? 'none' : ''; bar.firstChild.style.width = Math.round((progress || 0) * 100) + '%'; }
+  if (progress !== undefined) { const bar = p.querySelector('.ocr-bar'); bar.style.display = progress == null ? 'none' : ''; bar.firstChild.style.width = Math.round((progress || 0) * 100) + '%';
+    OCR.pr = progress; if (FONTID.waitRead && FONTID.waitRead === FONTID.run && progress != null) fiStatus('辨識文字中…', progress); }   // (字型 waiting for this reading shows it too)
   if (busy != null) p.querySelectorAll('.ocr-ft:not(.ocr-ft2) button').forEach(b => b.disabled = busy);
   if (canImage != null) p.querySelector('[data-o="image"]').style.display = canImage ? '' : 'none';
   p.querySelectorAll('[data-dir]').forEach(b => b.classList.toggle('on', b.dataset.dir === OCR.dir));
@@ -8948,7 +8949,7 @@ function closeOcr(){
    (installed) or 下載 (Google Fonts). Nothing here changes the document.
    ==================================================================== */
 const FONTID_KEY = 'pdfeditor.fontid.v1';
-const FONTID = {tab:'text', job:-1, run:0, startRun:0, busy:false, recent:[], pdfRecent:[], imgRecent:[], fetchCss:null, timeout:8000, deadline:12000,
+const FONTID = {tab:'text', job:-1, run:0, startRun:0, busy:false, waitRead:0, recent:[], pdfRecent:[], imgRecent:[], fetchCss:null, timeout:8000, deadline:12000,
   google:(() => { try { const v = JSON.parse(localStorage.getItem(FONTID_KEY)); return !(v && v.google === false); } catch (_) { return true; } })()};
 // the window shows the tab FONTID.tab says (a new window opens on the tab last used)
 function paintOcrTab(){
@@ -9016,7 +9017,7 @@ function showPdfFonts(fonts){
 function renderPdfFonts(fonts){
   const el = OCR.panel.querySelector('.fi-pdf');
   el.innerHTML = '<div class="fi-h">PDF 記錄的字型</div>' + fonts.map(f => {
-    if (f.generic) return `<div class="fi-row" data-key="pdf:${esc(f.key)}"><div class="fi-name"><span class="fi-label">PDF 沒有記錄字型名稱</span></div></div>`;
+    if (f.generic) return `<div class="fi-row" data-key="pdf:${esc(f.key)}"><div class="fi-name"><span class="fi-label">${f.unread ? '讀不到這個字型' : 'PDF 沒有記錄字型名稱'}</span></div></div>`;
     const label = !f.local ? f.name : f.local.alias ? `${f.name}，以 ${f.local.label} 代替` : f.local.label + (f.local.label !== f.name ? `（${f.name}）` : '');
     const act = f.local ? `<button data-fa="apply" data-family="${esc(f.local.family)}">套用</button>` : f.google ? `<button data-fa="download" data-gf="${esc(f.google.family)}">下載</button>` : '<span class="fi-none">這台電腦沒有</span>';
     return `<div class="fi-row" data-key="pdf:${esc(f.key)}"><div class="fi-name"><span class="fi-label" title="${esc(label)}">${esc(label)}</span><span class="fi-src">${f.embedded ? '已內嵌' : '未內嵌'}</span></div><span class="fi-pct">100%</span>${act}</div>`;
@@ -9044,7 +9045,9 @@ async function fontIdImage(job, run = ++FONTID.run){
   const out = p.querySelector('.fi-img'); out.innerHTML = '';
   FONTID.busy = true; fiStatus('讀取中…');
   try {
-    await OCR.readP; if (stop()) return;
+    if (OCR.reading) { FONTID.waitRead = run; fiStatus('辨識文字中…', OCR.pr); }   // the box is still being read (文字): its progress, here too
+    try { await OCR.readP; } finally { if (FONTID.waitRead === run) FONTID.waitRead = 0; }
+    if (stop()) return;
     let g = OCR.glyphs && OCR.glyphs.job === job ? OCR.glyphs : null;
     if (!g) { fiStatus(OCR.worker ? '辨識字形中…' : '載入辨識引擎…（第一次需要幾秒鐘）', 0); g = await ocrGlyphsOnly(job); if (stop()) return; }
     let set = g ? FontId.glyphsFromImage(g.img, g.symbols) : {cjk:[], latin:[], order:''};

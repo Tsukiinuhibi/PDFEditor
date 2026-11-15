@@ -157,6 +157,16 @@ await dragPdfBox(BOX.mixed);
 await win.click('#ocrPanel [data-o="refont"]'); s = await settled();
 check('重新比對 during a run: two groups, not more', JSON.stringify(s.groups.map(g => g.title)) === '["中文","英數字"]' && s.groups.every(g => g.rows.length), s.groups.map(g => g.title));
 await A(() => { __gf.mode = 'ok'; });
+// (v1.0.52) 字型 waiting for the box's reading (文字) shows that reading's progress, not a still 讀取中…
+let sawProgress = false;
+await dragPdfBox(BOX.dejavu);
+{ const t0 = Date.now(); while (Date.now() - t0 < 30000) {
+  const st = await A(() => { const p = document.querySelector('#ocrPanel'); return p && {msg:p.querySelector('.fi-msg').textContent, bar:getComputedStyle(p.querySelector('.fi-bar')).display !== 'none'}; });
+  if (st && st.msg === '辨識文字中…' && st.bar) { sawProgress = true; break; }
+  const s0 = await state(); if (s0 && (s0.groups.length || s0.pdf.length)) break;
+  await win.waitForTimeout(50); } }
+s = await settled();
+check('字型 waiting for the box\'s reading: its progress shown', sawProgress, {msg:s.msg});
 // a new box while matching: only the new box's result
 await dragPdfBox(BOX.wqy); await win.waitForTimeout(600); await dragPdfBox(BOX.dejavu); s = await settled();
 check('new box while matching: its own result only', first(s).label === 'DejaVu Serif' && s.groups.length === 1, s.groups.map(g => g.rows[0]));
@@ -207,6 +217,11 @@ await dragPdfBox(LINE.google); s = await settled();
 check('a Google family: 下載', s.pdf.length === 1 && s.pdf[0].action === 'download', s.pdf);
 await dragPdfBox(LINE.generic); s = await settled();
 check('no usable name', s.pdf.length === 1 && s.pdf[0].name === 'PDF 沒有記錄字型名稱' && s.pdf[0].pct == null && s.pdf[0].action === '', s.pdf);
+// (v1.0.52) a font the page has not loaded (not in pdf.js's commonObjs): 「讀不到這個字型」, not 「PDF 沒有記錄字型名稱」
+await A2(() => { window.__pdfapp.S.pages[0].page.commonObjs.has = () => false; });
+await dragPdfBox(LINE.dejavu); s = await settled();
+await A2(() => { delete window.__pdfapp.S.pages[0].page.commonObjs.has; });
+check('a font not loaded: 讀不到這個字型', s.pdf.length === 1 && s.pdf[0].name === '讀不到這個字型' && s.pdf[0].action === '', s.pdf);
 await dragPdfBox(LINE.wqy); s = await settled();
 check('Word bold name: the installed font, one row', s.pdf.length === 1 && s.pdf[0].name.includes('文泉驛正黑') && s.pdf[0].action === 'apply', s.pdf);
 // the Chinese names are still being read (first start): matched as soon as they are known

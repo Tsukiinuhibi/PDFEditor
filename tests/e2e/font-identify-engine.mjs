@@ -175,6 +175,8 @@ await A(fonts => {
     if (__gf.mode === 'throw') throw new TypeError('Failed to fetch');
     if (__gf.mode === 'hang') return new Promise(() => {});
     if (__gf.mode === 'first' && __gf.urls.length > 1) return new Promise(() => {});   // only the first request is answered
+    if (__gf.mode === 'refuse') return {ok:false, status:429, text:async () => ''};   // too many requests
+    if (__gf.mode === 'forbid') return {ok:false, status:403, text:async () => ''};
     const fams = new URL(url).searchParams.getAll('family').map(f => f.split(':')[0]);
     if (fams.includes('Bad Family')) return {ok:false, status:400, text:async () => ''};
     const css = fams.map(f => (__gf.fonts[f] || __gf.fonts.Arimo).map(([w, b64]) =>
@@ -197,6 +199,12 @@ r = await A(async ents => { __gf.urls = []; const res = await FontId.loadGoogle(
 check('a bad name: retried one by one, the others load', r.urls === 4 && JSON.stringify(r.failed) === '["Bad Family"]' && r.n === 2 && !r.offline, r);
 r = await A(async ents => { __gf.mode = 'throw'; const res = await FontId.loadGoogle(ents, 'CRag', {fetchCss:__gfFetch}); __gf.mode = 'ok'; return {offline:res.offline, n:res.cands.length}; }, [E('Tinos', true), E('Arimo')]);
 check('no network: offline', r.offline && r.n === 0, r);
+// (v1.0.52) Google refusing (429 too many requests, 403 forbidden): not asked again one family at a time, nothing more asked
+for (const [mode, code] of [['refuse', 429], ['forbid', 403]]) {
+  r = await A(async ([ents, mode]) => { __gf.urls = []; __gf.mode = mode; const res = await FontId.loadGoogle(ents, 'GRag' + mode, {fetchCss:__gfFetch}); __gf.mode = 'ok';
+    return {asked:__gf.urls.length, n:res.cands.length, failed:res.failed.length}; }, [Array.from({length:25}, (_, k) => E('Fake Latin ' + k)), mode]);
+  check(`${code} from Google: no one-by-one retries, nothing more asked`, r.asked <= 3 && r.n === 0 && r.failed === 25, r);
+}
 r = await A(async ents => { __gf.mode = 'hang'; const t0 = performance.now(); const res = await FontId.loadGoogle(ents, 'DRag', {fetchCss:__gfFetch, timeout:300}); __gf.mode = 'ok'; return {offline:res.offline, n:res.cands.length, ms:Math.round(performance.now() - t0)}; }, [E('Tinos', true), E('Arimo')]);
 check('a request that never answers: offline after the timeout', r.offline && r.n === 0 && r.ms < 2000, r);
 r = await A(async ents => { __gf.urls = []; __gf.mode = 'hang'; const t0 = performance.now(); const res = await FontId.loadGoogle(ents, 'ERag', {fetchCss:__gfFetch, timeout:300}); __gf.mode = 'ok';
