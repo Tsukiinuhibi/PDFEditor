@@ -59,7 +59,7 @@ r = await an('WenQuanYi Zen Hei', '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc'
 check('vmtx without vert is not enough', !!r && r.vert === false, r);
 const dv = (await A(() => window.__pdfapp.fontCat())).fams.find(f => f.family === 'DejaVu Serif');
 check('faces listed', !!dv && Array.isArray(dv.faces) && dv.faces.some(x => /bold/i.test(x.style)) && dv.faces.some(x => /^(book|regular)$/i.test(x.style)), dv && dv.faces);
-check('cache v2', await A(() => !!localStorage.getItem('pdfeditor.fontcat.v2')));
+check('cache v3', await A(() => !!localStorage.getItem('pdfeditor.fontcat.v3')));
 await A(b64 => window.__pdfapp.registerTestFont({family:'PDFE Vert Test', b64}), b64Of(path.join(FIX, 'vert-test.ttf')));
 const vt = (await A(() => window.__pdfapp.fontCat())).fams.find(f => f.family === 'PDFE Vert Test');
 check('test font listed', !!vt && vt.vert === true && vt.embed === 'ok', vt);
@@ -215,6 +215,15 @@ bk = await blockOf('Drift line');
 const dd = [ed0, pg0, ed1, pg1].every(v => v != null) ? (pg1 - ed1) - (pg0 - ed0) : NaN;
 check('an emptied editor that takes a font: the text is written where the editor showed it (±0.3 pt, against the block as it was)', Math.abs(dd) <= .3 && !!bk && bk.fonts.includes('DejaVuSerif'), {dd, ed0, pg0, ed1, pg1, bk});
 await fmt('font', '');   // (the default font for new text back to 思源黑體)
+// (v1.0.52) a font list an older version cached (v2: licences read the old way, another face analysed) is not trusted:
+// the fonts are read again once, and the old list goes
+await app.evaluate(({dialog}) => { dialog.showMessageBoxSync = () => 0; });   // (leave the edited page without asking)
+await A(() => { localStorage.removeItem('pdfeditor.fontcat.v3');
+  localStorage.setItem('pdfeditor.fontcat.v2', JSON.stringify({'DejaVu Serif|DejaVuSerif':{name:'DejaVu Serif', cjk:false, embed:'no', vert:false, bytes:1}})); });
+await win.reload(); await win.waitForTimeout(3000);
+await A(() => window.__pdfapp.fontReady());
+const stale = await A(() => { const f = window.__pdfapp.fontCat().fams.find(x => x.family === 'DejaVu Serif'); return {embed:f && f.embed, v2:localStorage.getItem('pdfeditor.fontcat.v2')}; });
+check('a font list an older version cached is read again (its licences as this version reads them)', stale.embed === 'ok' && stale.v2 === null, stale);
 
 // ---- part 4: the font menu for page text, its prompts, and the original font picked up -------------------
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

@@ -4117,7 +4117,9 @@ async function deleteAnnot(i, id, label = '已刪除註解'){
    background, one file at a time, and the result is cached in localStorage.
    ==================================================================== */
 const FONTCAT = {ok:null, fams:[], busy:false, done:0, total:0, gen:0, subs:new Set()};   // gen: bumps when the list itself changes
-const FONTCAT_KEY = 'pdfeditor.fontcat.v2';   // v2 adds embed / vert / bytes
+const FONTCAT_KEY = 'pdfeditor.fontcat.v3';   // v2 added embed / vert / bytes; v3 (v1.0.52): licences read by fontLicence, the face
+// analysed is the one embedded (chooseFace) — a list an older version cached is read again once, and goes
+try { localStorage.removeItem('pdfeditor.fontcat.v2'); } catch (_) {}
 const FONT_FACES = new Map();   // family → its FontData faces from queryLocalFonts (to read a face's file later)
 const TEST_FONTS = new Map();   // (tests) fonts given as bytes: 'family|Regular' / 'family|Bold' → Uint8Array
 const FONT_LANGS = ['zh-TW', 'zh-HK', 'zh-MO', 'zh', 'zh-SG', 'en'];
@@ -5565,7 +5567,7 @@ const realStrut = lines => { const sz = lines.flat().map(r => +r.size).filter(v 
 // isCFF looks for a property fontkit does not have): readers warn of a mismatch or refuse it. Written as CFF instead:
 // CIDFontType0, the file in /FontFile3 marked /OpenType (PDF 1.6). Only a CFF that is not CID-keyed: its CIDs are its
 // glyph numbers, which the text is written in (a CID-keyed one, a big CJK .otf, stays as pdf-lib writes it). A subset
-// is bare CFF data and already right
+// is bare CFF data, written as pdf-lib's subset embedder does (its own isCFF)
 function markOpenType(f){
   const em = f && f.embedder, cff = em && em.font && em.font['CFF ']; if (!cff || cff.topDict.ROS) return;
   em.isCFF = () => true;
@@ -11986,7 +11988,7 @@ function applyRibbon(){ $('#ribbon').classList.toggle('icons-only', !!RIBBON.ico
 let SET = null;   // the open settings window
 /* 設定檔: the program's settings — the localStorage keys starting with pdfeditor. — saved to a .json file as they are
    stored, and read back (importSettings) */
-const SETTINGS_SKIP = new Set(['pdfeditor.fontcat.v2', 'pdfeditor.seenversion.v1']);   // this computer's font list cache; which version's notes were seen
+const SETTINGS_SKIP = new Set(['pdfeditor.fontcat.v3', 'pdfeditor.fontcat.v2', 'pdfeditor.seenversion.v1']);   // this computer's font list cache; which version's notes were seen
 function settingsSnapshot(){
   const settings = {}; let read = true;
   try {

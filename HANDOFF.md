@@ -128,7 +128,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 字型選單在修改原文時也有：`fontBlockReason` 灰掉「授權不允許嵌入」（直書另外灰掉「沒有直書資料」）；`embed:'full'` 的字型選之前跳「整個字型會放進檔案」。
 - v1.0.52 的修正：
   - 授權（`fontLicence`）：舊字型的 fsType 同時有 bit 1～3 好幾個時，照 OpenType 規定以最寬鬆的為準（0x0006＝限制＋預覽與列印 → 可以嵌入）；只有 bitmap 的照舊不能嵌入。
-  - 整個嵌入的 CFF（.otf）：pdf-lib 的 `isCFF` 看 fontkit 沒有的 `font.cff`，會把整個 .otf 當 TrueType 寫（CIDFontType2＋`/FontFile2`，poppler 說 mismatch）。`markOpenType` 改寫成 CIDFontType0＋`/FontFile3 /Subtype /OpenType`；只限非 CID-keyed 的 CFF（CID＝字形編號，文字就是用字形編號寫的），CID-keyed 的（大型中日文 .otf）維持 pdf-lib 的寫法。子集本來就是純 CFF，不用改。
+  - 整個嵌入的 CFF（.otf）：pdf-lib 的 `isCFF` 看 fontkit 沒有的 `font.cff`，會把整個 .otf 當 TrueType 寫（CIDFontType2＋`/FontFile2`，poppler 說 mismatch）。`markOpenType` 改寫成 CIDFontType0＋`/FontFile3 /Subtype /OpenType`；只限非 CID-keyed 的 CFF（CID＝字形編號，文字就是用字形編號寫的），CID-keyed 的（大型中日文 .otf）維持 pdf-lib 的寫法。子集是純 CFF 資料，照 pdf-lib 子集嵌入的寫法（它自己的 `isCFF`），不經過這裡。
   - 字面選擇（`chooseFace`，字型目錄分析的字面也用它）：照編輯器（瀏覽器 CSS 字型比對）挑——正體、一般寬度優先；一般字用 Regular，沒有就 500、再來較細的、再來較粗的（`faceWeight` 從字面名稱猜粗細）；粗體用 Bold，沒有就不含 semi／extra 的粗體，都沒有就一般字面假粗體（不會選到 Bold Condensed 這類窄字面）。
   - 第一次點頁面文字：`ensureFontInfo` 為了授權讀的那次（`readFace(face, {keep:true})`，`KEPT_FACE`，最多一個檔、5 秒）直接給接著的 `systemFontBytes` 用，同一個字型檔只讀一次。
   - 清空的頁面文字編輯器再選字型：編輯器本身的字型（strut）維持思源黑體（和存檔排版、再打開時一樣），字型從游標處開一段 run，存好的文字在編輯器顯示的位置。
@@ -183,7 +183,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 文件上按下右鍵時，關便利貼的 pointerdown 不再處理（儲存會擋住輸入，右鍵事件會被吃掉），改由上面的處理先存。手形工具只用左鍵拖曳畫面。文字方塊工具按右鍵不再新增文字方塊。
 
 ### 3.9.5 設定檔（v1.0.32）
-- 設定 → 設定檔：〔匯出設定…〕`exportSettings()` 把 `settingsSnapshot()` 存成「PDF工作台-設定-YYYYMMDD.json」（桌面版走另存新檔，瀏覽器版下載）：`{app:'PDF 工作台', kind:'settings', version, exported, settings:{鍵: localStorage 原文}}`，收所有 `pdfeditor.` 開頭的鍵，`SETTINGS_SKIP`（字型清單快取 `fontcat.v2`、版本記錄 `seenversion.v1`）除外。新增的設定鍵自動包含；只屬於這台電腦的新鍵要加進 `SETTINGS_SKIP`。
+- 設定 → 設定檔：〔匯出設定…〕`exportSettings()` 把 `settingsSnapshot()` 存成「PDF工作台-設定-YYYYMMDD.json」（桌面版走另存新檔，瀏覽器版下載）：`{app:'PDF 工作台', kind:'settings', version, exported, settings:{鍵: localStorage 原文}}`，收所有 `pdfeditor.` 開頭的鍵，`SETTINGS_SKIP`（字型清單快取 `fontcat.v3`（舊的 `fontcat.v2` 也略過）、版本記錄 `seenversion.v1`）除外。新增的設定鍵自動包含；只屬於這台電腦的新鍵要加進 `SETTINGS_SKIP`。
 - 〔匯入設定…〕`chooseSettingsFile()` → `importSettings(file)`：`parseSettingsFile` 不是本程式的設定檔或沒有可用項目就提示「這不是 PDF 工作台的設定檔」；有還沒另存的修改（`anyDirty()`）就先擋下、什麼都不寫（重新載入時若在「不儲存並關閉」按取消，設定會只套用一半）；否則先關掉設定視窗（一次只開一個視窗），確認「匯入設定」後寫入檔案裡的項目（其他的不動），`location.reload()`。匯出的另存對話框帶 `avoid`（開著的 PDF 與它另存的檔），不會蓋掉原檔。
 - v1.0.51 的修正：
   - 已知的設定各有自己的形狀（`SETTING_SHAPE`、`settingShapeOk`：按鍵、顏色、戳記、最近用的工具、人員名單…）；格式對但形狀不對的值（手改過或壞掉的檔案）會略過，問題裡說略過幾項。沒列的鍵照原樣接受。
@@ -432,9 +432,9 @@ npm start          # 開啟程式（開發模式不會檢查更新）
   - 文字方塊的 run 可以有 `font`（CSS 家族名，空的就是預設）。預設字型堆疊是 `TB_FONT`，最前面是內建的 `PDFE Sans`（思源黑體），所以有沒有網路都一樣。編輯器裡的 span 用 `fontStack(f)`（指定字型後面接預設堆疊），這台電腦沒有那個字型時自動退回思源黑體，但字型名稱照樣保留。
   - 字型選單 `openFontMenu()`（`#fontMenu`）：搜尋框、預設／最近用過（`pdfeditor.fonts.recent.v1`，只列這台電腦有的）／中文字型／其他字型。名稱捲到看得到時才套用它自己的字型（一次套用幾百個字型很慢）。字型還在背景讀取時，打開的選單只更新「正在讀取字型…（N／M）」，清單不重畫（避免點到一半項目被換掉），讀完才重畫一次（滑鼠按著時延到放開）。
   - 重新打開舊的文字方塊時，預設的字型、粗體、斜體、底線不會套到方塊本身（只給新方塊），否則按 Esc 就會把舊方塊整個改掉。
-  - 目錄 v2（`pdfeditor.fontcat.v2`）多記 `embed`（OS/2 fsType：`ok`／`full`／`no`）、`vert`（`vhea`＋`vmtx`＋GSUB `vert`）、`bytes`，以及每個家族的所有字面 `faces`（`FONT_FACES` 存 `queryLocalFonts` 的原物件）。測試用 `registerTestFont` 把字型位元組當成已安裝字型（`TEST_FONTS`）。
+  - 目錄 v3（`pdfeditor.fontcat.v3`，v1.0.52：授權照 `fontLicence` 讀、分析的字面就是要嵌入的那個（`chooseFace`）；舊版存的 v2 不採用、啟動時刪掉，所有字型重讀一次）。v2 起多記 `embed`（OS/2 fsType：`ok`／`full`／`no`）、`vert`（`vhea`＋`vmtx`＋GSUB `vert`）、`bytes`，以及每個家族的所有字面 `faces`（`FONT_FACES` 存 `queryLocalFonts` 的原物件）。測試用 `registerTestFont` 把字型位元組當成已安裝字型（`TEST_FONTS`）。
   - 格式列與 `currentTBStyle` 讀游標旁邊那段文字的樣式（`caretStyleNode`）：游標在元素之間時（例如剛打開編輯器、游標在最後）取前一段文字。
-- localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, find.v1, fontcat.v2, fontid.v1, fonts.recent.v1, lastact.v1, seenversion.v1, lasttool.v1, pagecolor, people.v1, print.v1, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
+- localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, find.v1, fontcat.v3, fontid.v1, fonts.recent.v1, lastact.v1, seenversion.v1, lasttool.v1, pagecolor, people.v1, print.v1, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
 - 測試用的鉤子：`window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars, getAnns, TBE, sel, links, flatten, wordFonts, …}`，端對端測試會用到，不要刪。
 
 ---

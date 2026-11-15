@@ -20,7 +20,7 @@ const openFileTab = async () => { await win.click('#bSettings'); await win.waitF
 
 // ---- part 1: export ---------------------------------------------------------------------------------------------------
 const PEOPLE = JSON.stringify({names:['root', '王小明'], def:'王小明'});
-await A(P => { localStorage.setItem('pdfeditor.theme', 'dark'); localStorage.setItem('pdfeditor.people.v1', P); localStorage.setItem('pdfeditor.fontcat.v2', '{"x":1}'); }, PEOPLE);
+await A(P => { localStorage.setItem('pdfeditor.theme', 'dark'); localStorage.setItem('pdfeditor.people.v1', P); localStorage.setItem('pdfeditor.fontcat.v3', '{"x":1}'); }, PEOPLE);
 const FILE = path.join(TMP, 'settings.json');
 await answerSave(FILE);
 await openFileTab();
@@ -28,7 +28,7 @@ await win.click('#modal [data-sf="export"]'); await win.waitForTimeout(800);
 const j = fs.existsSync(FILE) ? JSON.parse(fs.readFileSync(FILE, 'utf8')) : null;
 check('匯出: a PDF 工作台 settings file of this version', !!j && j.app === 'PDF 工作台' && j.kind === 'settings' && j.version === PKG.version && !isNaN(Date.parse(j.exported)), j && {app:j.app, kind:j.kind, version:j.version, exported:j.exported});
 check('匯出: the settings as they are stored', !!j && j.settings['pdfeditor.theme'] === 'dark' && j.settings['pdfeditor.people.v1'] === PEOPLE, j && Object.keys(j.settings));
-check('匯出: not the font list cache, not the version record', !!j && !('pdfeditor.fontcat.v2' in j.settings) && !('pdfeditor.seenversion.v1' in j.settings) && !!(await LS('pdfeditor.seenversion.v1')), j && Object.keys(j.settings));
+check('匯出: not the font list cache, not the version record', !!j && !('pdfeditor.fontcat.v3' in j.settings) && !('pdfeditor.seenversion.v1' in j.settings) && !!(await LS('pdfeditor.seenversion.v1')), j && Object.keys(j.settings));
 const sv = await asked();
 check('匯出: the file name offered, then the message', !!sv && sv.length === 1 && /^PDF工作台-設定-\d{8}\.json$/.test(path.basename(sv[0])) && (await toasts()).some(t => t.includes('已匯出設定')), {sv, t:await toasts()});
 const mtime = fs.existsSync(FILE) ? fs.statSync(FILE).mtimeMs : 0;
