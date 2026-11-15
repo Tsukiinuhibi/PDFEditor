@@ -1378,7 +1378,7 @@ async function readsAlike(a, b){
   finally { for (const d of docs) await d.destroy().catch(() => {}); worker.destroy(); }
 }
 async function openInNewTab(bytes, name, handle){
-  if (NUDGE) await flushNudge();   // (a nudge in the tab being left: written first, or it would be dropped)
+  try { await flushNudge(); } catch (_) {}   // (a nudge in the tab being left: written first, or it would be dropped)
   // a signed one stays as it is: rewriting it on opening would quietly break its signature
   const rd = await readablePdf(bytes), freed = rd.state === 'decrypted' && !rd.signed;
   const prev = active;
@@ -2813,7 +2813,7 @@ function exportSize(i, dpi){
 }
 // finish anything still being edited (open note, pen strokes waiting to be saved, text being typed)
 async function settleEdits(){
-  try { if (NUDGE) await flushNudge(); } catch (_) {}   // (an arrow-key nudge not written yet)
+  try { await flushNudge(); } catch (_) {}   // (an arrow-key nudge not written yet, or being written: waited for)
   try { await closeNote(true); } catch (_) {}
   try { await flushPen(); } catch (_) {}
   try { await commitTextEditor(); await tbSaving; } catch (_) {}
@@ -3875,6 +3875,7 @@ async function pasteNote(){
 }
 async function copySelected(cut){
   if (!S.pdf) return;
+  try { await flushNudge(); } catch (_) {}   // (an arrow-key nudge not written yet goes into the copy)
   const sel = selectedPages(), n = S.pages.length;
   if (cut && sel.length >= n) { toast('不能剪下全部頁面，文件至少要保留一頁', 'err'); return; }
   busy(true, cut ? '剪下頁面中…' : '複製頁面中…');
@@ -8678,6 +8679,7 @@ async function openDigiSign(i, box){
     f.querySelectorAll('input[name=cm]').forEach(r => r.onchange = sync); sync();
   }});
   if (!res) return;
+  if (!(await settleEdits())) return;   // (a nudge or text not written yet goes in before the signature, not after it)
   // signed here (S.signed) or by someone else: signing rewrites the whole file and the signature there would break
   const signedBefore = S.signed || await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false}).then(signedDoc, () => false);
   if (signedBefore && !(await confirmDlg('再次簽署', '此文件已有數位簽章，本工具會重寫整份檔案，原有簽章將失效。確定要繼續？', '繼續'))) return;
@@ -12447,6 +12449,7 @@ window.__pdfapp = {
   fontBytesInfo:async (family, bold) => { const r = await realFontInfo(family, bold); return {bytes:r.bytes.length, synthetic:r.synthetic}; },
   failEmbed:family => { EMBED_FAIL.add(family); },
   fontkitPatch:on => { fkPatchOn = !!on; },
+  settleEdits, nudgeState:() => ({pending:!!NUDGE, running:!!NUDGE_RUN}), pageClipBytes:() => PAGE_CLIP ? PAGE_CLIP.bytes : null,
   faceChoice:(styles, bold) => { const r = chooseFace(styles.map(style => ({style})), bold); return {style:r.face.style, synthetic:r.synthetic}; },
   countFaceReads:family => { window.__faceReads = 0; for (const f of FONT_FACES.get(family) || []) if (!f.__counted) { const b = f.blob.bind(f); f.blob = () => { window.__faceReads++; return b(); }; f.__counted = true; } },
   fontCatPatch:(family, fields) => { const f = FONTCAT.fams.find(x => x.family === family); if (f) Object.assign(f, fields); for (const k of [...RFI.keys()]) if (k.startsWith(family + '|')) RFI.delete(k); },

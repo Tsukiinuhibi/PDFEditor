@@ -164,5 +164,34 @@ expectErrors = false;
 d = await dialog(); t = await toasts();
 check('a signed 「限制編輯」 file (kept encrypted): 「有加密保護」, no notice about the signature, nothing changed', d === null && t.some(x => x.includes('有加密保護')) && !t.some(x => x.includes('數位簽章')) && (await S()).undo === 0, {d, t});
 
+// ---- (v1.0.53) a nudge not written yet, then 數位簽章 at once: the nudge goes in before signing ---------------------------
+// (afterwards nothing asks or says that the new signature breaks, and the signed file has the nudge)
+const NUDGE_PDF = await make('nudge-sign.pdf', {field:false});
+await open(NUDGE_PDF); await toasts();
+await drawRect();
+await Ev(() => window.__pdfapp.setTool('select')); await win.waitForTimeout(400);
+const sq0 = await Ev(async () => { const app = window.__pdfapp, a = (await app.getAnns(app.S.current)).find(x => x.subtype === 'Square'); return a && {x:a.x, y:a.y, w:a.w, h:a.h}; });
+const onPage = (x, y) => Ev(([x, y]) => { const app = window.__pdfapp, r = app.S.els[app.S.current].getBoundingClientRect(); return [r.left + x * app.S.scale, r.top + y * app.S.scale]; }, [x, y]);
+await win.mouse.click(...await onPage(sq0.x + 4, sq0.y + sq0.h / 2)); await win.waitForTimeout(500);
+for (let k = 0; k < 3; k++) await win.keyboard.press('ArrowRight');
+const savedBefore = fs.readdirSync(TMP).filter(f => /^saved-\d+\.pdf$/.test(f)).length;
+await Ev(() => window.__pdfapp.setTool('digisign')); await win.waitForTimeout(200);
+{ const box = await win.locator('.page').first().boundingBox();
+  await win.mouse.move(box.x + 300, box.y + 500); await win.mouse.down(); await win.mouse.move(box.x + 500, box.y + 570, {steps:5}); await win.mouse.up(); }
+await win.waitForTimeout(1200);
+await win.click('input[name=cm][value=self]').catch(() => {});
+await win.fill('#dsName', 'Tester').catch(() => {});
+await win.click('#dsGo').catch(() => {});
+for (let k = 0; k < 80 && fs.readdirSync(TMP).filter(f => /^saved-\d+\.pdf$/.test(f)).length <= savedBefore; k++) await win.waitForTimeout(250);
+await win.waitForTimeout(2500);
+const nsAsk = await dialog(), nsToasts = await toasts();
+const nsFile = fs.readdirSync(TMP).filter(f => /^saved-\d+\.pdf$/.test(f)).map(f => path.join(TMP, f)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+let nsXs = null;
+try { const d = await PDFDocument.load(fs.readFileSync(nsFile)), an = d.getPage(0).node.Annots();
+  nsXs = an.asArray().map(r => d.context.lookup(r)).filter(o => String(o.get(PDFName.of('Subtype'))) === '/Square').map(o => { const R = o.lookup(PDFName.of('Rect')).asArray().map(n => n.asNumber()); return Math.min(R[0], R[2]); }); } catch (e) { nsXs = String(e); }
+check('a nudge, then 數位簽章 at once: signed with the nudge in, nothing says the new signature breaks', nsAsk === null && !nsToasts.some(x => x.includes('數位簽章') && x.includes('失效'))
+  && Array.isArray(nsXs) && nsXs.some(x => Math.abs(x - (sq0.x + 3)) < .3), {nsAsk, nsToasts, nsXs, x0:sq0.x, file:nsFile && path.basename(nsFile)});
+if (nsAsk) { await win.click('#modal button:has-text("取消")').catch(() => {}); await win.waitForTimeout(500); }
+
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
 console.log(failed ? `${failed} check(s) failed` : 'all checks passed');
