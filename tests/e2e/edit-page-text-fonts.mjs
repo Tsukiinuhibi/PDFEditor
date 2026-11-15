@@ -224,6 +224,17 @@ const nest = await A(() => { const e = document.querySelector('.tbed'); return e
 await commit();
 bk = await blockOf('Nest one');
 check('an emptied editor, two fonts picked before typing: one run, in the second font', !!nest && nest.spans === 1 && nest.inner === 0 && !!bk && bk.fonts.includes('DejaVuSans') && !bk.fonts.includes('DejaVuSerif'), {nest, bk});
+// (v1.0.53, final review) a block an earlier version wrote (lines split the old way, no layout mark): opened again, the
+// editor shows its text where it is, and writing it again leaves it there (it used to move up ~1 pt at 13 px)
+await A(() => window.__pdfapp.oldLayout(true));
+await clickText('Nest one'); await win.keyboard.press('End'); await win.keyboard.type('!'); await commit();   // (written the old way)
+await A(() => window.__pdfapp.oldLayout(false));
+const pgOld = await pageBaseline('Nest one');
+await clickText('Nest one'); const edOld = await edBaseline();
+await win.keyboard.press('End'); await win.keyboard.type('?'); await commit();
+const pgNew = await pageBaseline('Nest one');
+check('a block an earlier version wrote: the editor shows it where it is, and writing it again leaves it there (±0.3 pt)', [pgOld, edOld, pgNew].every(v => v != null)
+  && Math.abs(edOld - pgOld) <= .3 && Math.abs(pgNew - pgOld) <= .3, {pgOld, edOld, pgNew});
 await fmt('font', '');   // (the default font for new text back to 思源黑體)
 // (v1.0.52) a font list an older version cached (v2: licences read the old way, another face analysed) is not trusted:
 // the fonts are read again once, and the old list goes

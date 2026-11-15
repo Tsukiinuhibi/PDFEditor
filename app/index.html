@@ -4292,6 +4292,7 @@ const runFont = (r, K) => `${r.italic ? 'italic ' : ''}${r.bold ? 700 : 400} ${r
 // font's ascent and descent, a line holds all of them plus the editor's own font (the strut, strut = {size, font, bold}),
 // and the runs of a line share one baseline
 const TB_LH = 1.3;
+let TB_OLD_SPLIT = false;   // (tests) the line spacing split evenly, as versions before 1.0.53 did
 // (font, size, bold) → that font's box in a line: top / bottom around the baseline, ascent a and descent d
 function fontBoxMeasurer(ctx){
   const memo = new Map();
@@ -4301,8 +4302,8 @@ function fontBoxMeasurer(ctx){
       ctx.font = `${bold ? 700 : 400} ${size}px ${fontStack(font)}`;
       // (the leading split as Chrome lays a line out: the upper half rounded down, the rest below — measured, e.g. 13 px
       // 思源黑體: baseline 13 px below the line top, not 13.95)
-      const m = ctx.measureText('字Hg'), a = m.fontBoundingBoxAscent, d = m.fontBoundingBoxDescent, lead = size * TB_LH - (a + d), up = Math.floor(lead / 2);
-      memo.set(k, {top:-(a + up), bottom:d + lead - up, a, d});
+      const m = ctx.measureText('字Hg'), a = m.fontBoundingBoxAscent, d = m.fontBoundingBoxDescent, lead = size * TB_LH - (a + d), up = TB_OLD_SPLIT ? lead / 2 : Math.floor(lead / 2);
+      memo.set(k, {top:-(a + up), bottom:d + lead - up, a, d, top0:-(a + lead / 2)});   // top0: the even split of versions before 1.0.53
     }
     return memo.get(k);
   };
@@ -5727,7 +5728,8 @@ async function writePageText(doc, i, x, y, lines, box, {rot = 0, vert = false, s
     const res = page.node.Resources(); let props = res.lookupMaybe(N('Properties'), PDFDict);
     if (!props) { props = ctx.obj({}); res.set(N('Properties'), props); }
     let name; do { name = 'PDFE_T' + Math.floor(Math.random() * 1e6); } while (props.has(N(name)));
-    props.set(N(name), ctx.obj({PDFE_RT:PDFHexString.fromText(JSON.stringify({lines, box, ...(vert ? {vert:true} : {})})), PDFE_M:M.map(f2), PDFE_Size:[f2(L.w), f2(L.h)],
+    // (PDFE_RT lay 2: its lines split as Chrome does, v1.0.53; a block without it was laid out the older way)
+    props.set(N(name), ctx.obj({PDFE_RT:PDFHexString.fromText(JSON.stringify({lines, box, ...(vert ? {vert:true} : TB_OLD_SPLIT ? {} : {lay:2})})), PDFE_M:M.map(f2), PDFE_Size:[f2(L.w), f2(L.h)],
       PDFE_Fonts:Object.values(used).map(u => N(u.name.slice(1))).concat([N(gs.slice(1))])}));
     appendPageContent(doc, i, `/PDFE_Text /${name} BDC\n${ops.join('\n')}\nEMC`);
     return {w:L.w, h:L.h};
@@ -5780,9 +5782,21 @@ async function readPageBlock(i, k){
     const corner = (lx, ly) => vp.convertToViewportPoint(M[0] * lx + M[2] * ly + M[4], M[1] * lx + M[3] * ly + M[5]);
     const q = [corner(0, 0), corner(sz[0], 0), corner(0, -sz[1]), corner(sz[0], -sz[1])], xs = q.map(v => v[0]), ys = q.map(v => v[1]), r = JSON.parse(rt.decodeText());
     const ang = Math.atan2(q[1][1] - q[0][1], q[1][0] - q[0][0]) * 180 / Math.PI, rot = ((Math.round(ang / 90) * 90) % 360 + 360) % 360;
-    const at = r.vert ? {x:q[1][0], y:q[1][1]} : {x:q[0][0], y:q[0][1]};   // vertical text: the editor hangs from the top-right corner
+    let at = r.vert ? {x:q[1][0], y:q[1][1]} : {x:q[0][0], y:q[0][1]};   // vertical text: the editor hangs from the top-right corner
+    if (!r.vert && r.lay !== 2) {   // written before v1.0.53 (line spacing split evenly, its first baseline lower): the editor, and the
+      const dy = await oldFirstBaselineDrop(r.lines), h = Math.hypot(q[2][0] - q[0][0], q[2][1] - q[0][1]);   // block written again, start lower by that much
+      if (dy > 0 && h > 0) at = {x:at.x + (q[2][0] - q[0][0]) / h * dy, y:at.y + (q[2][1] - q[0][1]) / h * dy};
+    }
     return {name:b.name, rt:r, rot, vert:!!r.vert, at, vbox:{x:Math.min(...xs), y:Math.min(...ys), w:Math.max(...xs) - Math.min(...xs), h:Math.max(...ys) - Math.min(...ys)}};
   } catch (e) { console.warn(e); return null; }
+}
+// how much lower the first baseline of these lines sat when versions before 1.0.53 laid them out (pt)
+async function oldFirstBaselineDrop(lines){
+  const strut = realStrut(lines); await textFontsReady(lines, strut);
+  const box = fontBoxMeasurer(document.createElement('canvas').getContext('2d')), sb = box(strut.font, strut.size, strut.bold);
+  let now = sb.top, then = sb.top0;
+  for (const r of lines[0] || []) { const b = box(r.font, r.size, r.bold); now = Math.min(now, b.top); then = Math.min(then, b.top0); }
+  return now - then;
 }
 async function pdfeBlocks(i){   // (for tests) the blocks on page i and their plain text
   const doc = await geoDoc(), bytes = pageContentBytes(doc, doc.getPage(i)); if (!bytes) return [];
@@ -12461,6 +12475,7 @@ window.__pdfapp = {
   fontBytesInfo:async (family, bold) => { const r = await realFontInfo(family, bold); return {bytes:r.bytes.length, synthetic:r.synthetic}; },
   failEmbed:family => { EMBED_FAIL.add(family); },
   fontkitPatch:on => { fkPatchOn = !!on; },
+  oldLayout:on => { TB_OLD_SPLIT = !!on; },
   writeSettingsNow:() => { saveView_(); saveTB(); saveStyles(); },
   settleEdits, nudgeState:() => ({pending:!!NUDGE, running:!!NUDGE_RUN}), pageClipBytes:() => PAGE_CLIP ? PAGE_CLIP.bytes : null,
   faceChoice:(styles, bold) => { const r = chooseFace(styles.map(style => ({style})), bold); return {style:r.face.style, synthetic:r.synthetic}; },
