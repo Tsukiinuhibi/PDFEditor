@@ -4196,7 +4196,7 @@ function loadFontCatalog(){
     FONTCAT.fams = [...byFam.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([family, {face}]) => {
       const fam = {family, ps:face.postscriptName || '', name:family, cjk:null, embed:null, vert:null, bytes:0,
         faces:FONT_FACES.get(family).map(x => ({ps:x.postscriptName || '', style:x.style || '', full:x.fullName || ''}))}, c = cache[family + '|' + fam.ps];
-      if (c) Object.assign(fam, {name:c.name || family, cjk:!!c.cjk, embed:c.embed || 'ok', vert:!!c.vert, bytes:c.bytes || 0}); else todo.push([fam, face]);
+      if (c) Object.assign(fam, {name:c.name || family, cjk:!!c.cjk, embed:c.embed || 'ok', vert:!!c.vert, bytes:c.bytes || 0, variable:!!c.variable, weight:c.weight || 400}); else todo.push([fam, face]);
       return fam;
     });
     FONTCAT.ok = true; FONTCAT.gen++; FONTCAT.done = 0; FONTCAT.total = todo.length; FONTCAT.busy = !!todo.length; fontChanged();
@@ -4299,8 +4299,10 @@ function fontBoxMeasurer(ctx){
     const k = `${bold ? 7 : 4}|${size}|${font || ''}`;
     if (!memo.has(k)) {
       ctx.font = `${bold ? 700 : 400} ${size}px ${fontStack(font)}`;
-      const m = ctx.measureText('字Hg'), a = m.fontBoundingBoxAscent, d = m.fontBoundingBoxDescent, half = (size * TB_LH - (a + d)) / 2;
-      memo.set(k, {top:-(a + half), bottom:d + half, a, d});
+      // (the leading split as Chrome lays a line out: the upper half rounded down, the rest below — measured, e.g. 13 px
+      // 思源黑體: baseline 13 px below the line top, not 13.95)
+      const m = ctx.measureText('字Hg'), a = m.fontBoundingBoxAscent, d = m.fontBoundingBoxDescent, lead = size * TB_LH - (a + d), up = Math.floor(lead / 2);
+      memo.set(k, {top:-(a + up), bottom:d + lead - up, a, d});
     }
     return memo.get(k);
   };
@@ -4421,8 +4423,13 @@ function applyTextFormat(k, v){
     if (k === 'font') st.fontFamily = v ? fontStack(v) : '';
     if (k === 'bg' && v) document.execCommand('hiliteColor', false, v);
   } else if ((k === 'size' || k === 'font') && collapsed) {   // caret only: start a run with the new size / font at the caret
-    const sp = document.createElement('span'); if (k === 'size') sp.style.fontSize = v + 'px'; else sp.style.fontFamily = fontStack(v); sp.textContent = '\u200b';
-    const r = sel.getRangeAt(0); r.insertNode(sp); const r2 = document.createRange(); r2.setStart(sp.firstChild, 1); r2.collapse(true); sel.removeAllRanges(); sel.addRange(r2);
+    const r = sel.getRangeAt(0), at = r.startContainer.nodeType === 3 ? r.startContainer.parentNode : r.startContainer;
+    if (at && at !== TBE.el && at.tagName === 'SPAN' && at.textContent === '\u200b') {   // (a run started here, still empty: it takes the new look, no run inside it)
+      if (k === 'size') at.style.fontSize = v + 'px'; else at.style.fontFamily = fontStack(v);
+    } else {
+      const sp = document.createElement('span'); if (k === 'size') sp.style.fontSize = v + 'px'; else sp.style.fontFamily = fontStack(v); sp.textContent = '\u200b';
+      r.insertNode(sp); const r2 = document.createRange(); r2.setStart(sp.firstChild, 1); r2.collapse(true); sel.removeAllRanges(); sel.addRange(r2);
+    }
   } else if (k === 'size') {
     document.execCommand('fontSize', false, '7');
     TBE.el.querySelectorAll('font[size="7"]').forEach(f => { const s = document.createElement('span'); s.style.fontSize = v + 'px'; s.innerHTML = f.innerHTML; f.replaceWith(s); });
@@ -5573,6 +5580,8 @@ function markOpenType(f){
   const em = f && f.embedder, cff = em && em.font && em.font['CFF ']; if (!cff || cff.topDict.ROS) return;
   em.isCFF = () => true;
   em.embedFontStream = async ctx => ctx.register(ctx.flateStream(await em.serializeFont(), {Subtype:'OpenType'}));
+  const cidDict = em.embedCIDFontDict.bind(em);   // (pdf-lib writes /CIDToGIDMap, which only a CIDFontType2 has)
+  em.embedCIDFontDict = async ctx => { const ref = await cidDict(ctx), d = ctx.lookup(ref); if (d instanceof PDFDict) d.delete(N_('CIDToGIDMap')); return ref; };
 }
 // a fontkit subset of these characters, read back: every glyph still has its outline (TrueType only; CFF is trusted)
 async function subsetIsSound(fk, text){
@@ -6008,7 +6017,7 @@ async function pdfFontsIn(i, box){
     let f = null; try { f = pg.page.commonObjs.has(key) ? pg.page.commonObjs.get(key) : null; } catch (_) {}
     const names = decodeFontName(f && f.name).map(cleanFontName);
     if (names.some(n => /^GlyphLessFont$/i.test(n))) { hidden += chars; continue; }
-    const generic = !f || !!f.isType3Font || !names[0] || GENERIC_FONT.test(names[0]);   // (!f: the page has not loaded this font: nothing can be read)
+    const generic = !!(f && f.isType3Font) || !names[0] || GENERIC_FONT.test(names[0]);   // (no f, the page has not loaded the font: no name either)
     let name = generic ? names[0] : plainFontName(names[0]), local = null, google = null;
     if (!generic) {
       for (const n of names) {

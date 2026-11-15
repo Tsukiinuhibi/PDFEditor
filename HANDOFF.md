@@ -120,7 +120,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 系統字型（v1.0.27）：每段 run 可以有 `font`（系統字型家族）。`realFontInfo(font, bold)` 給出要用的 fontkit 字型與位元組：空字串是內建思源黑體；系統字型由 `systemFontBytes`（`queryLocalFonts` 的一般／粗體字面；.ttc 用 `sfntFromCollection` 拆出單一字面；沒有粗體字面就 `synthetic`，寫入時 `2 Tr`＋0.03 em 描邊）取得。每個（字型、粗細）只嵌入一次：先用 `subsetIsSound` 把子集讀回來檢查，壞了或授權要求整個嵌入（`embed:'full'`）就整個嵌入。
 - fontkit 子集化的短 `loca` 問題現在在程式裡修好了（`patchFontkitSubset` 把奇數長度的字形補一個位元組），系統字型不用預先處理；內建思源黑體照舊已補齊。
 - 存檔前（`commitTextEditor`，編輯器還開著）：`resolveRealFonts` 把讀不到的字型換成思源黑體並 toast；`realTextCheck` 找出「指定字型沒有、思源黑體有」的字 → 跳「字型裡沒有這些字」，選「回去修改」編輯器維持開著，選「這些字改用思源黑體」就 `missingToDefault` 拆 run；連思源黑體都沒有的字照舊退回 FreeText 圖片做法。
-- 版面：`layoutReal(lines, strut)` 的字寬用各字型 fontkit 的前進寬（PDF 就是這樣畫），行高與基線用 `fontBoxMeasurer`（canvas 量的 ascent／descent，和編輯器的 CSS 一樣）加上編輯器本身的字型（`realStrut`：思源黑體、最小字級）。直書 `layoutRealV` 用各字型的直書前進量，系統字型另外寫 `W2`（`verticalW2`：前進量、原點 x 取一半寬、原點 y 依 HarfBuzz：VORG 或 topSideBearing＋字形頂）。
+- 版面：`layoutReal(lines, strut)` 的字寬用各字型 fontkit 的前進寬（PDF 就是這樣畫），行高與基線用 `fontBoxMeasurer`（canvas 量的 ascent／descent，和編輯器的 CSS 一樣；v1.0.53：行距（字級×1.3 減字高）分上下兩半時，上半照 Chrome 取 floor、剩下的在下面——以前平均分，13 px 這類字級寫出來會比編輯器低約 1 pt）加上編輯器本身的字型（`realStrut`：思源黑體、最小字級）。直書 `layoutRealV` 用各字型的直書前進量，系統字型另外寫 `W2`（`verticalW2`：前進量、原點 x 取一半寬、原點 y 依 HarfBuzz：VORG 或 topSideBearing＋字形頂）。
 - 打開原文時，一行裡的每一段（pdf.js 的每個 item，一段一個字型）各自用 `matchSystemFont` 把 PDF 的字型名（去掉 `ABCDEF+` 與 pdf-lib 的 `-1234`）對到已安裝、授權 `ok`、讀得到（直書還要有直書資料）的家族；對不到的那段用思源黑體（`joinRowPieces`、`mergeRuns`）。打開後沒改就按 Esc，不會跳缺字提醒（和 `edit.orig` 相同就不檢查）。
 - 存檔前每個系統字型先試嵌入一次（`trialEmbedFonts`，在動文件之前）：失敗的改用思源黑體並 toast，打的字不會不見。授權（fsType）和「不能子集」從實際要嵌入的字型檔讀，不看目錄。可變字型（有 `fvar`）只能嵌入檔案的預設粗細：預設是一般粗細時，粗體用假粗體；預設不是一般粗細的，修改原文時灰掉（「可變字型，無法嵌入」）。
 - 刪掉或重寫區塊時（`cutPageBlock`），沒有其他頁面在用的字型與 ExtGState 物件會整串刪掉（`dropObjectGraph`），重複修改不會讓檔案變大；假粗體和一般體共用同一份嵌入。
@@ -128,10 +128,10 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 字型選單在修改原文時也有：`fontBlockReason` 灰掉「授權不允許嵌入」（直書另外灰掉「沒有直書資料」）；`embed:'full'` 的字型選之前跳「整個字型會放進檔案」。
 - v1.0.52 的修正：
   - 授權（`fontLicence`）：舊字型的 fsType 同時有 bit 1～3 好幾個時，照 OpenType 規定以最寬鬆的為準（0x0006＝限制＋預覽與列印 → 可以嵌入）；只有 bitmap 的照舊不能嵌入。
-  - 整個嵌入的 CFF（.otf）：pdf-lib 的 `isCFF` 看 fontkit 沒有的 `font.cff`，會把整個 .otf 當 TrueType 寫（CIDFontType2＋`/FontFile2`，poppler 說 mismatch）。`markOpenType` 改寫成 CIDFontType0＋`/FontFile3 /Subtype /OpenType`；只限非 CID-keyed 的 CFF（CID＝字形編號，文字就是用字形編號寫的），CID-keyed 的（大型中日文 .otf）維持 pdf-lib 的寫法。子集是純 CFF 資料，照 pdf-lib 子集嵌入的寫法（它自己的 `isCFF`），不經過這裡。
+  - 整個嵌入的 CFF（.otf）：pdf-lib 的 `isCFF` 看 fontkit 沒有的 `font.cff`，會把整個 .otf 當 TrueType 寫（CIDFontType2＋`/FontFile2`，poppler 說 mismatch）。`markOpenType` 改寫成 CIDFontType0＋`/FontFile3 /Subtype /OpenType`，並拿掉 pdf-lib 寫的 `/CIDToGIDMap`（只有 CIDFontType2 才有，v1.0.53）；只限非 CID-keyed 的 CFF（CID＝字形編號，文字就是用字形編號寫的），CID-keyed 的（大型中日文 .otf）維持 pdf-lib 的寫法。子集是純 CFF 資料，照 pdf-lib 子集嵌入的寫法（它自己的 `isCFF`），不經過這裡。
   - 字面選擇（`chooseFace`，字型目錄分析的字面也用它）：照編輯器（瀏覽器 CSS 字型比對）挑——正體、一般寬度優先；一般字用 Regular，沒有就 500、再來較細的、再來較粗的（`faceWeight` 從字面名稱猜粗細）；粗體用 Bold，沒有就不含 semi／extra 的粗體，都沒有就一般字面假粗體（不會選到 Bold Condensed 這類窄字面）。
   - 第一次點頁面文字：`ensureFontInfo` 為了授權讀的那次（`readFace(face, {keep:true})`，`KEPT_FACE`，最多一個檔、5 秒）直接給接著的 `systemFontBytes` 用，同一個字型檔只讀一次。
-  - 清空的頁面文字編輯器再選字型：編輯器本身的字型（strut）維持思源黑體（和存檔排版、再打開時一樣），字型從游標處開一段 run，存好的文字在編輯器顯示的位置。
+  - 清空的頁面文字編輯器再選字型：編輯器本身的字型（strut）維持思源黑體（和存檔排版、再打開時一樣），字型從游標處開一段 run，存好的文字在編輯器顯示的位置。v1.0.53：游標所在的 run 還是空的（只有零寬字元）時，再選字型或字級是改它本身，不會再包一層。
 - 這種文字是頁面本身的一部分：不能用選取工具移動，不屬於圖層。
 - 方向（v1.0.21）：`pageTextItems` 替每段文字算出它在畫面上的方向 `rot`（0／90／180／270，順時針）和是否直書 `vert`（直書字型，或 `findStackedText` 找到的「一字一行」的假直書），並換算到「閱讀座標」（把畫面轉回 `rot`）：`base` 是基線（直書是欄的中線），`a0..a1` 是沿閱讀方向的範圍，`u` 是 PDF 座標的範圍（給 `removePageText`）。`lineOf`／`groupLines` 都在閱讀座標裡分行（直書的欄從右到左）。
 - 編輯器（`openTextEditor` 的 `rot`、`vert`）用 CSS 轉向；直書用 `writing-mode:vertical-rl; text-orientation:upright`，錨點是右上角（`translateX(-100%)`）。`writePageText` 用同一個方向寫回：直書用 `layoutRealV` 排版、字型加 `vert` 特性（直書標點）並在嵌入後把 Encoding 改成 `/Identity-V`（Noto 的直書原點 880、前進 1000，和 PDF 預設 `DW2 [880 -1000]` 一樣，所以和瀏覽器排出來的位置一致）。區塊的 `PDFE_RT` 會記 `vert`，方向從 `PDFE_M` 算回來。
@@ -432,7 +432,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
   - 文字方塊的 run 可以有 `font`（CSS 家族名，空的就是預設）。預設字型堆疊是 `TB_FONT`，最前面是內建的 `PDFE Sans`（思源黑體），所以有沒有網路都一樣。編輯器裡的 span 用 `fontStack(f)`（指定字型後面接預設堆疊），這台電腦沒有那個字型時自動退回思源黑體，但字型名稱照樣保留。
   - 字型選單 `openFontMenu()`（`#fontMenu`）：搜尋框、預設／最近用過（`pdfeditor.fonts.recent.v1`，只列這台電腦有的）／中文字型／其他字型。名稱捲到看得到時才套用它自己的字型（一次套用幾百個字型很慢）。字型還在背景讀取時，打開的選單只更新「正在讀取字型…（N／M）」，清單不重畫（避免點到一半項目被換掉），讀完才重畫一次（滑鼠按著時延到放開）。
   - 重新打開舊的文字方塊時，預設的字型、粗體、斜體、底線不會套到方塊本身（只給新方塊），否則按 Esc 就會把舊方塊整個改掉。
-  - 目錄 v3（`pdfeditor.fontcat.v3`，v1.0.52：授權照 `fontLicence` 讀、分析的字面就是要嵌入的那個（`chooseFace`）；舊版存的 v2 不採用、啟動時刪掉，所有字型重讀一次）。v2 起多記 `embed`（OS/2 fsType：`ok`／`full`／`no`）、`vert`（`vhea`＋`vmtx`＋GSUB `vert`）、`bytes`，以及每個家族的所有字面 `faces`（`FONT_FACES` 存 `queryLocalFonts` 的原物件）。測試用 `registerTestFont` 把字型位元組當成已安裝字型（`TEST_FONTS`）。
+  - 目錄 v3（`pdfeditor.fontcat.v3`，v1.0.52：授權照 `fontLicence` 讀、分析的字面就是要嵌入的那個（`chooseFace`）；舊版存的 v2 不採用、啟動時刪掉，所有字型重讀一次；讀回快取時也帶 `variable`／`weight`，v1.0.53）。v2 起多記 `embed`（OS/2 fsType：`ok`／`full`／`no`）、`vert`（`vhea`＋`vmtx`＋GSUB `vert`）、`bytes`，以及每個家族的所有字面 `faces`（`FONT_FACES` 存 `queryLocalFonts` 的原物件）。測試用 `registerTestFont` 把字型位元組當成已安裝字型（`TEST_FONTS`）。
   - 格式列與 `currentTBStyle` 讀游標旁邊那段文字的樣式（`caretStyleNode`）：游標在元素之間時（例如剛打開編輯器、游標在最後）取前一段文字。
 - localStorage 的鍵：`pdfeditor.bindings.v1, colors.v1, export.v1, find.v1, fontcat.v3, fontid.v1, fonts.recent.v1, lastact.v1, seenversion.v1, lasttool.v1, pagecolor, people.v1, print.v1, ribbon.v1, stamp.v1, styles.v1, textbox.v1, theme, view.v1`。
 - 測試用的鉤子：`window.__pdfapp = {S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars, getAnns, TBE, sel, links, flatten, wordFonts, …}`，端對端測試會用到，不要刪。

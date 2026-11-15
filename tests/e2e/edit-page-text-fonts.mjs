@@ -206,6 +206,9 @@ const edBaseline = () => A(() => { const e = document.querySelector('.tbed'), s 
   const y = (mk.getBoundingClientRect().top - p.top) / s; mk.remove(); return y; });
 const pageBaseline = str => A(async str => { const pg = window.__pdfapp.S.pages[0], tc = await pg.page.getTextContent(), it = tc.items.find(t => t.str.includes(str)); return it ? pg.vp1.convertToViewportPoint(it.transform[4], it.transform[5])[1] : null; }, str);
 await clickText('奇數長度測試'); const ed0 = await edBaseline(), pg0 = await pageBaseline('奇數長度');
+// (v1.0.53) the block is written on the baseline the editor shows (this one is 13 px: Chrome floors the upper half of
+// the line spacing, which used to put the written text ~1 pt lower)
+check('page text: written on the baseline the editor shows (±0.3 pt, 13 px text)', ed0 != null && pg0 != null && Math.abs(pg0 - ed0) <= .3, {ed0, pg0});
 await win.keyboard.press('Control+a'); await win.keyboard.press('Delete'); await win.waitForTimeout(200);
 await fmt('font', 'DejaVu Serif'); await win.keyboard.type('Drift line'); await win.waitForTimeout(300);
 const ed1 = await edBaseline();
@@ -214,6 +217,13 @@ const pg1 = await pageBaseline('Drift');
 bk = await blockOf('Drift line');
 const dd = [ed0, pg0, ed1, pg1].every(v => v != null) ? (pg1 - ed1) - (pg0 - ed0) : NaN;
 check('an emptied editor that takes a font: the text is written where the editor showed it (±0.3 pt, against the block as it was)', Math.abs(dd) <= .3 && !!bk && bk.fonts.includes('DejaVuSerif'), {dd, ed0, pg0, ed1, pg1, bk});
+// (v1.0.53) an emptied editor, two fonts picked before typing: the run just started takes the second (no run in a run)
+await clickText('Drift line'); await win.keyboard.press('Control+a'); await win.keyboard.press('Delete'); await win.waitForTimeout(200);
+await fmt('font', 'DejaVu Serif'); await fmt('font', 'DejaVu Sans'); await win.keyboard.type('Nest one'); await win.waitForTimeout(200);
+const nest = await A(() => { const e = document.querySelector('.tbed'); return e ? {spans:e.querySelectorAll('span[style*="font-family"]').length, inner:e.querySelectorAll('span span').length} : null; });
+await commit();
+bk = await blockOf('Nest one');
+check('an emptied editor, two fonts picked before typing: one run, in the second font', !!nest && nest.spans === 1 && nest.inner === 0 && !!bk && bk.fonts.includes('DejaVuSans') && !bk.fonts.includes('DejaVuSerif'), {nest, bk});
 await fmt('font', '');   // (the default font for new text back to 思源黑體)
 // (v1.0.52) a font list an older version cached (v2: licences read the old way, another face analysed) is not trusted:
 // the fonts are read again once, and the old list goes
@@ -224,6 +234,13 @@ await win.reload(); await win.waitForTimeout(3000);
 await A(() => window.__pdfapp.fontReady());
 const stale = await A(() => { const f = window.__pdfapp.fontCat().fams.find(x => x.family === 'DejaVu Serif'); return {embed:f && f.embed, v2:localStorage.getItem('pdfeditor.fontcat.v2')}; });
 check('a font list an older version cached is read again (its licences as this version reads them)', stale.embed === 'ok' && stale.v2 === null, stale);
+// (v1.0.53) a cached entry keeps whether the font is variable and its default weight (greyed after a restart too)
+await A(() => { const k = 'pdfeditor.fontcat.v3', c = JSON.parse(localStorage.getItem(k)); c['DejaVu Serif|DejaVuSerif'] = {...c['DejaVu Serif|DejaVuSerif'], variable:true, weight:700}; localStorage.setItem(k, JSON.stringify(c)); });
+await win.reload(); await win.waitForTimeout(3000);
+await A(() => window.__pdfapp.fontReady());
+const vc = await A(() => { const f = window.__pdfapp.fontCat().fams.find(x => x.family === 'DejaVu Serif'); return f && {variable:f.variable, weight:f.weight}; });
+await A(() => { const k = 'pdfeditor.fontcat.v3', c = JSON.parse(localStorage.getItem(k)); delete c['DejaVu Serif|DejaVuSerif']; localStorage.setItem(k, JSON.stringify(c)); });   // (read again next time)
+check('a cached font keeps whether it is variable and its default weight', !!vc && vc.variable === true && vc.weight === 700, vc);
 
 // ---- part 4: the font menu for page text, its prompts, and the original font picked up -------------------
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
@@ -441,18 +458,23 @@ await clickText('無子'); await win.keyboard.press('Control+a'); await win.keyb
 bk = await blockOf('禁止嵌入');
 check('licence bits 0x0006: embedded', !!bk && bk.fonts.some(f => /Restricted/.test(f)), bk);
 // (v1.0.52) a CFF (.otf) font embedded whole: written as CFF (/FontFile3 marked /OpenType), not as a TrueType font
+// (v1.0.53: and its CIDFontType0 has no /CIDToGIDMap, which only a CIDFontType2 has)
 // (pdf-lib's /FontFile2, which poppler calls a mismatch); its text reads back
 await A(b64 => window.__pdfapp.registerTestFont({family:'PDFE CFF Whole Test', b64}), withFsType(INTER, 0x0100));
 await A(() => window.__pdfapp.fontCatPatch('PDFE CFF Whole Test', {embed:null}));
 await clickText('禁止嵌入'); await win.keyboard.press('Control+a'); await win.keyboard.type('CFF whole'); await win.keyboard.press('Control+a'); await fmt('font', 'PDFE CFF Whole Test'); await commit();
 bk = await blockOf('CFF whole');
 const cw = await A(async () => { const P = PDFLib, d = await P.PDFDocument.load(window.__pdfapp.S.bytes), out = [];
-  d.context.enumerateIndirectObjects().forEach(([, o]) => { if (!(o instanceof P.PDFDict) || String(o.get(P.PDFName.of('Type'))) !== '/FontDescriptor') return;
+  d.context.enumerateIndirectObjects().forEach(([, o]) => { if (!(o instanceof P.PDFDict)) return;
+    const t = String(o.get(P.PDFName.of('Type'))), st = String(o.get(P.PDFName.of('Subtype')));
+    if (t === '/Font' && /^\/CIDFontType/.test(st) && /Inter/.test(String(o.get(P.PDFName.of('BaseFont'))))) out.push({cid:st, map:o.has(P.PDFName.of('CIDToGIDMap'))});
+    if (t !== '/FontDescriptor') return;
     const f3 = o.lookup(P.PDFName.of('FontFile3')); if (f3) out.push({name:String(o.get(P.PDFName.of('FontName'))), sub:String(f3.dict.get(P.PDFName.of('Subtype')))}); });
   return out; });
 const cwi = cw.find(f => /Inter/.test(f.name)), cwt = await extract('cffwhole.pdf'), pf = spawnSync('pdffonts', [path.join(TMP, 'cffwhole.pdf')]), pfErr = pf.stderr.toString();
 check('a CFF (.otf) font embedded whole: /FontFile3 marked /OpenType, poppler sees no mismatch, its text reads back', !!bk && bk.fonts.some(f => /Inter/.test(f)) && !!cwi && cwi.sub === '/OpenType'
-  && !/Mismatch/i.test(pfErr) && /Inter-Regular\S*\s+CID Type 0C \(OT\)/.test(pf.stdout.toString()) && cwt.includes('CFF whole'), {bk, cw, pdffonts:pf.stdout.toString().split('\n').filter(l => /Inter/.test(l)), pfErr:pfErr.slice(0, 200), text:cwt.slice(0, 80)});
+  && !/Mismatch/i.test(pfErr) && /Inter-Regular\S*\s+CID Type 0C \(OT\)/.test(pf.stdout.toString()) && cwt.includes('CFF whole')
+  && cw.some(c => c.cid) && cw.filter(c => c.cid).every(c => c.cid === '/CIDFontType0' && !c.map), {bk, cw, pdffonts:pf.stdout.toString().split('\n').filter(l => /Inter/.test(l)), pfErr:pfErr.slice(0, 200), text:cwt.slice(0, 80)});
 
 // ---- end --------------------------------------------------------------------------------------
 console.log(failed ? `${failed} check(s) failed` : 'all checks passed');
