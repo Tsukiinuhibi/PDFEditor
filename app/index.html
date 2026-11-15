@@ -4141,9 +4141,9 @@ function fontFileName(font, fallback){
 // embed: what the font's licence (OS/2 fsType) allows in a PDF: 'ok', 'full' (no subsetting: the whole font goes
 // in) or 'no' (restricted, or bitmaps only); vert: it has vertical metrics and vertical forms (vhea, vmtx, GSUB vert);
 // bytes: how much the font adds when embedded whole
-async function analyseFont(fam, face){
+async function analyseFont(fam, face, {keep = false} = {}){
   try {
-    const bytes = new Uint8Array(await (await face.blob()).arrayBuffer());
+    const bytes = await readFace(face, {keep});
     let font = fontkit.create(bytes), size = bytes.length;
     if (font && Array.isArray(font.fonts)) {
       font = font.fonts.find(f => f.postscriptName === fam.ps) || font.fonts.find(f => f.familyName === fam.family) || font.fonts[0];
@@ -4153,10 +4153,14 @@ async function analyseFont(fam, face){
     const fsType = (font['OS/2'] && font['OS/2'].fsType) || {}, tb = font.directory.tables;
     let vertForms = false; try { vertForms = !!(font.GSUB && font.GSUB.featureList.some(f => f.tag === 'vert')); } catch (_) {}
     return {name:fontFileName(font, fam.family), cjk:[...'中文字體'].every(ch => font.hasGlyphForCodePoint(ch.codePointAt(0))),
-      embed:fsType.noEmbedding || fsType.bitmapOnly ? 'no' : fsType.noSubsetting ? 'full' : 'ok', vert:!!(tb.vhea && tb.vmtx) && vertForms, bytes:size,
+      embed:fontLicence(fsType), vert:!!(tb.vhea && tb.vmtx) && vertForms, bytes:size,
       variable:!!tb.fvar, weight:(font['OS/2'] && font['OS/2'].usWeightClass) || 400};
   } catch (_) { return null; }
 }
+// what a font's licence (OS/2 fsType, as fontkit reads it) allows in a PDF: 'no' (restricted, or bitmaps only), 'full'
+// (no subsetting: the whole font goes in) or 'ok'. Old fonts may have several of bits 1–3 set: the least restrictive
+// one counts (OpenType), so 0x0006 is 預覽與列印 (embedding allowed)
+function fontLicence(t){ return t.bitmapOnly || (t.noEmbedding && !t.viewOnly && !t.editable) ? 'no' : t.noSubsetting ? 'full' : 'ok'; }
 // (tests) a font given as bytes behaves like an installed one: the page can draw it, the catalogue lists it, and
 // systemFontBytes hands out its bytes
 async function registerTestFont({family, b64, style = 'Regular'}){
@@ -4183,9 +4187,8 @@ function loadFontCatalog(){
       if (!f.family) continue;
       if (!FONT_FACES.has(f.family)) FONT_FACES.set(f.family, []);
       FONT_FACES.get(f.family).push(f);
-      const cur = byFam.get(f.family), regular = /^(regular|normal|book|roman)$/i.test(f.style || '');
-      if (!cur || (regular && !cur.regular)) byFam.set(f.family, {face:f, regular});
     }
+    for (const [family, list] of FONT_FACES) byFam.set(family, {face:chooseFace(list, false).face});   // (the face regular text is drawn in)
     const cache = fontCache(), todo = [];
     FONTCAT.fams = [...byFam.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([family, {face}]) => {
       const fam = {family, ps:face.postscriptName || '', name:family, cjk:null, embed:null, vert:null, bytes:0,
@@ -4407,7 +4410,8 @@ function applyTextFormat(k, v){
   if (!TBE) { syncTBBar(); return; }
   restoreTBRange();
   const sel = getSelection(), collapsed = !sel.rangeCount || sel.getRangeAt(0).collapsed;
-  if (collapsed && TBE.el.textContent.length === 0) {   // empty box: style the whole box
+  if (collapsed && TBE.el.textContent.length === 0 && !(k === 'font' && tbReal())) {   // empty box: style the whole box (page text keeps its own
+    // font, 思源黑體, as when the commit lays it out and when it is opened again: a font starts a run at the caret below)
     const st = TBE.el.style;
     if (k === 'size') st.fontSize = v + 'px'; if (k === 'color') st.color = v; if (k === 'bold') st.fontWeight = v ? 700 : 400;
     if (k === 'italic') st.fontStyle = v ? 'italic' : 'normal'; if (k === 'underline') st.textDecoration = v ? 'underline' : 'none';
@@ -4533,7 +4537,7 @@ function fontBlockReason(fam, {real, vert}){
 async function ensureFontInfo(fam){
   if (!fam || fam.embed != null) return fam;
   const face = (FONT_FACES.get(fam.family) || []).find(f => f.postscriptName === fam.ps) || (FONT_FACES.get(fam.family) || [])[0];
-  const r = face && await analyseFont(fam, face);
+  const r = face && await analyseFont(fam, face, {keep:true});   // (the same file is read for its letters next: once)
   if (r) { Object.assign(fam, r); const c = fontCache(); c[fam.family + '|' + fam.ps] = r; try { localStorage.setItem(FONTCAT_KEY, JSON.stringify(c)); } catch (_) {} }
   return fam;
 }
@@ -5382,14 +5386,42 @@ async function systemFontBytes(family, bold){
   if (!SYS_BYTES.has(key)) SYS_BYTES.set(key, (async () => {
     if (!FONT_FACES.size) await loadFontCatalog();
     const faces = FONT_FACES.get(family) || []; if (!faces.length) throw new Error('沒有這個字型');
-    const upright = faces.filter(f => !/italic|oblique/i.test(f.style || ''));
-    const boldFace = bold ? upright.find(f => /^bold$/i.test(f.style || '')) || upright.find(f => /bold/i.test(f.style || '') && !/semi|demi|extra|ultra/i.test(f.style || '')) : null;
-    const face = boldFace || upright.find(f => /^(regular|normal|book|roman)$/i.test(f.style || '')) || upright[0] || faces[0];
-    let bytes = new Uint8Array(await (await face.blob()).arrayBuffer());
+    const {face, synthetic} = chooseFace(faces, bold);
+    let bytes = await readFace(face);
     if (bytes[0] === 0x74 && bytes[1] === 0x74 && bytes[2] === 0x63 && bytes[3] === 0x66) bytes = sfntFromCollection(bytes, face.postscriptName || '', family);   // 'ttcf'
-    return {bytes, synthetic:bold && !boldFace};
+    return {bytes, synthetic};
   })());
   try { return await SYS_BYTES.get(key); } catch (e) { SYS_BYTES.delete(key); throw e; }
+}
+// the face of a family that regular or bold text is drawn in, as the editor's browser picks it (CSS font matching):
+// upright, and of normal width when the family has one. Regular text: the Regular face, else the weight nearest 400
+// (500, then lighter, then heavier); bold text: the Bold face, else another plain bold one (not semi- / extra-), else
+// none: synthetic, the regular face drawn bold
+const faceWeight = style => { const s = String(style || '').toLowerCase().replace(/[\s_-]/g, '');
+  for (const [re, w] of [[/hairline|thin/, 100], [/(extra|ultra)light/, 200], [/(semi|demi)light/, 350], [/light/, 300], [/medium/, 500], [/(semi|demi)bold/, 600],
+    [/(extra|ultra)bold/, 800], [/bold/, 700], [/(extra|ultra)(black|heavy)/, 950], [/black|heavy/, 900]]) if (re.test(s)) return w;
+  return 400; };
+const faceNotNormalWidth = style => /condensed|narrow|compressed|expanded|extended|wide/i.test(style || '');
+function chooseFace(faces, bold){
+  const upright = faces.filter(f => !/italic|oblique/i.test(f.style || '')), all = upright.length ? upright : faces;
+  const normal = all.filter(f => !faceNotNormalWidth(f.style)), pool = normal.length ? normal : all;
+  if (bold) {
+    const b = pool.find(f => /^bold$/i.test(f.style || '')) || pool.find(f => /bold/i.test(f.style || '') && !/semi|demi|extra|ultra/i.test(f.style || ''));
+    return b ? {face:b, synthetic:false} : {face:chooseFace(faces, false).face, synthetic:true};
+  }
+  const reg = pool.find(f => /^(regular|normal|book|roman)$/i.test(f.style || ''));
+  if (reg) return {face:reg, synthetic:false};
+  const rank = f => { const w = faceWeight(f.style); return w === 400 ? 0 : w === 500 ? 1 : w < 400 ? 2 + (400 - w) / 1000 : 3 + w / 1000; };
+  return {face:[...pool].sort((a, b) => rank(a) - rank(b))[0] || faces[0], synthetic:false};
+}
+// a face's file. ensureFontInfo reads a family's file for its licence just before the same file is read for its
+// letters (the first click on page text): that reading is kept a few seconds for it (one file at most)
+let KEPT_FACE = null;
+function readFace(face, {keep = false} = {}){
+  const k = KEPT_FACE; if (k && k.face === face) { KEPT_FACE = null; return k.p; }
+  const p = face.blob().then(b => b.arrayBuffer()).then(b => new Uint8Array(b));
+  if (keep) { const kk = KEPT_FACE = {face, p}; p.catch(() => { if (KEPT_FACE === kk) KEPT_FACE = null; }); setTimeout(() => { if (KEPT_FACE === kk) KEPT_FACE = null; }, 5000); }
+  return p;
 }
 // one face of a .ttc collection as a font file of its own: its table directory, with the tables copied after it
 function sfntFromCollection(bytes, ps, family = ''){
@@ -5452,13 +5484,13 @@ function realFontInfo(font, bold){
     if (!font) return {fk:await realFont(bold), bytes:await realFontBytes(bold), key, synthetic:false, full:false, sys:false};
     let {bytes, synthetic} = await systemFontBytes(font, bold); const fk = fontkit.create(bytes), tb = fk && fk.directory && fk.directory.tables;
     if (!fk || Array.isArray(fk.fonts) || !fk.unitsPerEm || !(tb.glyf || tb['CFF '])) throw new Error('not a font this PDF can hold');   // (e.g. CFF2)
-    const fsType = (fk['OS/2'] && fk['OS/2'].fsType) || {}, weight = (fk['OS/2'] && fk['OS/2'].usWeightClass) || 400;
-    if (fsType.noEmbedding || fsType.bitmapOnly) throw Object.assign(new Error('licence'), {why:'licence'});
+    const lic = fontLicence((fk['OS/2'] && fk['OS/2'].fsType) || {}), weight = (fk['OS/2'] && fk['OS/2'].usWeightClass) || 400;
+    if (lic === 'no') throw Object.assign(new Error('licence'), {why:'licence'});
     if (tb.fvar) {   // a variable font embeds as its default instance only
       if (!bold && Math.abs(weight - 400) > 100) throw Object.assign(new Error('variable'), {why:'variable'});
       if (bold) synthetic = weight < 600;
     }
-    return {fk, bytes, key, synthetic, full:!!fsType.noSubsetting, sys:true};
+    return {fk, bytes, key, synthetic, full:lic === 'full', sys:true};
   })());
   RFI.get(key).catch(() => RFI.delete(key));
   return RFI.get(key);
@@ -5529,6 +5561,16 @@ async function missingToDefault(lines){
 }
 // the editor's own font for page text: 思源黑體 at the smallest size of the text (see openTextEditor)
 const realStrut = lines => { const sz = lines.flat().map(r => +r.size).filter(v => v > 0); return {size:sz.length ? Math.min(...sz) : TB_STYLE.size, font:'', bold:false}; };
+// pdf-lib writes a CFF font it embeds whole (the .otf file itself) as a TrueType one (CIDFontType2, /FontFile2; its
+// isCFF looks for a property fontkit does not have): readers warn of a mismatch or refuse it. Written as CFF instead:
+// CIDFontType0, the file in /FontFile3 marked /OpenType (PDF 1.6). Only a CFF that is not CID-keyed: its CIDs are its
+// glyph numbers, which the text is written in (a CID-keyed one, a big CJK .otf, stays as pdf-lib writes it). A subset
+// is bare CFF data and already right
+function markOpenType(f){
+  const em = f && f.embedder, cff = em && em.font && em.font['CFF ']; if (!cff || cff.topDict.ROS) return;
+  em.isCFF = () => true;
+  em.embedFontStream = async ctx => ctx.register(ctx.flateStream(await em.serializeFont(), {Subtype:'OpenType'}));
+}
 // a fontkit subset of these characters, read back: every glyph still has its outline (TrueType only; CFF is trusted)
 async function subsetIsSound(fk, text){
   if (!fk.directory.tables.glyf) return true;
@@ -5625,6 +5667,7 @@ async function writePageText(doc, i, x, y, lines, box, {rot = 0, vert = false, s
     if (!used[k]) {
       const subset = !base.full && (!base.sys || await subsetIsSound(base.fk, textOf.get(base.key) || r.text));
       const f = await doc.embedFont(base.bytes, {subset, ...(vert ? {features:{vert:true}} : {})});
+      if (!subset) markOpenType(f);
       used[k] = {f, fi:base, name:page.node.newFontDictionary(base.sys ? 'PDFE_F' : base.key.endsWith('|b') ? 'PDFE_B' : 'PDFE_R', f.ref).toString()};
     }
     return {...used[k], synthetic:fi.synthetic};
@@ -12399,6 +12442,8 @@ window.__pdfapp = {
   fontBytesInfo:async (family, bold) => { const r = await realFontInfo(family, bold); return {bytes:r.bytes.length, synthetic:r.synthetic}; },
   failEmbed:family => { EMBED_FAIL.add(family); },
   fontkitPatch:on => { fkPatchOn = !!on; },
+  faceChoice:(styles, bold) => { const r = chooseFace(styles.map(style => ({style})), bold); return {style:r.face.style, synthetic:r.synthetic}; },
+  countFaceReads:family => { window.__faceReads = 0; for (const f of FONT_FACES.get(family) || []) if (!f.__counted) { const b = f.blob.bind(f); f.blob = () => { window.__faceReads++; return b(); }; f.__counted = true; } },
   fontCatPatch:(family, fields) => { const f = FONTCAT.fams.find(x => x.family === family); if (f) Object.assign(f, fields); for (const k of [...RFI.keys()]) if (k.startsWith(family + '|')) RFI.delete(k); },
   collectionFace:(b64, ps, family) => { const out = sfntFromCollection(Uint8Array.from(atob(b64), c => c.charCodeAt(0)), ps, family); return fontkit.create(out).postscriptName; },
   breakTestFont:family => { for (const k of [...TEST_FONTS.keys()]) if (k.startsWith(family + '|')) TEST_FONTS.set(k, new Uint8Array([0, 1, 0, 0, 0, 0])); for (const k of [...RFI.keys()]) if (k.startsWith(family + '|')) RFI.delete(k); },

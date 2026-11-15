@@ -126,6 +126,12 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 刪掉或重寫區塊時（`cutPageBlock`），沒有其他頁面在用的字型與 ExtGState 物件會整串刪掉（`dropObjectGraph`），重複修改不會讓檔案變大；假粗體和一般體共用同一份嵌入。
 - `commitTextEditor` 選了「回去修改」時編輯器維持開著：換工具、換分頁、存檔、匯出圖片、打開別的編輯器都會停下來（`settleEdits` 回傳 false）。
 - 字型選單在修改原文時也有：`fontBlockReason` 灰掉「授權不允許嵌入」（直書另外灰掉「沒有直書資料」）；`embed:'full'` 的字型選之前跳「整個字型會放進檔案」。
+- v1.0.52 的修正：
+  - 授權（`fontLicence`）：舊字型的 fsType 同時有 bit 1～3 好幾個時，照 OpenType 規定以最寬鬆的為準（0x0006＝限制＋預覽與列印 → 可以嵌入）；只有 bitmap 的照舊不能嵌入。
+  - 整個嵌入的 CFF（.otf）：pdf-lib 的 `isCFF` 看 fontkit 沒有的 `font.cff`，會把整個 .otf 當 TrueType 寫（CIDFontType2＋`/FontFile2`，poppler 說 mismatch）。`markOpenType` 改寫成 CIDFontType0＋`/FontFile3 /Subtype /OpenType`；只限非 CID-keyed 的 CFF（CID＝字形編號，文字就是用字形編號寫的），CID-keyed 的（大型中日文 .otf）維持 pdf-lib 的寫法。子集本來就是純 CFF，不用改。
+  - 字面選擇（`chooseFace`，字型目錄分析的字面也用它）：照編輯器（瀏覽器 CSS 字型比對）挑——正體、一般寬度優先；一般字用 Regular，沒有就 500、再來較細的、再來較粗的（`faceWeight` 從字面名稱猜粗細）；粗體用 Bold，沒有就不含 semi／extra 的粗體，都沒有就一般字面假粗體（不會選到 Bold Condensed 這類窄字面）。
+  - 第一次點頁面文字：`ensureFontInfo` 為了授權讀的那次（`readFace(face, {keep:true})`，`KEPT_FACE`，最多一個檔、5 秒）直接給接著的 `systemFontBytes` 用，同一個字型檔只讀一次。
+  - 清空的頁面文字編輯器再選字型：編輯器本身的字型（strut）維持思源黑體（和存檔排版、再打開時一樣），字型從游標處開一段 run，存好的文字在編輯器顯示的位置。
 - 這種文字是頁面本身的一部分：不能用選取工具移動，不屬於圖層。
 - 方向（v1.0.21）：`pageTextItems` 替每段文字算出它在畫面上的方向 `rot`（0／90／180／270，順時針）和是否直書 `vert`（直書字型，或 `findStackedText` 找到的「一字一行」的假直書），並換算到「閱讀座標」（把畫面轉回 `rot`）：`base` 是基線（直書是欄的中線），`a0..a1` 是沿閱讀方向的範圍，`u` 是 PDF 座標的範圍（給 `removePageText`）。`lineOf`／`groupLines` 都在閱讀座標裡分行（直書的欄從右到左）。
 - 編輯器（`openTextEditor` 的 `rot`、`vert`）用 CSS 轉向；直書用 `writing-mode:vertical-rl; text-orientation:upright`，錨點是右上角（`translateX(-100%)`）。`writePageText` 用同一個方向寫回：直書用 `layoutRealV` 排版、字型加 `vert` 特性（直書標點）並在嵌入後把 Encoding 改成 `/Identity-V`（Noto 的直書原點 880、前進 1000，和 PDF 預設 `DW2 [880 -1000]` 一樣，所以和瀏覽器排出來的位置一致）。區塊的 `PDFE_RT` 會記 `vert`，方向從 `PDFE_M` 算回來。

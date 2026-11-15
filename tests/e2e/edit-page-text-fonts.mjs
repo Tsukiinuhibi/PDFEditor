@@ -5,13 +5,21 @@ import { buildRotatedFixture } from './_rotated_fixture.mjs';
 import { createRequire } from 'module';
 import fs from 'fs';
 import path from 'path';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 
 const FIX = path.join(ROOT, 'tests', 'e2e', 'fixtures');
 const require = createRequire(import.meta.url);
 const { PDFDocument, StandardFonts } = require('pdf-lib');
 const fontkitNode = require('@pdf-lib/fontkit');
 const b64Of = f => fs.readFileSync(f).toString('base64');
+// a font file with another licence (OS/2 fsType), its table checksum fixed, as base64
+const withFsType = (file, v) => { const b = Buffer.from(fs.readFileSync(file)), n = b.readUInt16BE(4);
+  for (let k = 0; k < n; k++) { const o = 12 + 16 * k; if (b.toString('latin1', o, o + 4) !== 'OS/2') continue;
+    const off = b.readUInt32BE(o + 8), len = b.readUInt32BE(o + 12); b.writeUInt16BE(v, off + 8);
+    let sum = 0; for (let p = 0; p < len; p += 4) sum = (sum + ((((b[off + p] || 0) << 24) >>> 0) + ((p + 1 < len ? b[off + p + 1] : 0) << 16) + ((p + 2 < len ? b[off + p + 2] : 0) << 8) + (p + 3 < len ? b[off + p + 3] : 0))) >>> 0;
+    b.writeUInt32BE(sum, o + 4); }
+  return b.toString('base64'); };
+const INTER = '/usr/share/fonts/opentype/inter/Inter-Regular.otf';
 // (in the page) the first family of a CSS font-family list
 const FIRST_FAMILY = `window.firstFamilyOf = s => { s = String(s).trim(); if (s[0] === '"') return s.slice(1, s.indexOf('"', 1)); return s.split(',')[0].trim(); };`;
 let failed = 0;
@@ -35,6 +43,16 @@ r = await an('PDFE NoSubset Test', path.join(FIX, 'nosubset-test.ttf'));
 check('no-subsetting font', !!r && r.embed === 'full', r);
 r = await an('PDFE Restricted Test', path.join(FIX, 'restricted-test.ttf'));
 check('restricted font', !!r && r.embed === 'no', r);
+// (v1.0.52) several licence bits, as old fonts have them: the least restrictive counts (OpenType) — 0x0006 is 預覽與列印
+r = await A(a => window.__pdfapp.fontAnalyse(a), {family:'PDFE PreviewPrint Test', ps:'', b64:withFsType(path.join(FIX, 'restricted-test.ttf'), 0x0006)});
+check('licence bits 0x0006: the least restrictive (preview & print) counts', !!r && r.embed === 'ok', r);
+// (v1.0.52) the face embedded is the one the editor draws (normal width first; no Regular: the weight nearest 400, as
+// CSS picks it); bold: never a condensed or narrow face (no other bold face: the regular one, drawn bold)
+const fc = (styles, bold) => A(([s, b]) => window.__pdfapp.faceChoice(s, b), [styles, bold]);
+const fcs = [await fc(['Light', 'Medium', 'Bold Condensed', 'Light Italic'], false), await fc(['Condensed Light', 'Light', 'Black'], false),
+  await fc(['Regular', 'Bold Condensed'], true), await fc(['Regular', 'Bold Narrow', 'Bold'], true), await fc(['Book', 'Bold', 'Oblique'], false)];
+check('face choice: no Regular → the normal-width face nearest 400; bold → not a condensed or narrow face', JSON.stringify(fcs) === JSON.stringify([{style:'Medium', synthetic:false},
+  {style:'Light', synthetic:false}, {style:'Regular', synthetic:true}, {style:'Bold', synthetic:false}, {style:'Book', synthetic:false}]), fcs);
 r = await an('PDFE Vert Test', path.join(FIX, 'vert-test.ttf'));
 check('vertical data', !!r && r.vert === true, r);
 r = await an('WenQuanYi Zen Hei', '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc');
@@ -179,6 +197,24 @@ await A(() => window.__pdfapp.fontkitPatch(true));
 gc = await glyphCheck();
 const odd = gc.find(g => /PDFEOddTest/.test(g.font));
 check('broken subset: the whole font is embedded instead', !!odd && odd.glyphs >= 14 && odd.broken === 0 && odd.empty === 0, odd);
+// (v1.0.52) an emptied editor that takes a font: the text is written where the editor showed it, as when the same
+// block is edited without emptying (the editor's own font stays 思源黑體, as at the commit). (Measured against the
+// block itself: editor and page differ by up to ~1 pt at some sizes either way, from Chrome's rounding of font metrics)
+const edBaseline = () => A(() => { const e = document.querySelector('.tbed'), s = window.__pdfapp.S.scale, p = window.__pdfapp.S.els[0].getBoundingClientRect(); if (!e) return null;
+  const line = e.firstElementChild && e.firstElementChild.tagName === 'DIV' ? e.firstElementChild : e, mk = document.createElement('span');
+  mk.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline'; line.insertBefore(mk, line.firstChild);
+  const y = (mk.getBoundingClientRect().top - p.top) / s; mk.remove(); return y; });
+const pageBaseline = str => A(async str => { const pg = window.__pdfapp.S.pages[0], tc = await pg.page.getTextContent(), it = tc.items.find(t => t.str.includes(str)); return it ? pg.vp1.convertToViewportPoint(it.transform[4], it.transform[5])[1] : null; }, str);
+await clickText('奇數長度測試'); const ed0 = await edBaseline(), pg0 = await pageBaseline('奇數長度');
+await win.keyboard.press('Control+a'); await win.keyboard.press('Delete'); await win.waitForTimeout(200);
+await fmt('font', 'DejaVu Serif'); await win.keyboard.type('Drift line'); await win.waitForTimeout(300);
+const ed1 = await edBaseline();
+await commit();
+const pg1 = await pageBaseline('Drift');
+bk = await blockOf('Drift line');
+const dd = [ed0, pg0, ed1, pg1].every(v => v != null) ? (pg1 - ed1) - (pg0 - ed0) : NaN;
+check('an emptied editor that takes a font: the text is written where the editor showed it (±0.3 pt, against the block as it was)', Math.abs(dd) <= .3 && !!bk && bk.fonts.includes('DejaVuSerif'), {dd, ed0, pg0, ed1, pg1, bk});
+await fmt('font', '');   // (the default font for new text back to 思源黑體)
 
 // ---- part 4: the font menu for page text, its prompts, and the original font picked up -------------------
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
@@ -187,6 +223,7 @@ await app.evaluate(({app}) => app.exit(0)).catch(() => {});
   const pg = d.addPage([595, 842]), helv = await d.embedFont(StandardFonts.Helvetica), dvf = await d.embedFont(fs.readFileSync(DV), {subset:true});
   pg.drawText('Plain line here', {x:60, y:760, size:20, font:helv});
   pg.drawText('Match me', {x:60, y:700, size:20, font:dvf});
+  pg.drawText('Count reads', {x:60, y:620, size:20, font:await d.embedFont(fs.readFileSync('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'), {subset:true})});
   fs.writeFileSync(path.join(TMP, 'rf4.pdf'), await d.save());
 }
 ({ app, win, A } = await open('', path.join(TMP, 'rf4.pdf')));
@@ -196,6 +233,13 @@ await A(() => window.__pdfapp.fontReady());
 const menuItem = f => A(f => { const b = document.querySelector(`#fontMenu .fm-it[data-f="${CSS.escape(f)}"]`); return b ? {off:b.classList.contains('off'), text:b.textContent.trim()} : null; }, f);
 const modalText = () => A(() => document.querySelector('#mask').classList.contains('show') ? document.querySelector('#modal').innerText.replace(/\s+/g, ' ') : '');
 const tbFont = () => A(() => window.__pdfapp.tbStyle().font);
+// (v1.0.52) the first click on text in an installed font whose file is not read yet: the file is read once (its licence
+// and its letters from the same reading)
+await A(() => { window.__pdfapp.fontCatPatch('DejaVu Sans', {embed:null}); window.__pdfapp.countFaceReads('DejaVu Sans'); });
+check('(DejaVu Sans line)', await clickText('Count reads'));
+const cr = await A(() => ({reads:window.__faceReads, btn:(document.querySelector('#hint [data-tbfont]') || {}).textContent}));
+check('the first click on text in an installed font: its file is read once', cr.reads === 1 && cr.btn === 'DejaVu Sans', cr);
+await win.keyboard.press('Escape'); await win.waitForTimeout(1000);
 check('(plain page text editor)', await clickText('Plain line here') && await A(() => !!document.querySelector('.tbed.real')));
 check('page text has the font button', await A(() => !!document.querySelector('#hint [data-tbfont]')));
 await A(() => window.__pdfapp.fontCatAdd([
@@ -382,6 +426,24 @@ await win.keyboard.press('Escape'); await win.waitForTimeout(200);
 // (10) the editor shows a fake bold for fonts without a bold face
 check('editor can draw a fake bold', await A(() => getComputedStyle(document.querySelector('.tbed')).fontSynthesisWeight) === 'auto');
 await win.keyboard.press('Escape'); await win.waitForTimeout(1500);
+// (v1.0.52) licence bits 0x0006 (restricted + preview & print): the least restrictive counts, the font is embedded
+await A(b64 => window.__pdfapp.registerTestFont({family:'PDFE PreviewPrint Test', b64}), withFsType(path.join(FIX, 'restricted-test.ttf'), 0x0006));
+await clickText('無子'); await win.keyboard.press('Control+a'); await win.keyboard.type('禁止嵌入'); await win.keyboard.press('Control+a'); await fmt('font', 'PDFE PreviewPrint Test'); await commit();
+bk = await blockOf('禁止嵌入');
+check('licence bits 0x0006: embedded', !!bk && bk.fonts.some(f => /Restricted/.test(f)), bk);
+// (v1.0.52) a CFF (.otf) font embedded whole: written as CFF (/FontFile3 marked /OpenType), not as a TrueType font
+// (pdf-lib's /FontFile2, which poppler calls a mismatch); its text reads back
+await A(b64 => window.__pdfapp.registerTestFont({family:'PDFE CFF Whole Test', b64}), withFsType(INTER, 0x0100));
+await A(() => window.__pdfapp.fontCatPatch('PDFE CFF Whole Test', {embed:null}));
+await clickText('禁止嵌入'); await win.keyboard.press('Control+a'); await win.keyboard.type('CFF whole'); await win.keyboard.press('Control+a'); await fmt('font', 'PDFE CFF Whole Test'); await commit();
+bk = await blockOf('CFF whole');
+const cw = await A(async () => { const P = PDFLib, d = await P.PDFDocument.load(window.__pdfapp.S.bytes), out = [];
+  d.context.enumerateIndirectObjects().forEach(([, o]) => { if (!(o instanceof P.PDFDict) || String(o.get(P.PDFName.of('Type'))) !== '/FontDescriptor') return;
+    const f3 = o.lookup(P.PDFName.of('FontFile3')); if (f3) out.push({name:String(o.get(P.PDFName.of('FontName'))), sub:String(f3.dict.get(P.PDFName.of('Subtype')))}); });
+  return out; });
+const cwi = cw.find(f => /Inter/.test(f.name)), cwt = await extract('cffwhole.pdf'), pf = spawnSync('pdffonts', [path.join(TMP, 'cffwhole.pdf')]), pfErr = pf.stderr.toString();
+check('a CFF (.otf) font embedded whole: /FontFile3 marked /OpenType, poppler sees no mismatch, its text reads back', !!bk && bk.fonts.some(f => /Inter/.test(f)) && !!cwi && cwi.sub === '/OpenType'
+  && !/Mismatch/i.test(pfErr) && /Inter-Regular\S*\s+CID Type 0C \(OT\)/.test(pf.stdout.toString()) && cwt.includes('CFF whole'), {bk, cw, pdffonts:pf.stdout.toString().split('\n').filter(l => /Inter/.test(l)), pfErr:pfErr.slice(0, 200), text:cwt.slice(0, 80)});
 
 // ---- end --------------------------------------------------------------------------------------
 console.log(failed ? `${failed} check(s) failed` : 'all checks passed');
