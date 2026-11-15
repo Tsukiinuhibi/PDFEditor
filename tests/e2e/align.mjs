@@ -377,6 +377,16 @@ const edOpen = await A(() => !!document.querySelector('.page .tbed') && !!window
 await win.keyboard.press('Escape'); await win.waitForTimeout(1800);
 const tb6 = (await anns(1)).find(x => x.id === tb5.id), tbText = await A(id => window.__pdfapp.getAnns(1).then(l => (l.find(a => a.id === id) || {}).contents || ''), tb5.id);
 check('a nudge of a text box, then a double click to write in it: the editor stays open, the nudge kept', edOpen && !!tb6 && near(tb6.x, tb5.x + 3, .6) && tbText.includes('Hi'), {edOpen, x0:tb5.x, x1:tb6 && tb6.x, tbText});
+// (v1.0.52) a nudge, then 列印 (Ctrl+P) at once: the nudge is written before the print window reads the document
+await see(0, 300, 560);
+const pn0 = (await anns(0)).find(x => x.id === row4[1].id);
+await win.mouse.click(...await P(0, pn0.x + 6, pn0.y + pn0.h / 2)); await win.waitForTimeout(600);
+for (let k = 0; k < 3; k++) await win.keyboard.press('ArrowRight');
+await win.keyboard.press('Control+p'); await win.waitForTimeout(2500);
+const prOpen = await A(() => document.querySelector('#mask').classList.contains('show')), pn1 = (await anns(0)).find(x => x.id === row4[1].id);
+if (prOpen) { await win.keyboard.press('Escape'); await win.waitForTimeout(800); }
+check('a nudge, then 列印 at once: the nudge is in the document the print window shows', prOpen && near(pn1.x, pn0.x + 3, .3), {prOpen, x0:pn0.x, x1:pn1.x});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
 // closing the last tab with a group selected: the group is let go, the bar loses its object look
 await marq4();
 const hadBar = await barTitle(), hadMulti = await multi();

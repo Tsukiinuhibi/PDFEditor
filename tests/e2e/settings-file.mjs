@@ -118,6 +118,12 @@ const rt = await A(b => { const keep = localStorage.getItem('pdfeditor.bindings.
 check('shortcut settings as the program writes them (keys and mouse buttons): kept through export and import', !!rt.ok && rt.entries.some(([k, v]) => k === 'pdfeditor.bindings.v1' && v === realBinds) && !rt.skipped, {skipped:rt.skipped, keys:(rt.entries || []).map(e => e[0])});
 const nullCols = await A(() => window.__pdfapp.parseSettingsFile(JSON.stringify({app:'PDF 工作台', kind:'settings', settings:{'pdfeditor.theme':'dark', 'pdfeditor.colors.v1':'{"fav":null}', 'pdfeditor.styles.v1':'{}'}})));
 check('colours whose list is null: left out (the colour picker would break)', JSON.stringify(nullCols.entries.map(e => e[0])) === JSON.stringify(['pdfeditor.theme', 'pdfeditor.styles.v1']) && nullCols.skipped === 1, nullCols);
+// (v1.0.52) settings that are objects: their known inner values checked too (a grid of 0 mm, a width or a size that is not a number)
+const inner = await A(() => window.__pdfapp.parseSettingsFile(JSON.stringify({app:'PDF 工作台', kind:'settings', settings:{
+  'pdfeditor.theme':'dark', 'pdfeditor.view.v1':'{"gridMm":0}', 'pdfeditor.styles.v1':'{"rect":{"width":"x"}}', 'pdfeditor.textbox.v1':'{"size":"big"}'}})));
+const innerOk = await A(() => window.__pdfapp.parseSettingsFile(JSON.stringify({app:'PDF 工作台', kind:'settings', settings:{
+  'pdfeditor.view.v1':'{"grid":true,"gridMm":5}', 'pdfeditor.styles.v1':'{"rect":{"width":3,"opacity":0.5}}', 'pdfeditor.textbox.v1':'{"size":16,"bold":true}'}})));
+check('settings that are objects: a 0 mm grid, a width or a size that is not a number are left out; good ones kept', JSON.stringify(inner.entries.map(e => e[0])) === JSON.stringify(['pdfeditor.theme']) && inner.skipped === 3 && innerOk.entries.length === 3 && !innerOk.skipped, {inner, innerOk});
 // a storage error part-way: nothing half written, no reload
 await A(() => { const S = Storage.prototype; S.__set = S.setItem; S.setItem = function(k, v){ if (k === 'pdfeditor.zzz.test') throw new Error('quota'); return S.__set.call(this, k, v); }; });
 const half = write('half.json', {'pdfeditor.theme':'dark', 'pdfeditor.zzz.test':'y'});

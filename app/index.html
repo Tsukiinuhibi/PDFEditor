@@ -1378,6 +1378,7 @@ async function readsAlike(a, b){
   finally { for (const d of docs) await d.destroy().catch(() => {}); worker.destroy(); }
 }
 async function openInNewTab(bytes, name, handle){
+  if (NUDGE) await flushNudge();   // (a nudge in the tab being left: written first, or it would be dropped)
   // a signed one stays as it is: rewriting it on opening would quietly break its signature
   const rd = await readablePdf(bytes), freed = rd.state === 'decrypted' && !rd.signed;
   const prev = active;
@@ -2812,6 +2813,7 @@ function exportSize(i, dpi){
 }
 // finish anything still being edited (open note, pen strokes waiting to be saved, text being typed)
 async function settleEdits(){
+  try { if (NUDGE) await flushNudge(); } catch (_) {}   // (an arrow-key nudge not written yet)
   try { await closeNote(true); } catch (_) {}
   try { await flushPen(); } catch (_) {}
   try { await commitTextEditor(); await tbSaving; } catch (_) {}
@@ -5074,9 +5076,13 @@ const mainOf = pl => pl.reduce((m, d) => d.box.w * d.box.h > m.box.w * m.box.h ?
 function usedElsewhere(doc, seen = null){
   const ctx = doc.context, used = new Set(), done = new Set();
   const look = v => v instanceof PDFRef ? ctx.lookup(v) : v, D = (d, k) => { try { return d.lookupMaybe(N_(k), PDFDict); } catch (_) { return undefined; } };
+  const ownSeen = new Map();   // content without resources of its own → the resources dictionaries it was read with
   const own = (x, res) => {   // content not read: with resources of its own, all they hold; without, the names it draws from res
-    if (!x || !x.dict || done.has(x)) return; done.add(x);
-    const r = x.dict.get(N_('Resources')); if (r) return all(r);
+    if (!x || !(x.dict instanceof PDFDict)) return;
+    const r = x.dict.get(N_('Resources'));
+    if (r) { if (done.has(x)) return; done.add(x); return all(r); }
+    let rs = ownSeen.get(x); if (!rs) ownSeen.set(x, rs = new Set());
+    if (rs.has(res)) return; rs.add(res);   // (the same glyph on another page may draw another picture by that name)
     const xo = D(res, 'XObject'); if (!xo) return;
     let b; try { b = streamBytes(x); } catch (_) { return; }
     for (const o of csTokens(b)) if (o.op === 'Do' && o.args[0] && o.args[0].name) {
@@ -11980,8 +11986,17 @@ const SETTING_SHAPE = {
   'pdfeditor.colors.v1':j => isPlainObj(j) && (!('fav' in j) || (Array.isArray(j.fav) && j.fav.every(c => typeof c === 'string'))) && (!('use' in j) || isPlainObj(j.use)),
   'pdfeditor.people.v1':j => isPlainObj(j) && Array.isArray(j.names) && j.names.every(n => typeof n === 'string') && (j.def == null || typeof j.def === 'string'),
   'pdfeditor.fonts.recent.v1':j => Array.isArray(j) && j.every(n => typeof n === 'string'),
-  ...Object.fromEntries(['textbox.v1', 'styles.v1', 'ribbon.v1', 'view.v1', 'print.v1', 'find.v1', 'export.v1', 'fontid.v1'].map(k => ['pdfeditor.' + k, isPlainObj])),
+  ...Object.fromEntries(['ribbon.v1', 'print.v1', 'find.v1', 'export.v1', 'fontid.v1'].map(k => ['pdfeditor.' + k, isPlainObj])),
+  // (their known values of the right kind: a 0 mm grid or a width that is not a number would break snapping and drawing)
+  'pdfeditor.view.v1':j => likeDefaults(j, {grid:false, guides:true, rulers:false, snap:true, gridMm:10}, {gridMm:v => Number.isFinite(v) && v >= 1 && v <= 100}),
+  'pdfeditor.textbox.v1':j => likeDefaults(j, TB_DEF, {size:v => Number.isFinite(v) && v >= 4 && v <= 400}),
+  'pdfeditor.styles.v1':j => isPlainObj(j) && Object.values(j).every(t => isPlainObj(t)
+    && ['width', 'size'].every(k => t[k] == null || (Number.isFinite(+t[k]) && +t[k] > 0)) && (t.opacity == null || (Number.isFinite(+t.opacity) && +t.opacity >= 0 && +t.opacity <= 1))
+    && ['color', 'fill'].every(k => t[k] == null || typeof t[k] === 'string') && (t.dash == null || typeof t.dash === 'boolean')),
 };
+// an object whose values named in defs have the same kind as there (numbers finite; check: stricter tests by name)
+const likeDefaults = (j, defs, check = {}) => isPlainObj(j) && Object.entries(j).every(([k, v]) => !(k in defs)
+  || (check[k] ? check[k](v) : typeof v === typeof defs[k] && (typeof v !== 'number' || Number.isFinite(v))));
 function settingShapeOk(k, v){
   const f = SETTING_SHAPE[k]; if (!f) return true;
   if (k === 'pdfeditor.theme' || k === 'pdfeditor.pagecolor') return f(v);

@@ -81,6 +81,12 @@ const FmO = ctx.register(ctx.flateStream(Buffer.from('q /FmI Do Q\n'), {Type:'XO
 const apN = ctx.register(ctx.stream('/FmI Do\n', {Type:'XObject', Subtype:'Form', BBox:[0, 0, 595, 842], Resources:{XObject:{FmI}}}));
 page(content('q /FmO Do Q\n'), ctx.obj({XObject:{FmO}})).node.set(N('Annots'), ctx.obj([ctx.register(ctx.obj({Type:'Annot', Subtype:'Square', Rect:[0, 0, 297.5, 421], F:4, AP:{N:apN}}))]));
 page(content('q /FmO Do Q\n'), ctx.obj({XObject:{FmO}}));
+// ---- pages for part 7 (v1.0.52) ----
+// pages 24 and 25: one Type3 font without resources on both; its glyph draws /P, which is a different picture on each page
+const t3p2 = ctx.register(ctx.stream('1000 0 d0 q 1000 0 0 1000 0 0 cm /P Do Q\n'));
+const t3b = ctx.register(ctx.obj({Type:'Font', Subtype:'Type3', FontBBox:[0, 0, 1000, 1000], FontMatrix:[0.001, 0, 0, 0.001, 0, 0], CharProcs:{a:t3p2}, Encoding:{Type:'Encoding', Differences:[97, 'a']}, FirstChar:97, LastChar:97, Widths:[1000]}));
+page(content('q 100 0 0 50 100 600 cm /P Do Q\nBT /F3 50 Tf 300 600 Td (a) Tj ET\n'), ctx.obj({XObject:{P:image(84, 20)}, Font:{F3:t3b}}));
+page(content('q 100 0 0 50 100 600 cm /P Do Q\nBT /F3 50 Tf 300 600 Td (a) Tj ET\n'), ctx.obj({XObject:{P:image(86, 20)}, Font:{F3:t3b}}));
 const PDF = path.join(TMP, 'imgedit.pdf'); fs.writeFileSync(PDF, await doc.save());
 
 const { app } = await launchPath(PDF);
@@ -295,6 +301,13 @@ const fm22 = await Ev(async () => { const d = await PDFLib.PDFDocument.load(wind
   return x.keys().map(k => String(k).slice(1)); });
 const ap22 = await pixel(21, 60, 530);
 check('全部 2 處, an inner form a note also draws inside an outer form two pages draw: copied once; both pages lose it, the note keeps it', !!m22 && fm22.filter(k => /^PDFE_Fm/.test(k)).length === 1 && !(await draws(21)).length && !(await draws(22)).length && ap22[0] > 200 && ap22[2] < 80, {m22, fm22, ap22});
+
+// ---- part 7 (v1.0.52) ----------------------------------------------------------------------------------------------------
+// a Type3 font without resources on two pages, its glyph drawing /P (a different picture on each): deleting the second
+// page's own picture keeps that page's /P (its glyph still draws it)
+await pick(24, {x:100, y:192, w:100, h:50}); await del(); if (await modal()) await press('刪除'); else await settle();
+const n25 = await xoNames(24);
+check('a Type3 font without resources on two pages, its name a different picture on each: the second page keeps its own', !(await draws(24)).length && n25.includes('P'), {n25, d:await draws(24)});
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
