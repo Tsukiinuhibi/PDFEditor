@@ -123,6 +123,8 @@ save('big-aes128', Encryption(owner='owner-pw', user='', R=4, aes=True), objstm=
 # linearized ("Fast Web View") with object streams, as Acrobat saves by default: the trailer is in the first xref stream
 save('lin-aes128', Encryption(owner='owner-pw', user='', R=4, aes=True), objstm=True, linearize=True)
 save('lin-aes256', Encryption(owner='owner-pw', user='', R=6), objstm=True, linearize=True)
+# the same, signed: left encrypted on opening (pdf-lib cannot see that encryption: the trailer is in the first xref stream)
+save('lin-signed-aes128', Encryption(owner='owner-pw', user='', R=4, aes=True), objstm=True, linearize=True, signed=True)
 save_indirect('len-aes128', lambda k: Encryption(owner='owner-pw-%d' % k, user='', R=4, aes=True))
 save_indirect('len-rc4-128', lambda k: Encryption(owner='owner-pw-%d' % k, user='', R=3, aes=False, metadata=False))
 # 3000 pages, about 18 000 objects: reading it must not hold up the program for long

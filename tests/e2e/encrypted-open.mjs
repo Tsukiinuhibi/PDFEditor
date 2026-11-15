@@ -6,6 +6,7 @@ import { launch, TMP, ROOT } from './_env.mjs';
 import { PDFDocument, PDFName, PDFString, StandardFonts } from 'pdf-lib';
 import fs from 'fs';
 import path from 'path';
+import { execFileSync } from 'child_process';
 
 let failed = 0;
 const check = (name, ok, detail = '') => { console.log(`${ok ? '✔' : '✘'} ${name}${detail !== '' ? '  ' + (typeof detail === 'string' ? detail : JSON.stringify(detail)) : ''}`); if (!ok) { failed++; process.exitCode = 1; } };
@@ -112,6 +113,30 @@ expectErrors = false;
 t = await toasts(); s = await S();
 check('a change to it: 「這份 PDF 有加密保護，PDF 工作台無法修改它」; no undo step, the tab not marked changed, nothing added',
   t.some(x => x.includes('有加密保護') && x.includes('無法修改')) && !t.some(x => x.includes('No password')) && s.undo === 0 && !s.dirty && !(await anns()).includes('Square'), {t, s});
+
+// ---- (v1.0.54) 「快速網頁檢視」 (linearized, object streams, as Acrobat saves): opened decrypted, changed, saved as a new
+// file that opens, has no encryption and keeps its text; a signed one stays encrypted, and a change is refused although
+// pdf-lib cannot see that encryption (the trailer is in the first xref stream)
+await open(copy('lin-aes128.pdf')); await toasts();
+await drawRect();
+t = await toasts(); s = await S();
+const linOuts0 = fs.readdirSync(TMP).filter(f => /^out-\d+\.pdf$/.test(f)).length;
+await win.keyboard.press('Control+s'); await win.waitForTimeout(2500);
+const linOut = fs.readdirSync(TMP).filter(f => /^out-\d+\.pdf$/.test(f)).map(f => path.join(TMP, f)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+let linSaved = null;
+try { const raw = fs.readFileSync(linOut), d = await PDFDocument.load(raw, {updateMetadata:false}), p1 = d.getPages()[0];
+  linSaved = {n:fs.readdirSync(TMP).filter(f => /^out-\d+\.pdf$/.test(f)).length - linOuts0, encrypt:raw.includes('/Encrypt'), pages:d.getPageCount(),
+    square:(p1.node.Annots() ? p1.node.Annots().asArray() : []).some(r => d.context.lookup(r).get(PDFName.of('Subtype')) === PDFName.of('Square')),
+    text:execFileSync('pdftotext', ['-f', '1', '-l', '1', linOut, '-']).toString().trim()}; }
+catch (e) { linSaved = {error:String(e.message || e).slice(0, 160)}; }
+check('「快速網頁檢視」 「限制編輯」 file: a rectangle made, saved as a new file that opens, without encryption, its text and the rectangle in it',
+  s.undo === 1 && t.some(x => x.includes('已加入矩形')) && !!linSaved && linSaved.n === 1 && !linSaved.encrypt && linSaved.pages === 2 && linSaved.square && /Secret page 1/.test(linSaved.text), {t, s, linSaved});
+await open(copy('lin-signed-aes128.pdf')); await toasts();
+expectErrors = true;
+await drawRect();
+expectErrors = false;
+t = await toasts(); s = await S();
+check('the same, signed (kept encrypted): a change is refused, 「有加密保護」; nothing changed', s.name === 'lin-signed-aes128.pdf' && t.some(x => x.includes('有加密保護')) && s.undo === 0 && !s.dirty, {t, s});
 
 // ---- needs a password: as before ---------------------------------------------------------------------------------------
 let n0 = await tabs();
