@@ -124,6 +124,23 @@ const inner = await A(() => window.__pdfapp.parseSettingsFile(JSON.stringify({ap
 const innerOk = await A(() => window.__pdfapp.parseSettingsFile(JSON.stringify({app:'PDF 工作台', kind:'settings', settings:{
   'pdfeditor.view.v1':'{"grid":true,"gridMm":5}', 'pdfeditor.styles.v1':'{"rect":{"width":3,"opacity":0.5}}', 'pdfeditor.textbox.v1':'{"size":16,"bold":true}'}})));
 check('settings that are objects: a 0 mm grid, a width or a size that is not a number are left out; good ones kept', JSON.stringify(inner.entries.map(e => e[0])) === JSON.stringify(['pdfeditor.theme']) && inner.skipped === 3 && innerOk.entries.length === 3 && !innerOk.skipped, {inner, innerOk});
+// (v1.0.53) the settings as the program itself writes them (view, text box, every tool's style, the image export
+// preferences) travel through a file: none is left out
+const ownRt = await A(() => { const app = window.__pdfapp, keys = ['pdfeditor.view.v1', 'pdfeditor.textbox.v1', 'pdfeditor.styles.v1', 'pdfeditor.export.v1'], keep = keys.map(k => localStorage.getItem(k));
+  app.writeSettingsNow();
+  localStorage.setItem('pdfeditor.export.v1', JSON.stringify({fmt:'png', dpi:150, quality:92, transparent:false, annots:true, tpl:'{檔案名稱}_第{頁碼}頁', pad:'auto', nameMode:'macro',
+    macOrder:['name', 'page', 'date', 'seq'], macOn:{name:true, page:true, date:false, seq:false}, pageStyle:'cjk', dateFmt:'dash', sep:'us', seqStart:1, policy:'rename', useSub:false,
+    subTpl:'{檔案名稱}_圖片', lastDir:null, keepDir:false}));   // (what the export window writes, its defaults)
+  const snap = app.settingsSnapshot(); keys.forEach((k, n) => { if (keep[n] == null) localStorage.removeItem(k); else localStorage.setItem(k, keep[n]); });
+  const r = app.parseSettingsFile(JSON.stringify(snap)); return {skipped:r.skipped, have:keys.filter(k => (r.entries || []).some(e => e[0] === k))}; });
+check('the program\'s own view, text box, style and export settings: kept through export and import', !ownRt.skipped && ownRt.have.length === 4, ownRt);
+// (v1.0.53) the image export preferences: a DPI or a quality that is not a number in range is left out
+const expBad = await A(() => window.__pdfapp.parseSettingsFile(JSON.stringify({app:'PDF 工作台', kind:'settings', settings:{
+  'pdfeditor.theme':'dark', 'pdfeditor.export.v1':'{"dpi":"abc"}'}})));
+const expBad2 = await A(() => window.__pdfapp.parseSettingsFile(JSON.stringify({app:'PDF 工作台', kind:'settings', settings:{'pdfeditor.theme':'dark', 'pdfeditor.export.v1':'{"dpi":300,"quality":500}'}})));
+const expOk = await A(() => window.__pdfapp.parseSettingsFile(JSON.stringify({app:'PDF 工作台', kind:'settings', settings:{'pdfeditor.export.v1':'{"dpi":300,"quality":80,"seqStart":0,"fmt":"jpg"}'}})));
+check('image export preferences: a DPI that is not a number, a quality of 500 are left out; good ones kept', expBad.skipped === 1 && JSON.stringify(expBad.entries.map(e => e[0])) === '["pdfeditor.theme"]'
+  && expBad2.skipped === 1 && expOk.entries.length === 1 && !expOk.skipped, {expBad, expBad2, expOk});
 // a storage error part-way: nothing half written, no reload
 await A(() => { const S = Storage.prototype; S.__set = S.setItem; S.setItem = function(k, v){ if (k === 'pdfeditor.zzz.test') throw new Error('quota'); return S.__set.call(this, k, v); }; });
 const half = write('half.json', {'pdfeditor.theme':'dark', 'pdfeditor.zzz.test':'y'});

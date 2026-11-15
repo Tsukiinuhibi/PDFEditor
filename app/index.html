@@ -12045,7 +12045,10 @@ const SETTING_SHAPE = {
   'pdfeditor.colors.v1':j => isPlainObj(j) && (!('fav' in j) || (Array.isArray(j.fav) && j.fav.every(c => typeof c === 'string'))) && (!('use' in j) || isPlainObj(j.use)),
   'pdfeditor.people.v1':j => isPlainObj(j) && Array.isArray(j.names) && j.names.every(n => typeof n === 'string') && (j.def == null || typeof j.def === 'string'),
   'pdfeditor.fonts.recent.v1':j => Array.isArray(j) && j.every(n => typeof n === 'string'),
-  ...Object.fromEntries(['ribbon.v1', 'print.v1', 'find.v1', 'export.v1', 'fontid.v1'].map(k => ['pdfeditor.' + k, isPlainObj])),
+  ...Object.fromEntries(['ribbon.v1', 'print.v1', 'find.v1', 'fontid.v1'].map(k => ['pdfeditor.' + k, isPlainObj])),   // (their readers check each value)
+  // the image export window takes these as they are: a DPI that is not a number would make every size NaN
+  'pdfeditor.export.v1':j => likeDefaults(j, {fmt:'png', dpi:150, quality:92, transparent:false, tpl:'', subTpl:'', useSub:false, seqStart:1},
+    {dpi:v => Number.isFinite(v) && v >= 24 && v <= 1200, quality:v => Number.isFinite(v) && v >= 10 && v <= 100, seqStart:v => Number.isInteger(v) && v >= 0}),
   // (their known values of the right kind: a 0 mm grid or a width that is not a number would break snapping and drawing)
   'pdfeditor.view.v1':j => likeDefaults(j, {grid:false, guides:true, rulers:false, snap:true, gridMm:10}, {gridMm:v => Number.isFinite(v) && v >= 1 && v <= 100}),
   'pdfeditor.textbox.v1':j => likeDefaults(j, TB_DEF, {size:v => Number.isFinite(v) && v >= 4 && v <= 400}),
@@ -12458,6 +12461,7 @@ window.__pdfapp = {
   fontBytesInfo:async (family, bold) => { const r = await realFontInfo(family, bold); return {bytes:r.bytes.length, synthetic:r.synthetic}; },
   failEmbed:family => { EMBED_FAIL.add(family); },
   fontkitPatch:on => { fkPatchOn = !!on; },
+  writeSettingsNow:() => { saveView_(); saveTB(); saveStyles(); },
   settleEdits, nudgeState:() => ({pending:!!NUDGE, running:!!NUDGE_RUN}), pageClipBytes:() => PAGE_CLIP ? PAGE_CLIP.bytes : null,
   faceChoice:(styles, bold) => { const r = chooseFace(styles.map(style => ({style})), bold); return {style:r.face.style, synthetic:r.synthetic}; },
   countFaceReads:family => { window.__faceReads = 0; for (const f of FONT_FACES.get(family) || []) if (!f.__counted) { const b = f.blob.bind(f); f.blob = () => { window.__faceReads++; return b(); }; f.__counted = true; } },
