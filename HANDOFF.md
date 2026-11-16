@@ -1,6 +1,6 @@
 # PDF 工作台（PDFEditor）交接文件
 
-這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-16，最新發布版本是 **v4.6.0**。
+這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-16，最新發布版本是 **v4.7.0**。
 
 ---
 
@@ -443,7 +443,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 辨識的是頁面上那一塊畫出來的樣子（`ocrImage` → `renderRegion`，約 300 dpi），所以蓋在圖片上的東西也會一起讀；轉過角度的圖片用的是外框。
 - 測試：`image-ocr.mjs`（本機伺服器提供一張寫著 HELLO 2026 的圖，從網址插入、選取、〔辨識文字〕）。
 
-### 3.9.23 物件移動時畫面不閃（v4.6.1）
+### 3.9.23 物件移動時畫面不閃（v4.7.0）
 - 一個物件拖曳（`dragAnnot`）本來就有：拖曳時一張畫面截圖（`.aghost`，`snapshot`／`snapshotTurned`）跟著走、舊位置蓋一層 `.aveil`，放開後 `holdSelection` 把兩者標成 `.hold` 留著，等 `renderPage` 換上新畫面時才拿掉。
 - 多選拖曳（`dragMulti`）以前只移動外框，放開後物件先跳回原位、重畫後才出現在新位置。現在一開始拖就替每個物件做截圖和遮罩，放開時把截圖放進新位置的 `.asel.hold`、遮罩標成 `.hold`；`moveObjects` 失敗時 `clearHolds`。
 - 方向鍵微調（`nudgeSelected`）以前也只移動外框；現在第一次按鍵就做截圖和遮罩，寫入時由 `holdSelection` 接手。
@@ -621,6 +621,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | 4.4.0（原 1.0.55）| 插入圖片：從網址（`imageUrlDialog`、`url:fetch` 的 `kind:'image'`、`imageKind` 依位元組判斷）（見 3.9.20）|
 | 4.5.0 | 物件的複製、剪下、貼上：跨頁、跨檔，可再修改（`copyObjects`／`pasteObjects`、`turnAnnotDict`、大 stream 共用）（見 3.9.21）；版本號依大／中／小型更新重新編號（`OLD_VER`）|
 | 4.6.0 | 插入的圖片做文字辨識：物件列〔辨識文字〕→ `readPictureText`（見 3.9.22）|
+| 4.7.0 | 右鍵編輯選單（`formatMenu`，見 3.9.24）、圖片框選辨識（`PIC_OCR`，見 3.9.25）、多選拖曳與方向鍵微調不閃（見 3.9.23）|
 
 ---
 

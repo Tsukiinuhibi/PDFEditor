@@ -67,3 +67,11 @@ section out of this file when its batch ships.
 ## v4.6.0（插入的圖片做文字辨識）留下的小問題
 - 辨識的是頁面上那一塊畫出來的樣子：蓋在圖片上的東西會一起讀；轉過角度的圖片用外框、斜的字辨識率較差。
 - 測試不穩：`object-style-2.mjs` 的「runs of different sizes: a new colour keeps their sizes」在全部測試裡失敗一次（字級變成 14），單獨重跑兩次都通過。
+
+## v4.7.0（右鍵編輯選單、圖片框選辨識、移動不閃）留下的小問題
+- `OBJBAR_FOR` 可能被較早的 `paintObjBar` 呼叫設定（快速換選取時），右鍵選單偶爾只剩上下層級／複製／刪除；應改用世代計數。
+- 編輯文字的右鍵選單：剪下／複製／貼上用 `document.execCommand`，貼上在 Electron 是否可用要在實機確認。
+- 選單的字級框取得焦點時，反白的文字看起來像取消了（實際仍會套用）；可比照字型選單用 `CSS.highlights` 標示。
+- 「第一次微調寫入後、畫面重畫前馬上再按方向鍵」的情況，現在只顯示外框（不取畫面），時間窗很短，測試不易穩定重現。
+- 物件列（`#hint`）的 `--c:` 顏色已從 `tbObjStyle` 清理；其他讀自檔案、放進 HTML 的值還沒全面檢查。
+- 測試不穩：`object-style-2.mjs` 的「runs of different sizes: a new colour keeps their sizes」偶爾在全部測試裡失敗一次，單獨重跑會過（v4.6.0 起）。
