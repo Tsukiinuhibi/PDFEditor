@@ -23,18 +23,25 @@ const server = http.createServer((req, res) => {
   if (u === '/pics/red.png') { res.writeHead(200, {'Content-Type':'image/png', 'Content-Length':png.length}); res.end(png); return; }
   if (u === '/noext') { res.writeHead(200, {'Content-Type':'application/octet-stream'}); res.end(png); return; }   // (no name, no type: the bytes say PNG)
   if (u === '/logo.svg') { res.writeHead(200, {'Content-Type':'image/svg+xml'}); res.end(SVG); return; }
+  if (u === '/forbidden.png') { res.writeHead(403, {'Content-Type':'text/plain'}); res.end('no'); return; }
   if (u === '/page.png') { res.writeHead(200, {'Content-Type':'text/html'}); res.end('<!doctype html><html><body>Please sign in</body></html>'); return; }
   res.writeHead(404, {'Content-Type':'text/plain'}); res.end('not here');
 });
 await new Promise(r => server.listen(0, '127.0.0.1', r));
 const BASE = `http://127.0.0.1:${server.address().port}`;
 
+// (an earlier version remembered 連結 as the 插入 button's last action: index 1 of its list) — set, then the program started again
+{ const { app: a0 } = await launch('imgurl0.pdf'); const w0 = await a0.firstWindow();
+  await w0.waitForFunction(() => !!window.__pdfapp, null, {timeout:30000}); await w0.evaluate(() => localStorage.setItem('pdfeditor.lastact.v1', JSON.stringify({insert:1})));
+  await w0.waitForTimeout(1500); await a0.evaluate(({app}) => app.quit()).catch(() => {}); await new Promise(r => setTimeout(r, 2500)); }
 const { app } = await launch('imgurl.pdf');
 const win = await app.firstWindow(); win.on('pageerror', e => console.log('PAGEERR', e.message)); win.on('console', m => { if (m.type() === 'error') console.log('C', m.text().slice(0, 300)); });
 await win.waitForFunction(() => !!(window.__pdfapp && window.__pdfapp.S.pages.length), null, {timeout:30000});
 await win.waitForTimeout(1500);
 const Ev = win.evaluate.bind(win);
 await win.click('[data-view="single"]'); await win.waitForTimeout(400);
+const mainLabel = await Ev(() => document.querySelector('[data-amenu="insert"] .sp-main').textContent.trim());
+check('the 插入 button remembered as 連結 by an earlier version is still 連結', mainLabel === '連結', mainLabel);
 const dlg = () => Ev(() => ({open:!!document.querySelector('#urlIn') && document.querySelector('#mask').classList.contains('show'), title:(document.querySelector('#modal .mh') || {}).textContent || '',
   err:(document.querySelector('#urlErr') || {}).textContent || ''}));
 const fill = async u => { await Ev(u => { const i = document.querySelector('#urlIn'); i.value = u; i.dispatchEvent(new Event('input', {bubbles:true})); }, u); await win.waitForTimeout(200); };
@@ -79,6 +86,9 @@ check('a web page: the window stays, says it is not a picture', d.open && d.err.
 await fill(BASE + '/missing.png'); await win.click('#urlGo'); await win.waitForTimeout(2000);
 d = await dlg();
 check('not found: the window stays, says so', d.open && d.err.includes('找不到'), d);
+await fill(BASE + '/forbidden.png'); await win.click('#urlGo'); await win.waitForTimeout(2000);
+d = await dlg();
+check('refused (403): the advice is about pictures (save it in the browser, then 插入圖片), not about opening a PDF', d.open && d.err.includes('插入圖片') && !d.err.includes('「開啟」'), d);
 await win.keyboard.press('Escape'); await win.waitForTimeout(400);
 check('closed: no picture waiting', (await Ev(() => window.__pdfapp.S.tool)) !== 'image');
 

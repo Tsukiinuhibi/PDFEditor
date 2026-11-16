@@ -955,7 +955,7 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
   <div class="grp"><div class="btns">
     <button class="rb" data-tool="note" data-need title="便利貼註解"><i data-i="note"></i>便利貼</button>
     <button class="rb" data-tool="textbox" data-need title="文字方塊：點一下直接在十字處輸入；反白文字即可修改字級、顏色與底色"><i data-i="text"></i>文字方塊</button>
-    <button class="rb split" data-amenu="insert" data-need title="插入：點按執行，點 ▾ 選擇（插入圖片、連結）"><span class="sp-main"></span><span class="sp-arr">▾</span></button>
+    <button class="rb split" data-amenu="insert" data-need title="插入：點按執行，點 ▾ 選擇（插入圖片、連結、從網址插入圖片）"><span class="sp-main"></span><span class="sp-arr">▾</span></button>
     <button class="rb split" data-menu="markText" data-need title="文字標記：點按使用目前工具，點 ▾ 選擇其他（高亮、刪除線、底線、區域螢光筆）"><span class="sp-main"><i data-i="hlText"></i><span class="sp-lab">高亮</span></span><span class="sp-arr" title="選擇其他文字標記工具">▾</span></button>
     <button class="rb split" data-menu="drawMenu" data-need title="繪圖：點按使用目前工具，點 ▾ 選擇其他（箭頭、線條、矩形、橢圓形、多邊形、雲狀）"><span class="sp-main"><i data-i="arrow"></i><span class="sp-lab">箭頭</span></span><span class="sp-arr" title="選擇其他繪圖工具">▾</span></button>
     <button class="rb" data-tool="pen" data-need title="畫筆：自由手繪"><i data-i="pen2"></i>畫筆</button>
@@ -7470,7 +7470,7 @@ function showToolMenu(btn, which){
 document.addEventListener('pointerdown', e => { const m = $('#toolMenu'); if (m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('[data-menu],[data-amenu]')) m.style.display = 'none'; }, true);
 /* buttons that gather a few related actions (加頁、旋轉、簽署): the main part repeats the one used last, ▾ lists them all */
 const ACTION_MENUS = {
-  insert:[{tool:'image', ic:'insImg', label:'插入圖片', long:'插入圖片…（也可以把圖片檔拖到頁面上）'}, {act:'imageUrl', ic:'web', label:'網址圖片', long:'從網址插入圖片…'}, {tool:'link', ic:'link', label:'連結', long:'連結（網址、本文件的頁面、電子郵件）'}],
+  insert:[{tool:'image', ic:'insImg', label:'插入圖片', long:'插入圖片…（也可以把圖片檔拖到頁面上）'}, {tool:'link', ic:'link', label:'連結', long:'連結（網址、本文件的頁面、電子郵件）'}, {act:'imageUrl', ic:'web', label:'網址圖片', long:'從網址插入圖片…'}],   // (new items at the end: the last action is kept by its place)
   openm:[{act:'open', ic:'open', label:'開啟', long:'開啟檔案…（Ctrl+O）'}, {act:'openUrl', ic:'web', label:'從網址', long:'從網址開啟…（Ctrl+Shift+O）'}],
   output:[{act:'print', ic:'print', label:'列印', long:'列印…（Ctrl+P）'}, {act:'exportImages', ic:'toImage', label:'轉存圖片', long:'將頁面轉存成圖片…'}, {act:'exportWord', ic:'word', label:'轉存 Word', long:'轉存成可編輯的 Word 檔（.docx）…'}],
   pageAdd:[{act:'addPage', ic:'pageAdd', label:'加頁', long:'加入空白頁…'}, {act:'insertPdf', ic:'pageIns', label:'插入PDF', long:'從 PDF 插入頁面…'}],
@@ -10781,15 +10781,16 @@ let URLJOB = null;   // {id, set}: the download under way and how it reports
 const urlProgressText = (got, total) => `下載中…（${(got / 1048576).toFixed(1)}${total && got <= total ? ' / ' + (total / 1048576).toFixed(1) : ''} MB）`;
 if (DESK && DESK.url) DESK.url.onProgress((id, got, total) => { if (URLJOB && URLJOB.id === id) URLJOB.set(urlProgressText(got, total)); });
 const URL_OK = u => /^https?:\/\/[^\s/?#]+/i.test(String(u || '').trim());
-function urlWhy(r){
+function urlWhy(r, kind = 'pdf'){
+  const img = kind === 'image', after = img ? '請先在瀏覽器把圖片存下來，再用「插入圖片」選擇它' : '請先在瀏覽器登入並下載，再用「開啟」開啟下載的檔案';
   if (r.why === 'notpdf') return '這個網址下載到的不是 PDF 檔（可能需要登入，或是一個網頁）';
-  if (r.why === 'status') return r.status === 401 || r.status === 403 ? `這個網址需要登入，或沒有權限（${r.status}）。請先在瀏覽器登入並下載，再用「開啟」開啟下載的檔案`
+  if (r.why === 'status') return r.status === 401 || r.status === 403 ? `這個網址需要登入，或沒有權限（${r.status}）。${after}`
     : r.status === 404 || r.status === 410 ? `找不到這個檔案（${r.status}）` : `下載失敗（伺服器回應 ${r.status}）`;
   if (r.why === 'notimage') return '這個網址下載到的不是圖片（支援 PNG、JPEG、GIF、WebP、BMP、SVG；可能需要登入，或是一個網頁）';
   if (r.why === 'big') return `檔案太大（超過 ${Math.round((r.max || 500 * 1024 * 1024) / 1048576)} MB）`;
   if (r.why === 'idle') return '太久沒有收到資料，已停止下載';
   if (r.why === 'bad') return '網址要以 http:// 或 https:// 開頭';
-  if (r.why === 'creds') return '網址裡不能有帳號或密碼。請先在瀏覽器登入並下載，再用「開啟」開啟下載的檔案';
+  if (r.why === 'creds') return '網址裡不能有帳號或密碼。' + after;
   const c = r.code || '';   // (net::ERR_…: Chromium's own words stay out of the window)
   if (/NAME_NOT_RESOLVED|NAME_RESOLUTION_FAILED/.test(c)) return '找不到這個網站，請檢查網址';
   if (/INTERNET_DISCONNECTED/.test(c)) return '沒有網路連線';
@@ -10842,7 +10843,7 @@ async function urlDialog(pre, auto, kind = 'pdf'){
       catch (_) { setErr('無法讀取這張圖片'); return undefined; }
     }
     if (r.ok) return r;
-    if (r.why !== 'cancel') setErr(urlWhy(r));
+    if (r.why !== 'cancel') setErr(urlWhy(r, kind));
     return undefined;
   };
   const res = await openModal({title:img ? '從網址插入圖片' : '從網址開啟', body, buttons:[
