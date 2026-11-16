@@ -63,3 +63,7 @@ section out of this file when its batch ships.
 - 選著文字時 Ctrl+C 與 Ctrl+X 的行為不一致。
 - 連結物件選不到，所以 `destOut`／`destIn` 實際上用不到；連結被丟掉時留下的資料沒清。
 - 測試覆蓋：多選含便利貼、跨檔的轉向頁、字型共用沒有專門的檢查。
+
+## v4.6.0（插入的圖片做文字辨識）留下的小問題
+- 辨識的是頁面上那一塊畫出來的樣子：蓋在圖片上的東西會一起讀；轉過角度的圖片用外框、斜的字辨識率較差。
+- 測試不穩：`object-style-2.mjs` 的「runs of different sizes: a new colour keeps their sizes」在全部測試裡失敗一次（字級變成 14），單獨重跑兩次都通過。
