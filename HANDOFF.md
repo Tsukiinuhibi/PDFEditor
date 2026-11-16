@@ -475,6 +475,12 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 上一頁／下一頁（`goPage`）、第一頁／最後一頁只在顯示的頁之間移動；`scrollToPage` 遇到沒顯示的頁（搜尋結果、縮圖、輸入頁碼）會改回顯示全部並提示。縮圖裡沒顯示的頁變淡（`.thumb.pf-off`）。只改檢視，不改文件；列印、轉存仍是全部頁面。
 - 測試：`page-filter.mjs`。
 
+### 3.9.28 留下的小問題（v4.8.1）
+- `flushNudge`：有開著的便利貼時先寫入便利貼再寫微調（原本微調的修改裡關便利貼，便利貼的修改又等微調，會互等卡住）。`copySelected` 加 `COPYING` 防止同時進行兩次。
+- 只有一頁時〔雙數頁〕停用；字級清單〔▾〕再按一次關閉（`ctx.dataset.for = 'sz'`）；群組成員在隱藏／鎖定圖層時提示一次（`HIDDEN_TOLD`）。
+- 轉存圖片設定：`pad`、`macOn`、`lastDir` 只採用合理的值（讀取與匯入設定檔都檢查）。右鍵選單等最新一次 `paintObjBar`（`OBJBAR_GEN`）。字級框取得焦點時反白文字用 `CSS.highlights` 標示。簽章時文字還在修改會提示。
+- 測試：`align.mjs`（便利貼＋微調不卡、剪下兩次）、`object-group.mjs`、`page-filter.mjs`、`textbox-size.mjs`、`export-prefs.mjs`；`object-style-2.mjs` 加等待（偶爾失敗的那一項）。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。

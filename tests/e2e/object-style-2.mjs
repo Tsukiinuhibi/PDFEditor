@@ -86,8 +86,8 @@ st = await style(tb.id);
 check('復原 once: the font change undone, the rest kept', runs(st).every(r => !r.font && r.color === '#e03131' && r.size === 24) && st?.rt?.box?.border === true, runs(st));
 check('the text box tool\'s own defaults unchanged', (await A(() => localStorage.getItem('pdfeditor.textbox.v1'))) === TB0);
 // two runs of different sizes: a new colour keeps them different
-await win.keyboard.press('Escape'); await tool('textbox'); await click(await see(0, 100, 260)); await win.keyboard.type('AB');
-await win.keyboard.down('Shift'); await win.keyboard.press('ArrowLeft'); await win.keyboard.up('Shift');
+await win.keyboard.press('Escape'); await tool('textbox'); await click(await see(0, 100, 260)); await win.waitForTimeout(500); await win.keyboard.type('AB'); await win.waitForTimeout(300);   // (the editor ready before the keys: once in a while the size missed the B)
+await win.keyboard.down('Shift'); await win.keyboard.press('ArrowLeft'); await win.keyboard.up('Shift'); await win.waitForTimeout(200);
 await win.fill('#hint input[data-tb="size"]', '20'); await win.press('#hint input[data-tb="size"]', 'Enter'); await win.waitForTimeout(300);
 await win.keyboard.press('Escape'); await settle();
 const tb2 = (await anns(0, 'FreeText')).find(a => a.id !== tb.id);
