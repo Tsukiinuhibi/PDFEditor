@@ -331,7 +331,19 @@ function urlFileName(cd, href) {
   const n = safeName(path.basename(names.find(usable) || 'download'));
   return /\.pdf$/i.test(n) ? n : n + '.pdf';
 }
-ipcMain.handle('url:fetch', async (e, id, url) => {
+// a picture's kind from its first bytes (PNG, JPEG, GIF, WebP, BMP, SVG), or '' — what the address says does not count
+function imageKind(b) {
+  if (b.length > 8 && b[0] === 0x89 && b.toString('latin1', 1, 4) === 'PNG') return 'png';
+  if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'jpg';
+  if (b.toString('latin1', 0, 4) === 'GIF8') return 'gif';
+  if (b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP') return 'webp';
+  if (b.toString('latin1', 0, 2) === 'BM') return 'bmp';
+  if (/<svg[\s>]/i.test(b.subarray(0, 4096).toString('utf8')) && /^\s*(<\?xml|<!--|<!doctype svg|<svg)/i.test(b.subarray(0, 512).toString('utf8').replace(/^\ufeff/, ''))) return 'svg';
+  return '';
+}
+const IMG_MAX = 50 * 1024 * 1024;
+ipcMain.handle('url:fetch', async (e, id, url, kind = 'pdf') => {
+  const MAX = kind === 'image' ? IMG_MAX : URL_MAX;
   let u; try { u = new URL(String(url)); } catch (_) { return { ok: false, why: 'bad' }; }
   if (!/^https?:$/.test(u.protocol)) return { ok: false, why: 'bad' };
   if (u.username || u.password) return { ok: false, why: 'creds' };   // (fetch refuses them, and its message repeats the password)
@@ -344,7 +356,7 @@ ipcMain.handle('url:fetch', async (e, id, url) => {
     if (res.url && !/^https?:/i.test(res.url)) return drop({ ok: false, why: 'bad' });   // (where the redirects ended)
     if (!res.ok) return drop({ ok: false, why: 'status', status: res.status });
     const total = +res.headers.get('content-length') || 0, plainBody = !res.headers.get('content-encoding');
-    if (total > URL_MAX) return drop({ ok: false, why: 'big' });
+    if (total > MAX) return drop({ ok: false, why: 'big', max: MAX });
     // a size given for the body as it comes (not compressed): one buffer filled as it arrives, no second copy at the end
     const reader = res.body.getReader(), parts = []; let got = 0, last = 0, one = plainBody && total ? Buffer.allocUnsafe(total) : null;
     for (;;) {
@@ -352,10 +364,16 @@ ipcMain.handle('url:fetch', async (e, id, url) => {
       wake();
       if (one && got + value.length <= total) one.set(value, got); else { if (one) { parts.push(one.subarray(0, got)); one = null; } parts.push(Buffer.from(value)); }
       got += value.length;
-      if (got > URL_MAX) { ctl.abort('big'); return { ok: false, why: 'big' }; }
+      if (got > MAX) { ctl.abort('big'); return { ok: false, why: 'big', max: MAX }; }
       if (Date.now() - last > 150) { last = Date.now(); if (!e.sender.isDestroyed()) e.sender.send('url:progress', id, got, total); }
     }
     const data = one ? one.subarray(0, got) : Buffer.concat(parts);
+    if (kind === 'image') {   // (插入圖片：從網址) the bytes must be a picture; its name: the address's last part, with the right ending
+      const k = imageKind(data); if (!k) return { ok: false, why: 'notimage' };
+      let n = ''; try { n = decodeURIComponent(new URL(res.url || u.href).pathname.split('/').filter(Boolean).pop() || ''); } catch (_) {}
+      n = safeName(path.basename(n || 'picture')).replace(/\.[a-z0-9]{1,5}$/i, '') || 'picture';
+      return { ok: true, data, name: n + '.' + k, type: k === 'svg' ? 'image/svg+xml' : k === 'jpg' ? 'image/jpeg' : 'image/' + k };
+    }
     if (!data.subarray(0, 1024).includes('%PDF')) return { ok: false, why: 'notpdf' };
     return { ok: true, data, name: urlFileName(res.headers.get('content-disposition'), res.url || u.href), url: res.url || u.href };
   } catch (err) {

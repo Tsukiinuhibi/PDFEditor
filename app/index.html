@@ -4034,6 +4034,7 @@ const actions = {
   exportImages(){ return openExportImages(); },
   exportWord(){ return openWordDialog(); },
   openUrl(){ return openUrlDialog(); },
+  imageUrl(){ return imageUrlDialog(); },
   print(){ return openPrint(); },
   async delPage(){
     const n = S.pages.length;
@@ -7469,7 +7470,7 @@ function showToolMenu(btn, which){
 document.addEventListener('pointerdown', e => { const m = $('#toolMenu'); if (m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('[data-menu],[data-amenu]')) m.style.display = 'none'; }, true);
 /* buttons that gather a few related actions (加頁、旋轉、簽署): the main part repeats the one used last, ▾ lists them all */
 const ACTION_MENUS = {
-  insert:[{tool:'image', ic:'insImg', label:'插入圖片', long:'插入圖片…（也可以把圖片檔拖到頁面上）'}, {tool:'link', ic:'link', label:'連結', long:'連結（網址、本文件的頁面、電子郵件）'}],
+  insert:[{tool:'image', ic:'insImg', label:'插入圖片', long:'插入圖片…（也可以把圖片檔拖到頁面上）'}, {act:'imageUrl', ic:'web', label:'網址圖片', long:'從網址插入圖片…'}, {tool:'link', ic:'link', label:'連結', long:'連結（網址、本文件的頁面、電子郵件）'}],
   openm:[{act:'open', ic:'open', label:'開啟', long:'開啟檔案…（Ctrl+O）'}, {act:'openUrl', ic:'web', label:'從網址', long:'從網址開啟…（Ctrl+Shift+O）'}],
   output:[{act:'print', ic:'print', label:'列印', long:'列印…（Ctrl+P）'}, {act:'exportImages', ic:'toImage', label:'轉存圖片', long:'將頁面轉存成圖片…'}, {act:'exportWord', ic:'word', label:'轉存 Word', long:'轉存成可編輯的 Word 檔（.docx）…'}],
   pageAdd:[{act:'addPage', ic:'pageAdd', label:'加頁', long:'加入空白頁…'}, {act:'insertPdf', ic:'pageIns', label:'插入PDF', long:'從 PDF 插入頁面…'}],
@@ -10784,7 +10785,8 @@ function urlWhy(r){
   if (r.why === 'notpdf') return '這個網址下載到的不是 PDF 檔（可能需要登入，或是一個網頁）';
   if (r.why === 'status') return r.status === 401 || r.status === 403 ? `這個網址需要登入，或沒有權限（${r.status}）。請先在瀏覽器登入並下載，再用「開啟」開啟下載的檔案`
     : r.status === 404 || r.status === 410 ? `找不到這個檔案（${r.status}）` : `下載失敗（伺服器回應 ${r.status}）`;
-  if (r.why === 'big') return '檔案太大（超過 500 MB）';
+  if (r.why === 'notimage') return '這個網址下載到的不是圖片（支援 PNG、JPEG、GIF、WebP、BMP、SVG；可能需要登入，或是一個網頁）';
+  if (r.why === 'big') return `檔案太大（超過 ${Math.round((r.max || 500 * 1024 * 1024) / 1048576)} MB）`;
   if (r.why === 'idle') return '太久沒有收到資料，已停止下載';
   if (r.why === 'bad') return '網址要以 http:// 或 https:// 開頭';
   if (r.why === 'creds') return '網址裡不能有帳號或密碼。請先在瀏覽器登入並下載，再用「開啟」開啟下載的檔案';
@@ -10801,6 +10803,15 @@ function urlWhy(r){
   return c ? `下載失敗（代碼：${c.replace(/^ERR_/, '')}）` : '下載失敗';
 }
 let URLOPEN = false;   // the window is up or coming up
+// 插入圖片：從網址 — the picture is downloaded (the main process: Chromium's network, its proxy and certificates) and
+// then placed like a picture file (PENDING_IMG, the 插入圖片 tool)
+async function imageUrlDialog(){
+  if (!S.pdf) return;
+  if (!DESK || !DESK.url) { toast('這個版本不能從網址插入圖片', 'err'); return; }
+  if (URLOPEN || $('#mask').classList.contains('show')) return;
+  URLOPEN = true;
+  try { await urlDialog('', false, 'image'); } finally { URLOPEN = false; }
+}
 async function openUrlDialog(pre = '', {auto = false} = {}){
   if (!DESK || !DESK.url) { toast('這個版本不能從網址開啟', 'err'); return; }
   // another window open (a download under way, printing, settings…): a dropped link or a second call is let go
@@ -10808,10 +10819,11 @@ async function openUrlDialog(pre = '', {auto = false} = {}){
   URLOPEN = true;
   try { await urlDialog(pre, auto); } finally { URLOPEN = false; }
 }
-async function urlDialog(pre, auto){
+async function urlDialog(pre, auto, kind = 'pdf'){
+  const img = kind === 'image';
   if (!pre) { try { const c = String(await DESK.clipboardText() || '').trim(); if (URL_OK(c) && !/\s/.test(c)) pre = c; } catch (_) {} }
   const body = document.createElement('div'); body.style.width = 'min(520px, 80vw)';
-  body.innerHTML = `<div class="field"><label>PDF 的網址</label><input type="text" id="urlIn" placeholder="https://example.com/檔案.pdf" spellcheck="false" autocomplete="off"></div>
+  body.innerHTML = `<div class="field"><label>${img ? '圖片的網址' : 'PDF 的網址'}</label><input type="text" id="urlIn" placeholder="${img ? 'https://example.com/圖片.png' : 'https://example.com/檔案.pdf'}" spellcheck="false" autocomplete="off"></div>
     <div class="pr-err" id="urlErr"></div><div class="url-st" id="urlSt"></div>`;
   let alive = true;
   const $b = q => body.querySelector(q), setErr = t => { $b('#urlErr').textContent = t; }, setSt = t => { $b('#urlSt').textContent = t; };
@@ -10821,17 +10833,21 @@ async function urlDialog(pre, auto){
     const id = 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     URLJOB = {id, set:setSt}; setErr(''); setSt('下載中…'); $('#urlGo').disabled = true; $b('#urlIn').disabled = true;
     let r;
-    try { r = await DESK.url.fetch(id, url); } catch (e) { r = {ok:false, why:'net'}; }
+    try { r = await DESK.url.fetch(id, url, kind); } catch (e) { r = {ok:false, why:'net'}; }
     finally { if (URLJOB && URLJOB.id === id) URLJOB = null; }   // (a window opened since has its own)
     if (!alive) return undefined;   // the window was closed meanwhile: nothing more
     setSt(''); $b('#urlIn').disabled = false; check();
+    if (r.ok && img) {   // a picture: read it here (the window stays open if it cannot be shown)
+      try { return {ok:true, pic:await loadImageFile(new File([r.data instanceof Uint8Array ? r.data : new Uint8Array(r.data)], r.name, {type:r.type || ''}))}; }
+      catch (_) { setErr('無法讀取這張圖片'); return undefined; }
+    }
     if (r.ok) return r;
     if (r.why !== 'cancel') setErr(urlWhy(r));
     return undefined;
   };
-  const res = await openModal({title:'從網址開啟', body, buttons:[
+  const res = await openModal({title:img ? '從網址插入圖片' : '從網址開啟', body, buttons:[
     {label:'取消', id:'urlCancel', handler:() => { if (URLJOB) { DESK.url.cancel(URLJOB.id); return; } return null; }},
-    {label:'開啟', id:'urlGo', primary:true, handler:download},
+    {label:img ? '下載' : '開啟', id:'urlGo', primary:true, handler:download},
   ], onOpen:() => {
     const inp = $b('#urlIn'); inp.value = pre; inp.addEventListener('input', check);
     inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('#urlGo').click(); } });
@@ -10841,6 +10857,7 @@ async function urlDialog(pre, auto){
   alive = false;
   if (URLJOB) { DESK.url.cancel(URLJOB.id); URLJOB = null; }   // closed (Esc, the mask) while downloading: stop (it winds down on its own)
   if (!res || !res.ok) return;
+  if (img) { PENDING_IMG = res.pic; setTool('image'); toast('在頁面上點一下放置圖片，或拖曳決定大小'); return; }
   busy(true, '開啟中…');
   try { await openInNewTab(res.data instanceof Uint8Array ? res.data : new Uint8Array(res.data), res.name, null); toast(`已從網址開啟「${res.name}」`); }   // (no copy)
   catch (e) { toast(e && e.name === 'PasswordException' ? `「${res.name}」需要密碼才能開啟，PDF 工作台目前不支援` : '無法開啟這個 PDF：' + (e.message || e), 'err'); }

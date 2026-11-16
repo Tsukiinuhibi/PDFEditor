@@ -24,7 +24,7 @@ contextBridge.exposeInMainWorld('desktop', {
     openFolder: dir => ipcRenderer.invoke('export:open-folder', dir),
   },
   url: {
-    fetch: (id, url) => ipcRenderer.invoke('url:fetch', id, url),
+    fetch: (id, url, kind) => ipcRenderer.invoke('url:fetch', id, url, kind),   // kind: 'pdf' (default) or 'image'
     cancel: id => ipcRenderer.invoke('url:cancel', id),
     onProgress: cb => ipcRenderer.on('url:progress', (_e, id, got, total) => cb(id, got, total)),
   },

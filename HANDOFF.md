@@ -425,6 +425,12 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 選到的文字方塊（FreeText）有四個角的把手，一律等比例（Shift 也一樣）。放開時 `scaleTextBox`：每段字級乘上比例（取到 0.1、4～400）、重畫圖片，對角不動（拉右下角時左上角不動，以此類推），仍然選著；可以復原。文字方塊的大小是跟著內容走的（不會自動換行），所以拉角是整個縮放，不是改框的大小。不是本程式做的文字方塊（`objKind` 不是 `textbox`）：`paintObjBar` 拿掉把手、提示只剩「拖曳移動」（`scaleTextBox` 也會擋下並說明）。
 - 測試：`textbox-size.mjs`。
 
+### 3.9.20 插入圖片：從網址（v1.0.55）
+- 「插入 ▾」多一項〔從網址插入圖片…〕（`actions.imageUrl` → `imageUrlDialog`）：和「從網址開啟」共用 `urlDialog(pre, auto, kind)`，`kind = 'image'` 時標題、說明、按鈕〔下載〕不同；下載走主程式的 `url:fetch(id, url, 'image')`（Chromium 的網路、代理與憑證，最多 50 MB，60 秒沒資料就停，可以取消）。
+- 主程式用前面的位元組判斷是不是圖片（`imageKind`：PNG、JPEG、GIF、WebP、BMP、SVG；網址或 Content-Type 說什麼不算），不是就回 `notimage`（「這個網址下載到的不是圖片…」）。檔名取網址最後一段，換成對的副檔名。
+- 下載到的圖在畫面裡用 `loadImageFile`（`new File(...)`）讀；讀不出來視窗留著說明。成功後跟選檔案一樣：`PENDING_IMG`＋插入圖片工具，點一下或拖曳放置。
+- 測試：`image-url.mjs`（本機網頁伺服器：PNG、沒有名稱與類型的 PNG、SVG、網頁、404）。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。
