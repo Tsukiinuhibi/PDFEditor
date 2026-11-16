@@ -8534,7 +8534,8 @@ async function changeStampOf(ob){
 async function readPictureText(ob){
   const a = (await getAnns(ob.i)).find(x => x.id === ob.id); if (!a) { toast('找不到這張圖片', 'err'); return; }
   const pg = S.pages[ob.i], x0 = clamp(a.x, 0, pg.w), y0 = clamp(a.y, 0, pg.h);
-  readRegion(ob.i, {x:x0, y:y0, w:clamp(a.x + a.w, 0, pg.w) - x0, h:clamp(a.y + a.h, 0, pg.h) - y0}, {image:true});
+  const turn = AS && AS.a.id === ob.id && AS.rot ? {deg:AS.rot, w:AS.box.w, h:AS.box.h} : null;   // (turned: read upright)
+  readRegion(ob.i, {x:x0, y:y0, w:clamp(a.x + a.w, 0, pg.w) - x0, h:clamp(a.y + a.h, 0, pg.h) - y0}, {image:true, turn});
 }
 // 框選辨識: the 文字辨識 tool limited to the picture: the part of it a box is dragged over is read as an image (the
 // picture is outlined meanwhile; another tool or Esc ends it)
@@ -9376,8 +9377,14 @@ function tidyOcr(s){
   return s.replace(gap, '$1').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 // the box as a picture for Tesseract: about 300 dpi, with a white margin (text at the very edge reads badly)
-async function ocrImage(i, box){
-  const ppt = Math.max(1, Math.min(300 / 72, 3600 / Math.max(box.w, box.h))), c = await renderRegion(i, box, ppt);
+async function ocrImage(i, box, turn = null){
+  const ppt = Math.max(1, Math.min(300 / 72, 3600 / Math.max(box.w, box.h)));
+  let c = await renderRegion(i, box, ppt);
+  if (turn && Math.abs(turn.deg) > .5) {   // a turned picture: turned back about its centre, cut to its own (upright) size
+    const u = document.createElement('canvas'); u.width = Math.max(1, Math.round(turn.w * ppt)); u.height = Math.max(1, Math.round(turn.h * ppt));
+    const g = u.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, u.width, u.height);
+    g.translate(u.width / 2, u.height / 2); g.rotate(-turn.deg * Math.PI / 180); g.drawImage(c, -c.width / 2, -c.height / 2); c = u;
+  }
   const m = 24, out = document.createElement('canvas'); out.width = c.width + 2 * m; out.height = c.height + 2 * m;
   const g = out.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, out.width, out.height); g.drawImage(c, m, m);
   return out;
@@ -9433,7 +9440,7 @@ async function pictureOcrRead(i, box){
   }
 }
 // read the text in box on page i: the PDF's own text unless `image` is asked for; dir 'h' / 'v' forces the writing direction
-async function readRegion(i, box, {image = false, dir = null} = {}){
+async function readRegion(i, box, {image = false, dir = null, turn = null} = {}){   // turn {deg, w, h}: a turned picture, read upright
   const job = ++OCR.job;
   let finished; OCR.readP = new Promise(r => { finished = r; }); OCR.glyphs = null; OCR.reading = job; OCR.pr = null;   // 字型 waits for this reading
   try {
@@ -9449,7 +9456,7 @@ async function readRegion(i, box, {image = false, dir = null} = {}){
     OCR.dir = vert ? 'v' : 'h';
     setOcr({status:OCR.worker ? '辨識中…' : '載入辨識引擎…（第一次需要幾秒鐘）', progress:0, src:''});
     try {
-      const best = await ocrPasses(await ocrImage(i, box), vert, job, pr => setOcr({status:'辨識中…', progress:pr}));
+      const best = await ocrPasses(await ocrImage(i, box, turn), vert, job, pr => setOcr({status:'辨識中…', progress:pr}));
       if (!best) return;   // a newer box
       OCR.glyphs = {job, img:best.img, symbols:best.symbols};
       const text = tidyOcr(best.text);
@@ -13154,7 +13161,7 @@ window.__pdfapp = {
   fontBytesInfo:async (family, bold) => { const r = await realFontInfo(family, bold); return {bytes:r.bytes.length, synthetic:r.synthetic}; },
   failEmbed:family => { EMBED_FAIL.add(family); },
   fontkitPatch:on => { fkPatchOn = !!on; },
-  oldLayout:on => { TB_OLD_SPLIT = !!on; }, nudgeDelay:ms => { NUDGE_DELAY = ms; }, cutPages:() => copySelected(true), copyPages:() => copySelected(false), settingShapeOk:(k, v) => settingShapeOk(k, v), pendImage:async f => { setPendingImg(await loadImageFile(f)); setTool('image'); }, objClip:() => OBJ_CLIP && {n:OBJ_CLIP.n, from:OBJ_CLIP.from, i:OBJ_CLIP.src.i, subs:OBJ_CLIP.items.map(t => t.sub), shared:OBJ_CLIP.shared},
+  oldLayout:on => { TB_OLD_SPLIT = !!on; }, nudgeDelay:ms => { NUDGE_DELAY = ms; }, cutPages:() => copySelected(true), copyPages:() => copySelected(false), settingShapeOk:(k, v) => settingShapeOk(k, v), turnSel:deg => AS ? commitTurn(AS.i, AS.a, deg) : null, pendImage:async f => { setPendingImg(await loadImageFile(f)); setTool('image'); }, objClip:() => OBJ_CLIP && {n:OBJ_CLIP.n, from:OBJ_CLIP.from, i:OBJ_CLIP.src.i, subs:OBJ_CLIP.items.map(t => t.sub), shared:OBJ_CLIP.shared},
   writeSettingsNow:() => { saveView_(); saveTB(); saveStyles(); },
   settleEdits, nudgeState:() => ({pending:!!NUDGE, running:!!NUDGE_RUN}), pageClipBytes:() => PAGE_CLIP ? PAGE_CLIP.bytes : null,
   faceChoice:(styles, bold) => { const r = chooseFace(styles.map(style => ({style})), bold); return {style:r.face.style, synthetic:r.synthetic}; },

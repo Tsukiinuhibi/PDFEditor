@@ -67,6 +67,18 @@ await Ev(() => window.__pdfapp.setTool('ocr')); await win.waitForTimeout(300);
 check('the 文字辨識 tool chosen again: out of 框選辨識 (no outline)', await Ev(() => !document.querySelector('.picocr')));
 await Ev(() => window.__pdfapp.setTool('select')); await win.waitForTimeout(300);
 
+// ---- (leftovers) a turned picture: read upright ----------------------------------------------------------------------------------
+await Ev(() => window.__pdfapp.setTool('select')); await win.waitForTimeout(300);
+{ const p = await at(pic.x + pic.w / 2, pic.y + pic.h / 2); await win.mouse.click(p.x, p.y); await win.waitForTimeout(1000); }
+await Ev(() => window.__pdfapp.turnSel(30)); await win.waitForTimeout(2000);
+{ const pb = (await Ev(async () => (await window.__pdfapp.getAnns(0)).filter(a => a.subtype === 'Stamp').map(a => ({x:a.x, y:a.y, w:a.w, h:a.h}))))[0];
+  const p = await at(pb.x + pb.w / 2, pb.y + pb.h / 2); await win.mouse.click(p.x, p.y); await win.waitForTimeout(1200); }
+await Ev(() => { const p = document.querySelector('#ocrPanel'); if (p) p.querySelector('.ocr-tx').value = ''; });
+await win.click('#hint.objbar [data-o="ocr"]');
+let r3 = null;
+for (let k = 0; k < 120; k++) { await win.waitForTimeout(500); r3 = await Ev(() => { const p = document.querySelector('#ocrPanel'); return p ? {text:p.querySelector('.ocr-tx').value, busy:p.querySelector('[data-o="copy"]').disabled} : null; }); if (r3 && !r3.busy && r3.text) break; }
+check('a picture turned 30°: its text read upright (HELLO 2026)', !!r3 && /HELLO/.test(r3.text) && /2026/.test(r3.text), r3);
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 server.close();
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
