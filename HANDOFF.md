@@ -493,6 +493,11 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - （v4.8.4）從網頁拖進視窗的連結：是圖片（副檔名、`data:image`、或拖曳時附帶的 `<img src>` 就是它）且有開著的 PDF 時，開「從網址插入圖片」並自動下載（`imageUrlDialog(u, {auto:true})`），不再當成 PDF 下載。測試：`image-url.mjs` 最後一段。
 - 測試：`bar-steady.mjs`；`textbox-size.mjs` 點別的程式做的文字方塊前先捲到看得到的地方。
 
+### 3.9.31 留下的小問題第五批（v4.8.5）
+- 「從網址開啟」下載到的是圖片（`main.js` 回 `why:'isimage'`）且有開著的 PDF：改開「從網址插入圖片」並自動下載；沒有開 PDF 時說明要先開 PDF。
+- 轉過角度的圖片做文字辨識（`readPictureText`）：`ocrImage(i, box, turn)` 先把外框畫出來，再以中心轉回 `-deg`、切成圖片本身的大小，再辨識。
+- 測試：`image-url.mjs`（沒副檔名的圖片連結）、`image-ocr.mjs`（轉 30° 的圖片）、`move-flicker.mjs`（轉過角度的物件拖曳時舊位置看起來和旁邊一樣）。測試掛鉤 `turnSel(deg)`。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。

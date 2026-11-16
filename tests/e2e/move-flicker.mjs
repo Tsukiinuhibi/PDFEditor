@@ -105,5 +105,28 @@ const center = async k => { const b = (await A(async () => (await window.__pdfap
   check('…and what moves with the mouse is the square itself', during[2][2] > 200 && during[2][0] < 80, during[2]);
 }
 
+// ---- (leftovers) a turned object dragged: its old place shows what is under it, it moves alone ---------------------------------------
+{
+  await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+  const blue = () => A(async () => { const app = window.__pdfapp, l = (await app.getAnns(0)).filter(a => a.subtype === 'Square');
+    for (const a of l) { const st = await app.annStyle(0, a.id); if (st && st.color === '#0000ff') return {id:a.id, x:a.x, y:a.y, w:a.w, h:a.h}; } return null; });   // (the blue one)
+  let bq = await blue();
+  { const p = await at(bq.x + bq.w / 2, bq.y + bq.h / 2); await win.mouse.click(p.x, p.y); await win.waitForTimeout(800); }
+  await A(() => window.__pdfapp.turnSel(30)); await win.waitForTimeout(2000);
+  await win.keyboard.press('Escape'); await win.waitForTimeout(500);
+  bq = await blue();
+  const c = {x:bq.x + bq.w / 2, y:bq.y + bq.h / 2}, old = await at(c.x, c.y), side = await at(bq.x - 12, c.y);
+  const px = async pts => app.evaluate(async ({BrowserWindow}, pts) => { const wc = BrowserWindow.getAllWindows()[0].webContents, img = await wc.capturePage(), bm = img.toBitmap(), w = img.getSize().width, sf = img.getSize().width / wc.getOwnerBrowserWindow().getContentBounds().width;
+    return pts.map(p => { const o = (Math.round(p.y * sf) * w + Math.round(p.x * sf)) * 4; return [bm[o + 2], bm[o + 1], bm[o]]; }); }, pts);
+  let to = null; for (const [dx, dy] of [[110, 0], [0, 90], [-110, 0], [110, 90], [0, -90]]) { const t = await at(c.x + dx, c.y + dy), [col] = await px([t]); if (!(col[0] > 200 && col[1] < 80) && !(col[2] > 200 && col[0] < 80)) { to = t; break; } }   // (a spot with nothing red or blue on it)
+  await win.mouse.move(old.x, old.y); await win.waitForTimeout(500); await win.mouse.down();
+  await win.mouse.move(to.x, to.y, {steps:10}); await win.waitForTimeout(900);
+  const during = await px([old, side, to]);
+  await win.mouse.up(); await win.waitForTimeout(2500);
+  const near = (a, b) => Math.max(...a.map((v, k) => Math.abs(v - b[k]))) <= 30;
+  check('a turned object dragged: its old place looks like the page around it (no pale patch)', near(during[0], during[1]), during);
+  check('…and what moves is the object (blue)', during[2][2] > 200 && during[2][0] < 80, during[2]);
+}
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
