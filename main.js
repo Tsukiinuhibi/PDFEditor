@@ -371,7 +371,8 @@ ipcMain.handle('url:fetch', async (e, id, url, kind = 'pdf') => {
     if (kind === 'image') {   // (插入圖片：從網址) the bytes must be a picture; its name: the address's last part, with the right ending
       const k = imageKind(data); if (!k) return { ok: false, why: 'notimage' };
       // (the server's file name when it gives one, otherwise the address's; only a picture ending is taken off: "v1.2" stays)
-      const n = safeName(path.basename(urlFileName(res.headers.get('content-disposition'), res.url || u.href).replace(/\.pdf$/i, '') || 'picture'))
+      const n0 = urlFileName(res.headers.get('content-disposition'), res.url || u.href).replace(/\.pdf$/i, '');   // (urlFileName names a file it finds no name for "download")
+      const n = safeName(path.basename(n0 === 'download' ? 'picture' : n0 || 'picture'))
         .replace(/\.(png|jpe?g|gif|webp|bmp|svg|tiff?|ico|avif|heic)$/i, '') || 'picture';
       return { ok: true, data, name: n + '.' + k, type: k === 'svg' ? 'image/svg+xml' : k === 'jpg' ? 'image/jpeg' : 'image/' + k };
     }

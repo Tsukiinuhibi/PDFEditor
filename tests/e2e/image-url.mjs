@@ -109,6 +109,21 @@ check('a server that names the file (Content-Disposition): that name', q.tool ==
 q = await tryUrl(BASE + '/fake.bmp');
 check('text starting "BM" is not taken for a BMP picture', q.d.open && q.tool !== 'image', q);
 
+// ---- (review) a long data address pasted, a broken one, one whose type is wrong -----------------------------------------------------
+{ const big = Buffer.concat([png, Buffer.alloc(600000)]);   // (a PNG followed by bytes it ignores: over half a million characters as base64)
+  const longUrl = 'data:image/png;base64,' + big.toString('base64');
+  await app.evaluate(({clipboard}, t) => clipboard.writeText(t), longUrl);
+  await Ev(() => { window.__pdfapp.setTool('select'); window.__pdfapp.actions.imageUrl(); }); await win.waitForTimeout(500);
+  await Ev(() => { const i = document.querySelector('#urlIn'); i.value = ''; i.focus(); }); await win.keyboard.press('Control+v'); await win.waitForTimeout(400);
+  const shown = await Ev(() => ({v:document.querySelector('#urlIn').value, can:!document.querySelector('#urlGo').disabled}));
+  if (shown.can) { await win.click('#urlGo'); await win.waitForTimeout(2500); }
+  check('a long data address pasted: the box says what it is, and the whole picture is read', /貼上的圖片資料/.test(shown.v) && await Ev(() => window.__pdfapp.S.tool) === 'image', shown);
+  if ((await dlg()).open) { await win.keyboard.press('Escape'); await win.waitForTimeout(400); } }
+q = await tryUrl('data:image/png;base64,@@@not base64@@@');
+check('a broken data address: said in Chinese, the window stays', q.d.open && /無法讀取/.test(q.d.err) && !/[A-Za-z]{6,}/.test(q.d.err), q.d);
+q = await tryUrl('data:image/jpeg;base64,' + png.toString('base64'));
+check('a data address saying JPEG with PNG bytes: read as the PNG it is', q.tool === 'image', q);
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 server.close();
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

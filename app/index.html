@@ -4136,8 +4136,15 @@ function turnAnnotDict(doc, d, T){
   for (const k of ['N', 'R', 'D']) { const v = ap.get(N_(k)), o = v instanceof PDFRef ? ctx.lookup(v) : v;
     if (o instanceof PDFDict && !o.dict) o.entries().forEach(([, s]) => turnForm(s)); else turnForm(v); }
 }
-async function copyObjects(i, list, {cut = false} = {}){
+let OBJ_COPYING = false;
+async function copyObjects(i, list, opts = {}){
+  if (OBJ_COPYING) { toast('上一次的複製／剪下還在進行，請稍候'); return; }
+  OBJ_COPYING = true;
+  try { await copyObjects_(i, list, opts); } finally { OBJ_COPYING = false; }
+}
+async function copyObjects_(i, list, {cut = false} = {}){
   if (!S.pdf || !list.length) return;
+  const d0 = activeDoc();
   try { await flushNudge(); } catch (_) {}
   try {
     const src = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false}), out = await PDFDocument.create();
@@ -4162,9 +4169,10 @@ async function copyObjects(i, list, {cut = false} = {}){
   updateClipUI();
   const n = OBJ_CLIP.n, what = n > 1 ? `${n} 個物件` : '物件';
   if (!cut) { toast(`已複製${what}：到任何頁面或其他分頁，按 Ctrl+V 貼到滑鼠所在的位置`); return; }
+  if (activeDoc() !== d0) { toast('已複製，但已換到別的分頁，所以沒有剪下', 'err'); return; }   // (the copy took a while and another tab is open now)
   const ids = list.map(a => a.id);   // (what was copied is taken away, whatever is selected by now)
-  if (MS && MS.i === i) clearMulti(); if (AS && AS.i === i && ids.includes(AS.a.id)) deselectAnnot();
-  await mutate(`已剪下${what}，按 Ctrl+V 貼上`, doc => { for (const id of ids) { const ref = findAnnotRef(doc, i, id); if (ref) removeAnnotRefs(doc, i, ref); } });
+  const ok = await mutate(`已剪下${what}，按 Ctrl+V 貼上`, doc => { let n = 0; for (const id of ids) { const ref = findAnnotRef(doc, i, id); if (ref) { removeAnnotRefs(doc, i, ref); n++; } } if (!n) { toast('找不到要剪下的物件', 'err'); return false; } });
+  if (ok) { if (MS && MS.i === i) clearMulti(); if (AS && AS.i === i && ids.includes(AS.a.id)) deselectAnnot(); }
 }
 // on the page under the mouse, centred on it; with the mouse elsewhere, on the current page where they were (a step
 // further when that is the page they came from). One undo step; what was pasted is selected
@@ -8658,6 +8666,7 @@ async function scaleTextBox(i, a, ob, nb, opts = {}){
     Object.entries(await textBoxFields(doc, i, lines, box, r, {x, y, w:r.w, h:r.h})).forEach(([k, v]) => dict.set(N_(k), doc.context.obj(v)));
   }, opts);
   if (!ok) clearHolds(i);
+  if (same) toast('字級已到下限或上限（4～400），不能再縮放');
   if ((ok || same) && S.tool === 'select') {   // kept selected at its new size (or as it was)
     const a2 = (await getAnns(i)).find(x => x.id === id);
     if (a2 && S.els[i]) selectAnnot(i, a2);
@@ -11328,9 +11337,16 @@ function dataUrlFile(v){
   const body = v.slice(m[0].length), b64 = /;base64/i.test(m[2] || '');
   if (body.length > 70e6) throw new Error('圖片太大（超過 50 MB）');
   let bytes;
-  if (b64) { const bin = atob(body.replace(/\s+/g, '')); bytes = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k); }
-  else bytes = new TextEncoder().encode(decodeURIComponent(body));
-  const type = m[1].toLowerCase().replace('jpg', 'jpeg'), ext = {'image/jpeg':'jpg', 'image/svg+xml':'svg'}[type] || type.slice(6);
+  try {
+    if (b64) { const bin = atob(body.replace(/\s+/g, '')); bytes = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k); }
+    else bytes = new TextEncoder().encode(decodeURIComponent(body));
+  } catch (_) { throw new Error('無法讀取這張圖片（網址裡的圖片資料不完整）'); }
+  // what kind of picture the bytes are (not what the address says)
+  const b = bytes, a4 = String.fromCharCode(...b.subarray(0, 4)), head = new TextDecoder().decode(b.subarray(0, 512)).replace(/^\ufeff/, '');
+  const type = b[0] === 0x89 && a4.slice(1) === 'PNG' ? 'image/png' : b[0] === 0xff && b[1] === 0xd8 ? 'image/jpeg' : a4 === 'GIF8' ? 'image/gif'
+    : a4 === 'RIFF' && String.fromCharCode(...b.subarray(8, 12)) === 'WEBP' ? 'image/webp' : a4.slice(0, 2) === 'BM' ? 'image/bmp' : /^\s*(<\?xml|<!--|<svg)/i.test(head) ? 'image/svg+xml' : '';
+  if (!type) throw new Error('無法讀取這張圖片（不是圖片的資料）');
+  const ext = {'image/jpeg':'jpg', 'image/svg+xml':'svg'}[type] || type.slice(6);
   return new File([bytes], '貼上的圖片.' + ext, {type});
 }
 function urlWhy(r, kind = 'pdf'){
@@ -11381,14 +11397,19 @@ async function urlDialog(pre, auto, kind = 'pdf'){
   let alive = true;
   const $b = q => body.querySelector(q), setErr = t => { $b('#urlErr').textContent = t; }, setSt = t => { $b('#urlSt').textContent = t; };
   const ok = v => URL_OK(v) || (img && DATA_IMG.test(v));
-  const check = () => { const v = $b('#urlIn').value.trim(), bad = !!v && !ok(v); setErr(bad ? '網址要以 http:// 或 https:// 開頭' : ''); const g = $('#urlGo'); if (g && !URLJOB) g.disabled = !ok(v); };
+  // a long data: address pasted (it would be cut short in the box): kept here, the box shows what it is
+  let dataFull = null, dataLabel = '', reading = false;
+  const val = () => dataFull && $b('#urlIn').value === dataLabel ? dataFull : $b('#urlIn').value.trim();
+  const check = () => { const v = val(), bad = !!v && !ok(v);
+    setErr(!bad ? '' : img && /^data:/i.test(v) ? '這種資料不是支援的圖片（支援 PNG、JPEG、GIF、WebP、BMP、SVG）' : '網址要以 http:// 或 https:// 開頭');
+    const g = $('#urlGo'); if (g && !URLJOB && !reading) g.disabled = !ok(v); };
   const download = async () => {
-    const url = $b('#urlIn').value.trim(); if (!ok(url) || URLJOB) return undefined;
+    const url = val(); if (!ok(url) || URLJOB || reading) return undefined;
     if (img && DATA_IMG.test(url)) {   // (read here)
-      $('#urlGo').disabled = true; setErr(''); setSt('讀取圖片中…');
+      reading = true; $('#urlGo').disabled = true; $b('#urlIn').disabled = true; setErr(''); setSt('讀取圖片中…');
       try { return {ok:true, pic:await loadImageFile(dataUrlFile(url))}; }
-      catch (e) { setErr(e && e.message || '無法讀取這張圖片'); return undefined; }
-      finally { if (alive) { setSt(''); check(); } }
+      catch (e) { setErr(e && /^[^\x00-\x7f]/.test(e.message || '') ? e.message : '無法讀取這張圖片'); return undefined; }
+      finally { reading = false; if (alive) { setSt(''); $b('#urlIn').disabled = false; const g = $('#urlGo'); if (g) g.disabled = !ok(val()); } }   // (the message stays)
     }
     const id = 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     URLJOB = {id, set:setSt}; setErr(''); setSt('下載中…'); $('#urlGo').disabled = true; $b('#urlIn').disabled = true;
@@ -11411,7 +11432,10 @@ async function urlDialog(pre, auto, kind = 'pdf'){
     {label:'取消', id:'urlCancel', handler:() => { if (URLJOB) { DESK.url.cancel(URLJOB.id); return; } return null; }},
     {label:img ? '下載' : '開啟', id:'urlGo', primary:true, handler:download},
   ], onOpen:() => {
-    const inp = $b('#urlIn'); inp.value = pre; inp.addEventListener('input', check);
+    const inp = $b('#urlIn'); inp.value = pre; inp.addEventListener('input', () => { if (dataFull && inp.value !== dataLabel) dataFull = null; check(); });
+    if (img) inp.addEventListener('paste', e => { const t = String(e.clipboardData && e.clipboardData.getData('text') || '').trim();
+      if (!DATA_IMG.test(t) || t.length < 2000) return;
+      e.preventDefault(); dataFull = t; dataLabel = `（貼上的圖片資料，約 ${Math.max(1, Math.round(t.length * .75 / 1024))} KB）`; inp.value = dataLabel; check(); });
     inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('#urlGo').click(); } });
     check(); inp.focus(); inp.select();
     if (auto && URL_OK(pre)) setTimeout(() => $('#urlGo').click(), 0);
@@ -12525,7 +12549,7 @@ function keyFromEvent(e){
 }
 // shortcuts the app already uses; a custom binding may not take them over
 const RESERVED = [K('KeyO', 'O', {ctrl:1}), K('KeyO', 'O', {ctrl:1, shift:1}), K('KeyS', 'S', {ctrl:1}), K('KeyZ', 'Z', {ctrl:1}), K('KeyY', 'Y', {ctrl:1}), K('KeyZ', 'Z', {ctrl:1, shift:1}),
-  K('KeyC', 'C', {ctrl:1}), K('KeyX', 'X', {ctrl:1}), K('KeyV', 'V', {ctrl:1}), K('KeyW', 'W', {ctrl:1}), K('KeyA', 'A', {ctrl:1}), K('KeyP', 'P', {ctrl:1}),
+  K('KeyC', 'C', {ctrl:1}), K('KeyX', 'X', {ctrl:1}), K('KeyV', 'V', {ctrl:1}), K('KeyV', 'V', {ctrl:1, shift:1}), K('KeyW', 'W', {ctrl:1}), K('KeyA', 'A', {ctrl:1}), K('KeyP', 'P', {ctrl:1}),
   K('Tab', 'Tab', {ctrl:1}), K('Tab', 'Tab', {ctrl:1, shift:1}), K('Digit0', '0', {ctrl:1}), K('Equal', '=', {ctrl:1}), K('Minus', '-', {ctrl:1}),
   K('Space', '空白鍵'), K('Escape', 'Esc'), K('Delete', 'Delete'), K('KeyR', 'R', {ctrl:1}), K('Enter', 'Enter'), K('KeyF', 'F', {ctrl:1}), K('F3', 'F3'), K('F3', 'F3', {shift:1}),
   K('BracketRight', ']', {ctrl:1}), K('BracketRight', ']', {ctrl:1, shift:1}), K('BracketLeft', '[', {ctrl:1}), K('BracketLeft', '[', {ctrl:1, shift:1})];
