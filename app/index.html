@@ -7740,18 +7740,41 @@ function dragMulti(e){
     if (MS !== MS0) { cancel(); return; }
     const p = pagePointXY(i, ev.clientX, ev.clientY); dx = clamp(p.x - p0.x, xr[0], xr[1]); dy = clamp(p.y - p0.y, yr[0], yr[1]);
     if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return;
+    if (!moved) begin();
     moved = true;
     els.forEach(el => { el.style.transform = `translate(${dx / pg.w * S.els[i].clientWidth}px, ${dy / pg.h * S.els[i].clientHeight}px)`; });
   };
+  // as with one object: a picture of each goes with the pointer and a veil covers where it was, and both stay on screen
+  // until the page is drawn again with them moved (no jump back when the mouse is let go)
+  const veils = [];
+  const begin = () => {
+    const ovl = S.els[i].querySelector('.ovl');
+    items.forEach((a, k) => {
+      const g = snapshot(i, a); if (g) { g.className = 'aghost'; els[k].appendChild(g); }
+      const v = document.createElement('div'); v.className = 'aveil';
+      Object.assign(v.style, {left:a.x / pg.w * 100 + '%', top:a.y / pg.h * 100 + '%', width:a.w / pg.w * 100 + '%', height:a.h / pg.h * 100 + '%'});
+      ovl.insertBefore(v, ovl.firstChild); veils.push(v);
+    });
+  };
+  const unghost = () => { els.forEach(el => el.querySelectorAll('.aghost').forEach(g => g.remove())); veils.forEach(v => v.remove()); };
+  const hold = () => {   // the pictures and veils kept (class hold) when the group's outlines are taken away
+    const ovl = S.els[i].querySelector('.ovl');
+    items.forEach((a, k) => { const g = els[k].querySelector('.aghost'); if (!g) return;
+      const h = document.createElement('div'); h.className = 'asel hold';
+      Object.assign(h.style, {left:(a.x + dx) / pg.w * 100 + '%', top:(a.y + dy) / pg.h * 100 + '%', width:a.w / pg.w * 100 + '%', height:a.h / pg.h * 100 + '%'});
+      h.appendChild(g); ovl.appendChild(h); });
+    veils.forEach(v => v.classList.add('hold'));
+  };
   const end = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('keydown', esc, true);
     window.removeEventListener('pointercancel', cancel); window.removeEventListener('blur', cancel); };
-  const cancel = () => { end(); els.forEach(el => { el.style.transform = ''; }); };   // back where they were, still selected, nothing written
+  const cancel = () => { end(); unghost(); els.forEach(el => { el.style.transform = ''; }); };   // back where they were, still selected, nothing written
   const esc = ev => { if (ev.key !== 'Escape') return; ev.preventDefault(); ev.stopImmediatePropagation(); cancel(); };   // (also when the window loses the focus mid-drag)
   const up = () => {
     end();
-    if (!moved || MS !== MS0) { els.forEach(el => { el.style.transform = ''; }); return; }
+    if (!moved || MS !== MS0) { unghost(); els.forEach(el => { el.style.transform = ''; }); return; }
     const n = items.length;
-    moveObjects(i, items.map(a => ({a, ob:{x:a.x, y:a.y, w:a.w, h:a.h}, nb:{x:a.x + dx, y:a.y + dy, w:a.w, h:a.h}})), `已移動 ${n} 個物件`);
+    hold();
+    moveObjects(i, items.map(a => ({a, ob:{x:a.x, y:a.y, w:a.w, h:a.h}, nb:{x:a.x + dx, y:a.y + dy, w:a.w, h:a.h}})), `已移動 ${n} 個物件`).then(ok => { if (!ok) clearHolds(i); });
   };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('keydown', esc, true);
   window.addEventListener('pointercancel', cancel); window.addEventListener('blur', cancel);
@@ -8535,7 +8558,18 @@ let nudgeTimer = 0, NUDGE = null, NUDGE_RUN = null;   // NUDGE: {doc, i, id, ob 
 function nudgeSelected(dx, dy){
   if (!AS || !AS.movable) return;
   if (NUDGE && (NUDGE.i !== AS.i || NUDGE.id !== AS.a.id)) flushNudge();
-  if (!NUDGE) NUDGE = {doc:activeDoc(), i:AS.i, id:AS.a.id, ob:{...AS.box}};
+  if (!NUDGE) {
+    NUDGE = {doc:activeDoc(), i:AS.i, id:AS.a.id, ob:{...AS.box}};
+    // as when dragged: a picture of it moves with the keys and a veil covers where it was, until the page is drawn again
+    if (!AS.ghost) {
+      const s0 = AS.box, pg = S.pages[AS.i], rot = AS.rot || 0;
+      AS.ghost = rot ? snapshotTurned(AS.i, s0, rot) : snapshot(AS.i, s0);
+      if (AS.ghost) { AS.ghost.className = 'aghost'; AS.el.appendChild(AS.ghost); }
+      if (!AS.veil) { const v = document.createElement('div'); v.className = 'aveil';
+        Object.assign(v.style, {left:s0.x / pg.w * 100 + '%', top:s0.y / pg.h * 100 + '%', width:s0.w / pg.w * 100 + '%', height:s0.h / pg.h * 100 + '%', transform:rot ? `rotate(${rot}deg)` : ''});
+        S.els[AS.i].querySelector('.ovl').insertBefore(v, AS.el); AS.veil = v; }
+    }
+  }
   AS.box.x += dx; AS.box.y += dy; NUDGE.nb = {...AS.box}; drawASel();
   clearTimeout(nudgeTimer);
   nudgeTimer = setTimeout(nudgeTick, 500);

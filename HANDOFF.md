@@ -443,6 +443,12 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 辨識的是頁面上那一塊畫出來的樣子（`ocrImage` → `renderRegion`，約 300 dpi），所以蓋在圖片上的東西也會一起讀；轉過角度的圖片用的是外框。
 - 測試：`image-ocr.mjs`（本機伺服器提供一張寫著 HELLO 2026 的圖，從網址插入、選取、〔辨識文字〕）。
 
+### 3.9.23 物件移動時畫面不閃（v4.6.1）
+- 一個物件拖曳（`dragAnnot`）本來就有：拖曳時一張畫面截圖（`.aghost`，`snapshot`／`snapshotTurned`）跟著走、舊位置蓋一層 `.aveil`，放開後 `holdSelection` 把兩者標成 `.hold` 留著，等 `renderPage` 換上新畫面時才拿掉。
+- 多選拖曳（`dragMulti`）以前只移動外框，放開後物件先跳回原位、重畫後才出現在新位置。現在一開始拖就替每個物件做截圖和遮罩，放開時把截圖放進新位置的 `.asel.hold`、遮罩標成 `.hold`；`moveObjects` 失敗時 `clearHolds`。
+- 方向鍵微調（`nudgeSelected`）以前也只移動外框；現在第一次按鍵就做截圖和遮罩，寫入時由 `holdSelection` 接手。
+- 測試：`move-flicker.mjs` 在放開滑鼠／按完方向鍵之後連續擷取視窗畫面（`capturePage`），每一張都要看到物件在新位置、舊位置沒有它。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。
