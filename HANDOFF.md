@@ -432,11 +432,11 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 測試：`image-url.mjs`（本機網頁伺服器：PNG、沒有名稱與類型的 PNG、SVG、網頁、404）。
 
 ### 3.9.21 物件的複製、剪下、貼上（同一份的其他頁、其他分頁的檔案；v1.0.56）
-- 選著物件（一個 `AS`，或一群 `MS`）時 Ctrl+C／Ctrl+X 複製／剪下物件（以前是複製頁面；沒選物件、或焦點在縮圖時仍是頁面）。單獨選著便利貼時照舊走 `copyNote`。物件列多一個〔⧉ 複製〕，群組列多〔複製〕。
-- `copyObjects`：把每個註解字典 `clone` 後拿掉 `P`、`OC`、`Popup`、`IRT`、`Parent`、`StructParent`、`NM`，用 `PDFLib.PDFObjectCopier` 複製進一份小 PDF（`OBJ_CLIP.bytes`，連同外觀、圖片、字型等），所以來源分頁關掉也能貼。連到本文件頁面的連結（`Dest`／`A /D`）改記頁碼（`PDFE_DestPage`、`PDFE_Dest`），貼上時接回那一頁（沒有那一頁的就不貼並提示）。
-- `pasteObjects`（Ctrl+V，`LAST_CLIP === 'objs'`）：滑鼠在頁面上就以滑鼠為中心貼在那一頁；不在頁面上就貼在目前頁的原位置（貼回同一份同一頁時每次錯開 12 pt）。位置用每個物件在目標頁的框計算（頁面大小、方向不同也對），整群留在頁面內。`addAnnotDict` 放進目前的圖層；便利貼補一個新的 Popup。一次修改一個復原步驟，貼上的物件會被選起來。
+- 選著物件（一個 `AS`，或一群 `MS`）時 Ctrl+C／Ctrl+X 複製／剪下物件（以前是複製頁面；沒選物件、或焦點在縮圖時仍是頁面）。單獨選著便利貼時照舊走 `copyNote`。物件列多一個〔⧉ 複製〕，群組列多〔複製〕。能不能複製看 `copyableAnn`（不是 `movableAnn`）：螢光筆、底線、刪除線這類不能拖曳的標註也能複製（貼上時 `QuadPoints` 跟著移），簽名欄位、表單欄位、Popup、連結不行。
+- `copyObjects`：把每個註解字典 `clone` 後拿掉 `P`、`OC`、`Popup`、`IRT`、`Parent`、`StructParent`、`NM`，用 `PDFLib.PDFObjectCopier` 複製進一份小 PDF（`OBJ_CLIP.bytes`，連同外觀、圖片、字型等），所以來源分頁關掉也能貼。`destOut`／`destIn` 會把連到本文件頁面的連結（`Dest`／`A /D`）改記頁碼再接回，但連結物件現在選不到（`NO_MOVE`），所以實際上用不到，留給以後連結可以選取時用。每個物件記下來源頁的 `vp1.transform`（`vt`）。圖片、字型這類大的 stream 用 `bytesHash` 記在 `OBJ_CLIP.shared`，`OBJ_CLIP.placed`（WeakMap：分頁 → 小 PDF 物件編號 → 那份檔案裡的物件編號）記住它在每份檔案裡已經有的那一個。
+- `pasteObjects`（Ctrl+V，`LAST_CLIP === 'objs'`）：滑鼠在頁面上就以滑鼠為中心貼在那一頁；不在頁面上就貼在目前頁的原位置（貼回同一份同一頁時每次錯開 12 pt）。位置用每個物件在目標頁的框計算（頁面大小、方向不同也對），整群留在頁面內。`addAnnotDict` 放進目前的圖層；便利貼補一個新的 Popup。一次修改一個復原步驟，貼上的物件會被選起來。目標頁轉的方向和來源頁不同時，`turnAnnotDict` 用 `T = vt × 目標頁 transform 的反矩陣` 把 `Rect`、各種點、外觀的 `Matrix`（轉過的物件連 `PDFE_Base`，再 `setTurn`）一起轉，畫面上大小和方向跟原本一樣。同一張圖、同一個字型再貼到已經有它的檔案（包括原本那份）時，預先放進 `copier.traversedObjects` 共用，不再多一份（先比對雜湊，復原後不見了就重新複製）。
 - 貼上的物件保有 `PDFE`、`PDFE_RT`、外觀，所以樣式列、雙擊編輯文字方塊、換圖等都照常可以用。
-- 測試：`object-copy.mjs`（跨頁、群組、文字方塊再編輯、另一個檔案、剪下、復原、圖層）；`align.mjs` 的微調後 Ctrl+C 改成複製物件。
+- 測試：`object-copy.mjs`（跨頁、群組、文字方塊再編輯、另一個檔案、剪下、復原、圖層、螢光筆、轉 90° 的頁、同一張圖貼三次檔案不變大）；`align.mjs` 的微調後 Ctrl+C 改成複製物件。
 
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。

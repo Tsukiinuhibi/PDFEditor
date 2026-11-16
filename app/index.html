@@ -2149,7 +2149,7 @@ window.addEventListener('keydown', e => {
   const noteSel = AS && AS.a.subtype === 'Text' && !(document.activeElement && document.activeElement.closest && document.activeElement.closest('#side'));
   // selected objects (one, or a group) are copied / cut as objects; with none selected, or in the thumbnails, the pages
   const inSide = !!(document.activeElement && document.activeElement.closest && document.activeElement.closest('#side'));
-  const objSel = !inSide && (MS ? {i:MS.i, list:MS.items} : AS && AS.movable ? {i:AS.i, list:[AS.a]} : null);
+  const objSel = !inSide && (MS ? {i:MS.i, list:MS.items} : AS && copyableAnn(AS.a) ? {i:AS.i, list:[AS.a]} : null);
   if (mod && !e.shiftKey && e.key.toLowerCase() === 'c' && !String(window.getSelection())) { e.preventDefault(); if (noteSel && !MS) copyNote(AS.i, AS.a); else if (objSel) copyObjects(objSel.i, objSel.list); else copySelected(false); return; }
   if (mod && !e.shiftKey && e.key.toLowerCase() === 'x') { e.preventDefault(); if (noteSel && !MS) cutNote(AS.i, AS.a); else if (objSel) copyObjects(objSel.i, objSel.list, {cut:true}); else copySelected(true); return; }
   if (mod && !e.shiftKey && e.key.toLowerCase() === 'v') { e.preventDefault(); if (LAST_CLIP === 'note' && NOTE_CLIP) pasteNote(); else if (LAST_CLIP === 'objs' && OBJ_CLIP) pasteObjects(); else pasteClip(); return; }
@@ -3915,6 +3915,31 @@ function destIn(doc, d){   // → false: the page is not in this document
   d.set(N_('Dest'), doc.context.obj([doc.getPage(n).ref, ...(rest ? rest.asArray() : [PDFName.of('Fit')])]));
   return true;
 }
+// (pasting) the same picture or font pasted again in a file that already has it from an earlier paste (or holds the
+// original) is shared, not copied once more: big streams are told apart by a hash of their bytes
+const rawBytes = o => o && (o.contents || (o.getContents && o.getContents()));
+function bytesHash(b){ let h = 2166136261 >>> 0; for (let k = 0; k < b.length; k++) h = Math.imul(h ^ b[k], 16777619) >>> 0; return b.length + ':' + h; }
+const sharable = o => { const d = o && o.dict; if (!d || !rawBytes(o)) return false; const t = d.get(N_('Subtype'));
+  return (t && String(t) === '/Image') || !!(d.get(N_('Length1')) || d.get(N_('Length2')) || (t && /^\/(OpenType|Type1C|CIDFontType0C)$/.test(String(t)))); };
+function sameStream(doc, num, hash){ try { const o = doc.context.lookup(PDFRef.of(num)), b = rawBytes(o); return !!b && bytesHash(b) === hash; } catch (_) { return false; } }
+// (pasting) an object from a page turned another way: everything of it in page space turned with it (T: its page's space
+// → this page's space, keeping where it is on screen), so it looks the same size and way up as where it came from
+const invM = m => { const det = m[0] * m[3] - m[1] * m[2]; return [m[3] / det, -m[1] / det, -m[2] / det, m[0] / det, (m[2] * m[5] - m[3] * m[4]) / det, (m[1] * m[4] - m[0] * m[5]) / det]; };
+function turnAnnotDict(doc, d, T){
+  const ctx = doc.context, L = [T[0], T[1], T[2], T[3], 0, 0];
+  const bbox = r => { const q = [[r[0], r[1]], [r[2], r[1]], [r[0], r[3]], [r[2], r[3]]].map(p => MPT(T, p[0], p[1])), xs = q.map(p => p[0]), ys = q.map(p => p[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; };
+  const pts = a => a.map((v, j, arr) => j % 2 ? MPT(T, arr[j - 1], v)[1] : MPT(T, v, arr[j + 1])[0]);
+  const turnForm = ref => { const o = ref instanceof PDFRef ? ctx.lookup(ref) : ref; if (!o || !o.dict) return; const m = o.dict.lookupMaybe(N_('Matrix'), PDFArray);
+    o.dict.set(N_('Matrix'), ctx.obj(MUL(m ? numArr(m) : [1, 0, 0, 1, 0, 0], L).map(v => +v.toFixed(6)))); };
+  const r = d.lookupMaybe(N_('Rect'), PDFArray); if (r) d.set(N_('Rect'), ctx.obj(bbox(numArr(r))));
+  ['L', 'Vertices', 'CL', 'QuadPoints'].forEach(k => { const a = d.lookupMaybe(N_(k), PDFArray); if (a) d.set(N_(k), ctx.obj(pts(numArr(a)))); });
+  const ink = d.lookupMaybe(N_('InkList'), PDFArray); if (ink) d.set(N_('InkList'), ctx.obj(ink.asArray().map(x => pts(numArr(x)))));
+  const turned = boxTurn(d);
+  if (turned) { turnForm(turned.base); setTurn(doc, d, turned.base, bbox(turned.baseRect), turned.deg); return; }
+  const ap = d.lookupMaybe(N_('AP'), PDFDict); if (!ap) return;
+  for (const k of ['N', 'R', 'D']) { const v = ap.get(N_(k)), o = v instanceof PDFRef ? ctx.lookup(v) : v;
+    if (o instanceof PDFDict && !o.dict) o.entries().forEach(([, s]) => turnForm(s)); else turnForm(v); }
+}
 async function copyObjects(i, list, {cut = false} = {}){
   if (!S.pdf || !list.length) return;
   try { await flushNudge(); } catch (_) {}
@@ -3926,10 +3951,16 @@ async function copyObjects(i, list, {cut = false} = {}){
       const d = src.context.lookup(ref, PDFDict).clone(src.context);
       OBJ_DROP.forEach(k => d.delete(N_(k))); destOut(src, d);
       const r = out.context.register(copier.copy(d)), pb = a.popupBox;
-      items.push({num:r.objectNumber, sub:a.subtype, x:a.x, y:a.y, w:a.w, h:a.h, pw:pb ? pb.w : 300 / PX, ph:pb ? pb.h : 170 / PX});
+      items.push({num:r.objectNumber, sub:a.subtype, x:a.x, y:a.y, w:a.w, h:a.h, pw:pb ? pb.w : 300 / PX, ph:pb ? pb.h : 170 / PX, vt:[...S.pages[i].vp1.transform]});
+    }
+    // big streams (pictures, fonts): which object of this file each copy came from, for sharing them when pasted here
+    const shared = {}, here = new Map();
+    for (const [k, v] of copier.traversedObjects) if (k instanceof PDFRef && v instanceof PDFRef) {
+      const o = out.context.lookup(v); if (!sharable(o)) continue;
+      shared[v.objectNumber] = bytesHash(rawBytes(o)); here.set(v.objectNumber, k.objectNumber);
     }
     if (!items.length) { toast('找不到要複製的物件', 'err'); return; }
-    OBJ_CLIP = {bytes:await out.save({useObjectStreams:false}), items, n:items.length, from:S.name, src:{doc:activeDoc(), i}, step:0}; LAST_CLIP = 'objs';
+    OBJ_CLIP = {bytes:await out.save({useObjectStreams:false}), items, n:items.length, from:S.name, src:{doc:activeDoc(), i}, step:0, shared, placed:new WeakMap([[activeDoc(), here]])}; LAST_CLIP = 'objs';
   } catch (e) { console.error(e); toast('複製失敗：' + (e.message || e), 'err'); return; }
   updateClipUI();
   const n = OBJ_CLIP.n, what = n > 1 ? `${n} 個物件` : '物件';
@@ -3948,9 +3979,13 @@ async function pasteObjects(){
   const ids = []; let lost = 0;
   const ok = await mutate(clip.n > 1 ? `已貼上 ${clip.n} 個物件` : '已貼上物件', async doc => {
     const src = await PDFDocument.load(clip.bytes, {updateMetadata:false}), copier = PDFLib.PDFObjectCopier.for(src.context, doc.context), got = [];
+    const dk = activeDoc(), placed = (clip.shared && clip.placed.get(dk)) || new Map();
+    for (const [n, h] of Object.entries(clip.shared || {})) { const t = placed.get(+n); if (t != null && sameStream(doc, t, h)) copier.traversedObjects.set(PDFRef.of(+n), PDFRef.of(t)); }
+    const Vt = pg.vp1.transform;
     for (const it of clip.items) {
       const d = copier.copy(src.context.lookup(PDFRef.of(it.num), PDFDict));
       if (!destIn(doc, d)) { lost++; continue; }
+      const V = it.vt; if (V && [0, 1, 2, 3].some(k => Math.abs(V[k] - Vt[k]) > 1e-6)) turnAnnotDict(doc, d, MUL(V, invM(Vt)));
       got.push({it, d, ob:vRect(i, numArr(d.lookup(N_('Rect'), PDFArray)))});   // (where it would be on this page: pages differ in size)
     }
     if (!got.length) { toast('連到原文件頁面的連結，這份文件沒有那一頁，沒有貼上', 'err'); return false; }
@@ -3964,6 +3999,7 @@ async function pasteObjects(){
       if (it.sub === 'Text') addPopupAnnot(doc, i, ref, {...noteDefaults(nb, pg), w:it.pw, h:it.ph});
       ids.push(id);
     }
+    if (clip.shared) { const m = new Map(); for (const n of Object.keys(clip.shared)) { const r = copier.traversedObjects.get(PDFRef.of(+n)); if (r instanceof PDFRef) m.set(+n, r.objectNumber); } clip.placed.set(dk, m); }
   });
   if (!ok) return;
   if (lost) toast(`有 ${lost} 個連結連到這份文件沒有的頁面，沒有貼上`, 'err');
@@ -7624,6 +7660,8 @@ function deselectAnnot(){
    inside it. Only on one page, only objects that can be moved. MS = {i, items, els}; the bar above the pages shows it. */
 let MS = null;
 const movableAnn = a => !!a && !NO_MOVE.has(a.subtype) && !a.sig;
+// what Ctrl+C / 〔⧉ 複製〕 copies as an object: also highlights and other marks that cannot be dragged
+const copyableAnn = a => !!a && !['Widget', 'Popup', 'Link'].includes(a.subtype) && !a.sig;
 // Shift+click on a selection outline: the object a plain click there picks (the topmost one; it may lie inside the
 // selected one), not always the outlined one
 const HIT_ANN = new WeakMap();   // .annhit → its object
@@ -7744,7 +7782,7 @@ function selectAnnot(i, a){
   if (resizable) el.innerHTML = (a.subtype === 'FreeText' ? ['nw', 'ne', 'se', 'sw'] : ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']).map(d => `<div class="h" data-d="${d}"></div>`).join('');   // (a text box: its corners, the text scales)
   const bar = document.createElement('div'); bar.className = 'xbar abar';
   const snip = a.contents && a.subtype !== 'Stamp' ? `：${esc(a.contents.slice(0, 24))}${a.contents.length > 24 ? '…' : ''}` : '';
-  bar.innerHTML = `<span class="dim">${esc(a.label)}${snip}</span>${movable ? `<span class="dim hintk">拖曳移動${resizable ? '・把手調整大小' : ''}</span>` : ''}${a.subtype === 'FreeText' ? '<button data-x="edit">✎ 編輯文字</button>' : ''}${a.sig ? '' : zButtons()}${movable ? '<button data-x="copy" title="複製 (Ctrl+C)，到任何頁面或其他分頁按 Ctrl+V 貼上">⧉ 複製</button>' : ''}<button data-x="del">🗑 刪除 (Del)</button>`;
+  bar.innerHTML = `<span class="dim">${esc(a.label)}${snip}</span>${movable ? `<span class="dim hintk">拖曳移動${resizable ? '・把手調整大小' : ''}</span>` : ''}${a.subtype === 'FreeText' ? '<button data-x="edit">✎ 編輯文字</button>' : ''}${a.sig ? '' : zButtons()}${copyableAnn(a) ? '<button data-x="copy" title="複製 (Ctrl+C)，到任何頁面或其他分頁按 Ctrl+V 貼上">⧉ 複製</button>' : ''}<button data-x="del">🗑 刪除 (Del)</button>`;
   if (a.subtype === 'FreeText') el.addEventListener('dblclick', e => { e.stopPropagation(); const k = AS.i; deselectAnnot(); editTextBox(k, a); });
   ovl.appendChild(el); ovl.appendChild(bar); S.els[i].style.zIndex = 4;
   AS = {i, a, box:{x:a.x, y:a.y, w:a.w, h:a.h}, el, bar, movable, resizable, keep:a.subtype === 'Stamp'};
@@ -12648,7 +12686,7 @@ window.__pdfapp = {
   fontBytesInfo:async (family, bold) => { const r = await realFontInfo(family, bold); return {bytes:r.bytes.length, synthetic:r.synthetic}; },
   failEmbed:family => { EMBED_FAIL.add(family); },
   fontkitPatch:on => { fkPatchOn = !!on; },
-  oldLayout:on => { TB_OLD_SPLIT = !!on; }, objClip:() => OBJ_CLIP && {n:OBJ_CLIP.n, from:OBJ_CLIP.from, i:OBJ_CLIP.src.i, subs:OBJ_CLIP.items.map(t => t.sub)},
+  oldLayout:on => { TB_OLD_SPLIT = !!on; }, objClip:() => OBJ_CLIP && {n:OBJ_CLIP.n, from:OBJ_CLIP.from, i:OBJ_CLIP.src.i, subs:OBJ_CLIP.items.map(t => t.sub), shared:OBJ_CLIP.shared},
   writeSettingsNow:() => { saveView_(); saveTB(); saveStyles(); },
   settleEdits, nudgeState:() => ({pending:!!NUDGE, running:!!NUDGE_RUN}), pageClipBytes:() => PAGE_CLIP ? PAGE_CLIP.bytes : null,
   faceChoice:(styles, bold) => { const r = chooseFace(styles.map(style => ({style})), bold); return {style:r.face.style, synthetic:r.synthetic}; },

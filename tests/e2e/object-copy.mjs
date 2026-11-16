@@ -114,5 +114,60 @@ const sv = await A(async () => { const app = window.__pdfapp, P = PDFLib, d = aw
   return {oc:oc.length, foreign:oc.filter(r => !ocgs.some(g => g === r)).length}; });
 check('no pasted object points at a layer of the other file', sv.foreign === 0, sv);
 
+// ---- (review) a highlight is copied as an object, not the page --------------------------------------------------------------
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+await A(() => window.__pdfapp.mutate('test', doc => { const p = doc.getPage(1);
+  p.node.addAnnot(doc.context.register(doc.context.obj({Type:'Annot', Subtype:'Highlight', Rect:[100, 600, 250, 620], QuadPoints:[100, 620, 250, 620, 100, 600, 250, 600], C:[1, 1, 0]}))); }));
+await win.waitForTimeout(1500); await show(1);
+const hl = (await anns(1, 'Highlight'))[0];
+{ const p = await at(1, hl.x + hl.w / 2, hl.y + hl.h / 2); await win.mouse.click(p.x, p.y); await win.waitForTimeout(700); }
+await win.keyboard.press('Control+c'); await win.waitForTimeout(800);
+const clipH = await A(() => window.__pdfapp.objClip());
+check('a highlight selected, Ctrl+C: the highlight is copied (not the page)', !!clipH && clipH.n === 1 && clipH.subs[0] === 'Highlight', {hl, clipH});
+const hasCopy = await A(() => !!document.querySelector('.abar [data-x="copy"], #hint.objbar [data-x="copy"]'));
+check('…and its bar has 〔⧉ 複製〕', hasCopy);
+await show(2); { const p = await at(2, 300, 150); await win.mouse.move(p.x, p.y); }
+await win.keyboard.press('Control+v'); await win.waitForTimeout(1800);
+const h3 = await anns(2, 'Highlight');
+check('…pasted on page 3 at the mouse, its marked area moved with it', h3.length === 1 && Math.abs(h3[0].x + h3[0].w / 2 - 300) < 2 && Math.abs(h3[0].w - hl.w) < .5, h3);
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+
+// ---- (review) pasted on a turned page: the same size and way up as where it came from ----------------------------------------
+await A(() => window.__pdfapp.mutate('test', doc => { doc.getPage(3).setRotation(PDFLib.degrees(90)); }));
+await win.waitForTimeout(1800);
+const tbB = (await anns(0, 'FreeText'))[0];
+await show(0); { const p = await at(0, tbB.x + tbB.w / 2, tbB.y + tbB.h / 2); await win.mouse.click(p.x, p.y); await win.waitForTimeout(700); }
+await win.keyboard.press('Control+c'); await win.waitForTimeout(800);
+await show(3); { const p = await at(3, 200, 200); await win.mouse.move(p.x, p.y); }
+await win.keyboard.press('Control+v'); await win.waitForTimeout(2500);
+const t4 = (await anns(3, 'FreeText'))[0];
+const m4 = t4 && await A(async id => { const app = window.__pdfapp, P = PDFLib, d = await P.PDFDocument.load(app.S.bytes, {ignoreEncryption:true});
+  const an = d.getPage(3).node.Annots().asArray().map(r => [r, d.context.lookup(r)]).find(([r]) => r.objectNumber + 'R' === id);
+  const ap = an[1].lookup(P.PDFName.of('AP')).lookup(P.PDFName.of('N')), m = ap.dict.lookupMaybe(P.PDFName.of('Matrix'), P.PDFArray);
+  return m ? m.asArray().map(v => Math.round(v.asNumber())) : [1, 0, 0, 1, 0, 0]; }, t4.id);
+check('a text box pasted on a page turned 90°: the same size on screen (not on its side)', !!t4 && Math.abs(t4.w - tbB.w) < 1 && Math.abs(t4.h - tbB.h) < 1, {t4, tbB});
+check('…its picture drawn the way up of that page', !!m4 && m4.slice(0, 4).join() === '0,1,-1,0', m4);
+const r4 = await rts(3);
+check('…and still editable there (its text kept)', r4.includes('Copy me 複製'), r4);
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+
+// ---- (review) one picture pasted on many pages: the file does not grow by the picture each time ------------------------------
+const pngN = await A(async () => { const c = document.createElement('canvas'); c.width = 400; c.height = 400; const g = c.getContext('2d'), im = g.createImageData(400, 400);
+  for (let k = 0; k < im.data.length; k++) im.data[k] = (k % 4 === 3) ? 255 : Math.random() * 256 | 0; g.putImageData(im, 0, 0);
+  const png = await (await fetch(c.toDataURL('image/png'))).arrayBuffer();
+  await window.__pdfapp.mutate('test', async doc => { const P = PDFLib, img = await doc.embedPng(png), ctx = doc.context;
+    const ap = ctx.register(ctx.stream('q 100 0 0 100 0 0 cm /Im0 Do Q', {Type:'XObject', Subtype:'Form', BBox:[0, 0, 100, 100], Resources:{XObject:{Im0:img.ref}}}));
+    doc.getPage(0).node.addAnnot(ctx.register(ctx.obj({Type:'Annot', Subtype:'Stamp', Rect:[300, 600, 400, 700], AP:{N:ap}}))); });
+  return png.byteLength; });
+await win.waitForTimeout(1800);
+const st0 = (await anns(0, 'Stamp'))[0];
+await show(0); { const p = await at(0, st0.x + st0.w / 2, st0.y + st0.h / 2); await win.mouse.click(p.x, p.y); await win.waitForTimeout(700); }
+await win.keyboard.press('Control+c'); await win.waitForTimeout(800);
+const size0 = await A(() => window.__pdfapp.S.bytes.length);
+for (const k of [1, 2, 0]) { await show(k); const p = await at(k, 250, 300); await win.mouse.move(p.x, p.y); await win.keyboard.press('Control+v'); await win.waitForTimeout(1800); await win.keyboard.press('Escape'); }
+const size1 = await A(() => window.__pdfapp.S.bytes.length);
+check('a picture pasted three times in the same file: the file does not grow by the picture each time', size1 - size0 < pngN * .5, {pngN, grew:size1 - size0});
+check('…the three copies are there', (await anns(1, 'Stamp')).length === 1 && (await anns(2, 'Stamp')).length === 1 && (await anns(0, 'Stamp')).length === 2);
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
