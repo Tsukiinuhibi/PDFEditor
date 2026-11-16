@@ -483,6 +483,8 @@ svg.dsvg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;ov
 .asel.multi{cursor:move}
 .draft.marquee{border-color:#1c64d9;background:rgba(28,100,217,.08)}
 .aveil{position:absolute;background:rgba(255,255,255,.72);pointer-events:none;z-index:3;outline:1px dashed #adb5bd}
+.aveil.clean{background:transparent;outline:none}
+.aveil.clean>canvas,.aghost.clean{position:absolute;inset:0;width:100%;height:100%}
 .abar .hintk{color:#9aa2ab;font-size:11px}
 .abar button[data-x=del]{background:var(--seal)}
 .abar button.z{display:flex;align-items:center;padding:3px 4px}
@@ -1808,6 +1810,8 @@ async function ensureOverlay(i){
       ovl.appendChild(d); return;
     }
     d.addEventListener('pointerenter', ev => showTip(ev, a.label + (a.contents ? '\n' + a.contents : '')));
+    d.addEventListener('pointerenter', () => { clearTimeout(d._pu); if (S.tool === 'select' && movableAnn(a)) d._pu = setTimeout(() => prepUnder(i, [a.id]), 120); });   // (ready before a drag)
+    d.addEventListener('pointerleave', () => clearTimeout(d._pu));
     d.addEventListener('pointermove', moveTip);
     d.addEventListener('pointerleave', hideTip);
     d.addEventListener('pointerdown', ev => {
@@ -7783,6 +7787,59 @@ let AS = null;   // {i, a, box, el, bar, ghost, veil}
 // keep the moved picture (and the veil over the old place) on screen until the page is redrawn
 // the page's drawing is not the document's yet (a change on its way to the screen): a picture taken from it would be wrong
 const staleDrawing = i => !S.els[i] || !!S.els[i].querySelector('.hold') || !S.st[i] || S.st[i].ver !== S.version;
+/* 移動時的畫面: what lies under objects being moved, drawn by pdf.js with them left out (annotation storage entries marked
+   deleted, rendered with ENABLE_STORAGE), at the page canvas's own resolution. The old place shows that (not a pale veil),
+   and what moves with the mouse is the object alone (the page's pixels where they differ from it). Made ahead when the
+   pointer rests on an object or it is selected; until it is ready the plain picture and veil stand in. */
+const UNDER = new Map();   // key → {p, val}
+let HIDE_N = 0;
+const underKey = (i, ids) => `${S.version}|${i}|${S.st[i] && S.st[i].rendered}|${ids.slice().sort().join(',')}`;
+function prepUnder(i, ids){
+  if (!S.pdf || !S.els[i] || !ids.length || staleDrawing(i)) return null;
+  const key = underKey(i, ids); let e = UNDER.get(key);
+  if (e) return e;
+  while (UNDER.size >= 4) UNDER.delete(UNDER.keys().next().value);
+  e = {val:null}; e.p = renderUnder(i, ids).then(v => (e.val = v), () => null); UNDER.set(key, e);
+  return e;
+}
+async function renderUnder(i, ids){
+  const src = S.els[i].querySelector('canvas.pc'), pg = S.pages[i], ver = S.version; if (!src) return null;
+  const store = S.pdf.annotationStorage, keys = ids.map(() => 'pdfjs_internal_editor_pdfe_hide_' + (++HIDE_N));
+  const vp = pg.page.getViewport({scale:src.width / pg.vp1.width});
+  const c = document.createElement('canvas'); c.width = src.width; c.height = src.height;
+  ids.forEach((id, k) => store.setValue(keys[k], {deleted:true, id, pageIndex:i}));
+  let task;
+  try { task = pg.page.render({canvasContext:c.getContext('2d'), viewport:vp, annotationMode:pdfjsLib.AnnotationMode.ENABLE_STORAGE}); }
+  finally { keys.forEach(k => store.remove(k)); }   // (read when the drawing starts: the page's own drawing is not touched)
+  await task.promise;
+  return ver === S.version ? {c, src} : null;
+}
+// the parts for one object at box b of page i: {ghost (only the object, transparent around it), under (what is beneath it)}
+function layerParts(i, b, u){
+  const pg = S.pages[i], k = u.c.width / pg.w, x = Math.max(0, Math.round(b.x * k)), y = Math.max(0, Math.round(b.y * k));
+  const w = Math.max(1, Math.min(u.c.width - x, Math.round(b.w * k))), h = Math.max(1, Math.min(u.c.height - y, Math.round(b.h * k)));
+  const under = document.createElement('canvas'); under.width = w; under.height = h; under.getContext('2d').drawImage(u.c, x, y, w, h, 0, 0, w, h);
+  const ghost = document.createElement('canvas'); ghost.width = w; ghost.height = h;
+  const g = ghost.getContext('2d'); g.drawImage(u.src, x, y, w, h, 0, 0, w, h);
+  try {
+    const a = g.getImageData(0, 0, w, h), bd = under.getContext('2d').getImageData(0, 0, w, h).data, d = a.data;
+    for (let o = 0; o < d.length; o += 4) { const df = Math.abs(d[o] - bd[o]) + Math.abs(d[o + 1] - bd[o + 1]) + Math.abs(d[o + 2] - bd[o + 2]); if (df < 24) d[o + 3] = 0; }
+    g.putImageData(a, 0, 0);
+  } catch (_) { return null; }
+  return {ghost, under};
+}
+// put the clean parts into a moving picture holder (el: the selection box or a group member's box) and its veil, now or
+// once they are drawn
+function cleanMove(i, ids, items){   // items: [{b (box where it was), el, veil}]
+  const e = prepUnder(i, ids); if (!e) return;
+  const apply = u => { if (!u) return; for (const it of items) {
+    if (!it.veil || !it.veil.isConnected) continue;
+    const parts = layerParts(i, it.b, u); if (!parts) continue;
+    it.veil.classList.add('clean'); it.veil.innerHTML = ''; it.veil.appendChild(parts.under);
+    if (it.el) { it.el.querySelectorAll('.aghost').forEach(n => n.remove()); parts.ghost.className = 'aghost clean'; it.el.appendChild(parts.ghost); }
+  } };
+  if (e.val) apply(e.val); else e.p.then(apply);
+}
 function holdSelection(){
   if (!AS) return;
   AS.el.querySelectorAll('.h,.eh,.rh').forEach(h => h.remove());
@@ -7900,6 +7957,7 @@ function dragMulti(e){
       Object.assign(v.style, {left:a.x / pg.w * 100 + '%', top:a.y / pg.h * 100 + '%', width:a.w / pg.w * 100 + '%', height:a.h / pg.h * 100 + '%'});
       ovl.insertBefore(v, ovl.firstChild); veils.push(v);
     });
+    cleanMove(i, items.map(a => a.id), items.map((a, k) => ({b:{x:a.x, y:a.y, w:a.w, h:a.h}, el:els[k], veil:veils[k]})));
   };
   const unghost = () => { els.forEach(el => el.querySelectorAll('.aghost').forEach(g => g.remove())); veils.forEach(v => v.remove()); };
   const hold = () => {   // the pictures and veils kept (class hold) when the group's outlines are taken away
@@ -8157,6 +8215,7 @@ function dragAnnot(e, d, onDone){
     const v = document.createElement('div'); v.className = 'aveil';
     Object.assign(v.style, {left:s0.x / pg.w * 100 + '%', top:s0.y / pg.h * 100 + '%', width:s0.w / pg.w * 100 + '%', height:s0.h / pg.h * 100 + '%', transform:rot ? `rotate(${rot}deg)` : ''});
     S.els[i].querySelector('.ovl').insertBefore(v, AS.el); AS.veil = v;
+    if (!rot) cleanMove(i, [AS.a.id], [{b:s0, el:AS.el, veil:v}]);
   };
   let stop = () => {};
   const move = ev => {
@@ -8737,6 +8796,7 @@ function nudgeSelected(dx, dy){
       if (!AS.veil) { const v = document.createElement('div'); v.className = 'aveil';
         Object.assign(v.style, {left:s0.x / pg.w * 100 + '%', top:s0.y / pg.h * 100 + '%', width:s0.w / pg.w * 100 + '%', height:s0.h / pg.h * 100 + '%', transform:rot ? `rotate(${rot}deg)` : ''});
         S.els[AS.i].querySelector('.ovl').insertBefore(v, AS.el); AS.veil = v; }
+      if (!rot && AS.veil) cleanMove(AS.i, [AS.a.id], [{b:{...s0}, el:AS.el, veil:AS.veil}]);
     }
   }
   AS.box.x += dx; AS.box.y += dy; NUDGE.nb = {...AS.box}; drawASel();

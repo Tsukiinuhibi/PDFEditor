@@ -448,6 +448,8 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 多選拖曳（`dragMulti`）以前只移動外框，放開後物件先跳回原位、重畫後才出現在新位置。現在一開始拖就替每個物件做截圖和遮罩，放開時把截圖放進新位置的 `.asel.hold`、遮罩標成 `.hold`；`moveObjects` 失敗時 `clearHolds`。
 - 方向鍵微調（`nudgeSelected`）以前也只移動外框；現在第一次按鍵就做截圖和遮罩，寫入時由 `holdSelection` 接手。
 - 測試：`move-flicker.mjs` 在放開滑鼠／按完方向鍵之後連續擷取視窗畫面（`capturePage`），每一張都要看到物件在新位置、舊位置沒有它。
+- （v4.7.1）舊位置不再蓋半透明白色遮罩：`prepUnder(i, ids)` 用 pdf.js 把這一頁重畫一次、把要移動的物件留空（`annotationStorage` 放 `{deleted:true, id, pageIndex}`、用 `AnnotationMode.ENABLE_STORAGE` 畫，畫完馬上拿掉，原本頁面的畫法不受影響），解析度和頁面畫布一樣。`layerParts` 從它切出舊位置的「底下」（放進 `.aveil.clean`），跟著滑鼠走的圖則是頁面像素中和「底下」不同的部分（只有物件本身，透明背景）。滑鼠停在物件上 120 ms 就先畫（`ensureOverlay` 的 pointerenter），快取 4 份（`UNDER`）；還沒畫好時先用舊的截圖＋白色遮罩，畫好再換上。轉過角度的物件仍用舊做法。
+- 測試：`move-flicker.mjs` 把藍色方塊放在頁面的橘色圖上拖曳，舊位置的顏色要和旁邊一樣、跟著走的是藍色。
 
 ### 3.9.24 右鍵編輯選單（v4.7.0）
 - 選取工具在物件上按右鍵：選取它（`selectAnnot`）並開 `showObjMenu`；在已選取群組的其中一個上按右鍵：群組選單 `showMultiMenu`（對齊、平均分配、複製、剪下、刪除，群組保留）。便利貼照舊是 `showNoteMenu`。編輯文字中按右鍵是 `showTextMenu`。

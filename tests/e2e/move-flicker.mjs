@@ -83,5 +83,27 @@ const center = async k => { const b = (await A(async () => (await window.__pdfap
   check('nudged again just as the first nudge is written: in the end shown plainly, no veil left', shot.every(s => s[0]) && await A(() => !document.querySelector('.aveil')), {shot:shot.map(s => +s[0]).join(''), veil:await A(() => document.querySelectorAll('.aveil').length)});
 }
 
+// ---- while dragging: the old place shows what is under the object (no pale patch), and what moves is the object alone ----------
+{
+  await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+  // a blue square over the picture in the page (orange): left of it the page as it is
+  await A(() => window.__pdfapp.mutate('test', doc => { const ctx = doc.context, p = doc.getPage(0), H = p.getHeight();
+    const ap = ctx.register(ctx.stream('0 0 1 rg 0 0 50 50 re f', {Type:'XObject', Subtype:'Form', BBox:[0, 0, 50, 50]}));
+    p.node.addAnnot(ctx.register(ctx.obj({Type:'Annot', Subtype:'Square', Rect:[300, H - 300, 350, H - 250], C:[0, 0, 1], IC:[0, 0, 1], AP:{N:ap}}))); }));
+  await win.waitForTimeout(2000);
+  const px = async pts => app.evaluate(async ({BrowserWindow}, pts) => { const wc = BrowserWindow.getAllWindows()[0].webContents, img = await wc.capturePage(), bm = img.toBitmap(), w = img.getSize().width, sf = img.getSize().width / wc.getOwnerBrowserWindow().getContentBounds().width;
+    return pts.map(p => { const o = (Math.round(p.y * sf) * w + Math.round(p.x * sf)) * 4; return [bm[o + 2], bm[o + 1], bm[o]]; }); }, pts);
+  const old = await at(325, 275), side = await at(290, 275), to = await at(430, 275);
+  const before = await px([old, side]);
+  await win.mouse.move(old.x, old.y); await win.waitForTimeout(400); await win.mouse.down();
+  await win.mouse.move(to.x, to.y, {steps:10}); await win.waitForTimeout(900);
+  const during = await px([old, side, to]);
+  await win.mouse.up(); await win.waitForTimeout(2500);
+  const near = (a, b) => Math.max(...a.map((v, k) => Math.abs(v - b[k]))) <= 30;
+  check('(the square sits on the picture: blue there, orange beside it)', before[0][2] > 200 && before[0][0] < 80 && before[1][0] > 180, before);
+  check('while dragging: its old place looks like the page around it (no pale patch, no blue)', near(during[0], during[1]), during);
+  check('…and what moves with the mouse is the square itself', during[2][2] > 200 && during[2][0] < 80, during[2]);
+}
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
