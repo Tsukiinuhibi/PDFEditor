@@ -481,6 +481,13 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 轉存圖片設定：`pad`、`macOn`、`lastDir` 只採用合理的值（讀取與匯入設定檔都檢查）。右鍵選單等最新一次 `paintObjBar`（`OBJBAR_GEN`）。字級框取得焦點時反白文字用 `CSS.highlights` 標示。簽章時文字還在修改會提示。
 - 測試：`align.mjs`（便利貼＋微調不卡、剪下兩次）、`object-group.mjs`、`page-filter.mjs`、`textbox-size.mjs`、`export-prefs.mjs`；`object-style-2.mjs` 加等待（偶爾失敗的那一項）。
 
+### 3.9.29 留下的小問題第二批（v4.8.2）
+- 文字方塊四角縮放（`scaleTextBox`）：倍率先限制在「最小的字到 4、最大的字到 400」之間，各字級比例不變；沒有任何字級改變時不寫入（不多一個復原步驟），仍保持選取。
+- 物件貼上：Ctrl+Shift+V 貼在原位置（滑鼠在頁面上也一樣，`pasteObjects({inPlace:true})`）；同頁再貼的位移在貼上成功後才累加（`clip.step`）；`OBJ_CLIP.src` 記分頁 id（`docId`），不留住關掉的分頁；剪下時刪的是剛複製的那份清單；來源仍加密時不複製。頁面右鍵選單的 Ctrl+V 提示只在剪貼簿是頁面時顯示。
+- 網址圖片：`data:image/…` 網址在本機解碼（`DATA_IMG`、`dataUrlFile`）；名稱用伺服器給的檔名（Content-Disposition，`urlFileName`），只去掉圖片副檔名（"v1.2" 保留）；BMP 要有正確的標頭大小、含 `<html` 的不算 SVG（`imageKind`）；讀圖片時〔下載〕保持灰色；超過 1.5 億像素不插入；換一張待放的圖片時釋放舊的 blob 網址（`setPendingImg`）。
+- 同時複製／剪下兩次：第二次提示稍候。群組成員沒顯示（隱藏、鎖定）時，只剩一個也會提示一次。
+- 測試：`textbox-size.mjs`、`object-copy.mjs`（Ctrl+Shift+V、剪下）、`image-url.mjs`（data 網址、名稱、假 BMP）。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。
