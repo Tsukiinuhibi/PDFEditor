@@ -28,3 +28,15 @@ section out of this file when its batch ships.
   traced, predates
 - in an emptied page-text editor, a size picked after a font leaves the editor's strut at the old size while the commit
   uses realStrut — predates
+
+## v1.0.54 (batch v1.0.55)
+
+- a corner drag that changes no size (tiny, or every run already at 4 or 400) still writes an undo step and redraws
+  with the reopened strut
+- clamping each run to 4–400 changes the ratios of mixed sizes for good (limit the factor instead); a very small drag
+  takes all text to 4 pt at once
+- a second click on 〔▾〕 opens the size list again instead of closing it (dataset.for, as the note-author list)
+- in the object bar, Esc deselects the box but leaves the size list open; a pick from it then restyles the box
+- the highlighted text is not shown highlighted while the size box has the focus (CSS highlight, as the font menu)
+- a shrunk 修改的文字 cover box can show the original text under it (also with a smaller size restyle; not new)
+- sizes up to 400 are not limited by the page: a long line at 300–400 pt makes a very large picture
