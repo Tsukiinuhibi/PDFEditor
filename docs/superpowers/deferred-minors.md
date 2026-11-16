@@ -75,3 +75,7 @@ section out of this file when its batch ships.
 - 「第一次微調寫入後、畫面重畫前馬上再按方向鍵」的情況，現在只顯示外框（不取畫面），時間窗很短，測試不易穩定重現。
 - 物件列（`#hint`）的 `--c:` 顏色已從 `tbObjStyle` 清理；其他讀自檔案、放進 HTML 的值還沒全面檢查。
 - 測試不穩：`object-style-2.mjs` 的「runs of different sizes: a new colour keeps their sizes」偶爾在全部測試裡失敗一次，單獨重跑會過（v4.6.0 起）。
+
+## v4.7.1（移動時的畫面、選單色塊）留下的小問題
+- 轉過角度的物件拖曳時仍用舊做法（截圖＋淡白遮罩）。
+- 剛開始拖曳、底下的畫面還沒畫好的那一瞬間，仍是舊做法（滑鼠先停在物件上就會提前準備好）。
