@@ -115,7 +115,7 @@ await A(() => window.__pdfapp.mutate('test', doc => { const P = PDFLib, p = doc.
   p.node.addAnnot(doc.context.register(doc.context.obj({Type:'Annot', Subtype:'FreeText', Rect:[300, 200, 440, 230], Contents:P.PDFString.of('foreign box'), DA:P.PDFString.of('0 g /Helv 12 Tf')}))); }));
 await win.waitForTimeout(1500);
 const fb = (await A(async () => (await window.__pdfapp.getAnns(0)).filter(a => a.subtype === 'FreeText' && a.contents === 'foreign box').map(a => ({x:a.x, y:a.y, w:a.w, h:a.h}))))[0];
-if (fb) { const p = await at(fb.x + fb.w / 2, fb.y + fb.h / 2); await win.mouse.click(p.x, p.y); await win.waitForTimeout(1200); }
+if (fb) { const p = await pt(fb.x + fb.w / 2, fb.y + fb.h / 2); await win.mouse.click(p.x, p.y); await win.waitForTimeout(1200); }   // (scrolled into view first)
 const fh = await A(() => ({h:document.querySelectorAll('.asel .h').length, hint:(document.querySelector('.abar .hintk') || {}).textContent || ''}));
 check('a text box another program made: no corner handles, only 拖曳移動', !!fb && fh.h === 0 && fh.hint === '拖曳移動', {fb, fh});
 

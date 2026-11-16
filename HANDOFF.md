@@ -488,6 +488,10 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 同時複製／剪下兩次：第二次提示稍候。群組成員沒顯示（隱藏、鎖定）時，只剩一個也會提示一次。
 - 測試：`textbox-size.mjs`、`object-copy.mjs`（Ctrl+Shift+V、剪下）、`image-url.mjs`（data 網址、名稱、假 BMP）。
 
+### 3.9.30 選取時頁面不跳動（v4.8.3）
+- 頁面上方的列（`#hint`：工具設定、選取物件的設定列）出現、改變高度或消失時，`ResizeObserver` 把 `viewer.scrollTop` 加減同樣的高度，頁面在畫面上的位置不變（雙擊群組裡的文字方塊會點在原來瞄準的地方）。捲到最上面時無法往上補，仍會移動。
+- 測試：`bar-steady.mjs`；`textbox-size.mjs` 點別的程式做的文字方塊前先捲到看得到的地方。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。

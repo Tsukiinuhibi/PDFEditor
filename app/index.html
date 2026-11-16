@@ -12879,6 +12879,10 @@ function fitViewbar(){
   for (const c of VB_STEPS) { if (v.scrollWidth <= v.clientWidth + 1) break; v.classList.add(c); }
 }
 new ResizeObserver(() => fitViewbar()).observe($('#viewbar'));
+// the bar above the pages (a tool's settings, a selected object's bar) appearing, changing or going: the pages scrolled by as
+// much, so they stay where they are on the screen (a double-click on an object lands where it was aimed)
+{ const hint = $('#hint'); let hh = hint.offsetHeight;
+  new ResizeObserver(() => { const h = hint.offsetHeight, d = h - hh; hh = h; if (d && S.pdf) viewer.scrollTop += d; }).observe(hint); }
 document.fonts.ready.then(fitViewbar);
 
 /* ====================================================================

@@ -337,7 +337,7 @@ function imageKind(b) {
   if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'jpg';
   if (b.toString('latin1', 0, 4) === 'GIF8') return 'gif';
   if (b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP') return 'webp';
-  if (b.length > 30 && b.toString('latin1', 0, 2) === 'BM' && [12, 40, 52, 56, 64, 108, 124].includes(b.readUInt32LE(14))) return 'bmp';   // (its header's size: a real BMP, not text starting "BM")
+  if (b.length > 30 && b.toString('latin1', 0, 2) === 'BM' && [12, 16, 40, 52, 56, 64, 108, 124].includes(b.readUInt32LE(14))) return 'bmp';   // (its header's size: a real BMP, not text starting "BM")
   { const head = b.subarray(0, 4096).toString('utf8'); if (/<svg[\s>]/i.test(head) && !/<html[\s>]/i.test(head) && /^\s*(<\?xml|<!--|<!doctype svg|<svg)/i.test(b.subarray(0, 512).toString('utf8').replace(/^\ufeff/, ''))) return 'svg'; }   // (an HTML page with a drawing in it is not an SVG)
   return '';
 }
