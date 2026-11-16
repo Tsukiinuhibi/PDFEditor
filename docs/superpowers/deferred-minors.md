@@ -40,3 +40,15 @@ section out of this file when its batch ships.
 - the highlighted text is not shown highlighted while the size box has the focus (CSS highlight, as the font menu)
 - a shrunk 修改的文字 cover box can show the original text under it (also with a smaller size restyle; not new)
 - sizes up to 400 are not limited by the page: a long line at 300–400 pt makes a very large picture
+
+## v1.0.55 (batch later)
+
+- `data:image/…` addresses (「複製圖片位址」 often gives one) are refused without a word: the 下載 button stays grey
+- an image link dragged onto the window goes to the PDF window (「不是 PDF 檔」); it could go to the picture one
+- picture sniffing is loose: any body starting "BM" is a BMP; an HTML page starting `<!--` / `<?xml` with an inline
+  `<svg` counts as SVG (only a less helpful message)
+- no limit on pixel dimensions before decoding a picture from the web (a small file can declare enormous sizes)
+- 〔下載〕 is clickable again while the picture is being decoded (a second download; harmless)
+- blob URLs of pictures not placed are never revoked (up to 50 MB each, for the session)
+- the picture's name drops anything after a last dot ("v1.2" → "v1"); Content-Disposition is not used for pictures
+- tests: GIF, WebP, BMP, JPEG (original bytes kept), over 50 MB, cancel, a redirect
