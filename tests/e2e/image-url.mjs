@@ -124,6 +124,14 @@ check('a broken data address: said in Chinese, the window stays', q.d.open && /ç
 q = await tryUrl('data:image/jpeg;base64,' + png.toString('base64'));
 check('a data address saying JPEG with PNG bytes: read as the PNG it is', q.tool === 'image', q);
 
+// ---- (leftovers) a picture dragged from a web page onto the window: inserted as a picture -----------------------------------------
+await Ev(() => window.__pdfapp.setTool('select')); await win.waitForTimeout(300);
+await Ev(u => { const dt = new DataTransfer(); dt.setData('text/uri-list', u); dt.setData('text/html', `<img src="${u}">`); window.dispatchEvent(new DragEvent('drop', {dataTransfer:dt, bubbles:true, cancelable:true})); }, BASE + '/pics/red.png');
+await win.waitForTimeout(3000);
+{ const d = await dlg(), tool = await Ev(() => window.__pdfapp.S.tool), tabs = await Ev(() => document.querySelectorAll('.dtab').length);
+  check('a picture dragged from a web page: it waits to be placed in this PDF (not opened as a PDF)', tool === 'image' && !d.open, {tool, d, tabs});
+  if (d.open) { await win.keyboard.press('Escape'); await win.waitForTimeout(400); } }
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 server.close();
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

@@ -11374,12 +11374,12 @@ function urlWhy(r, kind = 'pdf'){
 let URLOPEN = false;   // the window is up or coming up
 // 插入圖片：從網址 — the picture is downloaded (the main process: Chromium's network, its proxy and certificates) and
 // then placed like a picture file (PENDING_IMG, the 插入圖片 tool)
-async function imageUrlDialog(){
+async function imageUrlDialog(pre = '', {auto = false} = {}){
   if (!S.pdf) return;
   if (!DESK || !DESK.url) { toast('這個版本不能從網址插入圖片', 'err'); return; }
-  if (URLOPEN || $('#mask').classList.contains('show')) return;
+  if (URLOPEN || $('#mask').classList.contains('show')) { if (auto) toast('請先關掉目前的視窗，再拖入圖片', 'err'); return; }
   URLOPEN = true;
-  try { await urlDialog('', false, 'image'); } finally { URLOPEN = false; }
+  try { await urlDialog(pre, auto, 'image'); } finally { URLOPEN = false; }
 }
 async function openUrlDialog(pre = '', {auto = false} = {}){
   if (!DESK || !DESK.url) { toast('這個版本不能從網址開啟', 'err'); return; }
@@ -11438,7 +11438,7 @@ async function urlDialog(pre, auto, kind = 'pdf'){
       e.preventDefault(); dataFull = t; dataLabel = `（貼上的圖片資料，約 ${Math.max(1, Math.round(t.length * .75 / 1024))} KB）`; inp.value = dataLabel; check(); });
     inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('#urlGo').click(); } });
     check(); inp.focus(); inp.select();
-    if (auto && URL_OK(pre)) setTimeout(() => $('#urlGo').click(), 0);
+    if (auto && ok(pre)) setTimeout(() => $('#urlGo').click(), 0);
   }});
   alive = false;
   if (URLJOB) { DESK.url.cancel(URLJOB.id); URLJOB = null; }   // closed (Esc, the mask) while downloading: stop (it winds down on its own)
@@ -12485,6 +12485,10 @@ window.addEventListener('drop', e => {
   const f = [...(e.dataTransfer && e.dataTransfer.files || [])];
   if (!f.length && e.dataTransfer) {   // a link dragged in from a browser: download it (the window shows how it goes)
     const u = (e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain') || '').split(/\r?\n/).map(x => x.trim()).find(x => x && !x.startsWith('#'));
+    // a picture dragged from a web page (its address, or the <img> it came from): inserted as a picture into the open PDF
+    const html = e.dataTransfer.getData('text/html') || '', imgSrc = (/<img[^>]+src\s*=\s*["']([^"']+)["']/i.exec(html) || [])[1];
+    const pic = S.pdf && u && (DATA_IMG.test(u) || /\.(png|jpe?g|gif|webp|bmp|svg)([?#]|$)/i.test(u) || (imgSrc && imgSrc === u));
+    if (pic) { imageUrlDialog(u, {auto:true}); return; }
     if (URL_OK(u) && !/\s/.test(u)) { openUrlDialog(u, {auto:true}); return; }
   }
   const isPdf = x => /\.pdf$/i.test(x.name) || x.type === 'application/pdf';
