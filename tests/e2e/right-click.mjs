@@ -99,6 +99,7 @@ const s2a = await A(() => window.__pdfapp.sel());
 await rclick(await onSq());
 const s2 = await A(() => window.__pdfapp.sel());
 check('選取 with another object selected: a right-click on the rectangle selects it', s2a?.id === poly.id && s2?.id === sq.id, {s2a, s2});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);   // (v4.7.0: the object's menu from the right-click above closed first; the object stays selected)
 const barXY = await A(() => { const b = document.querySelector('.abar'); if (!b) return null; const r = b.getBoundingClientRect(); return [r.left + 6, r.top + r.height / 2]; });
 if (barXY) await rclick(barXY);
 check('a right-click on the bar beside the selection: still selected, no menu', !!barXY && (await A(() => window.__pdfapp.sel()))?.id === sq.id && (await menu()) === null, {barXY, sel:await A(() => window.__pdfapp.sel())});
