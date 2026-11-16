@@ -463,6 +463,17 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 圖片的物件列：〔辨識整張〕（`readPictureText`）和〔框選辨識〕（`pictureOcrBox`）。框選辨識切到文字辨識工具，記下 `PIC_OCR = {i, box}`，圖片外圍畫虛線框（`.picocr`）；`startOcrDraw` 放開時若在同一頁，只取框和圖片重疊的部分，用 `readRegion(…, {image:true})` 讀。換工具（`setTool`）或 Esc 結束（`clearPicOcr`）。
 - 測試：`image-ocr.mjs` 框住 HELLO 2026 圖片的左半，只讀出 HELLO。
 
+### 3.9.26 物件群組（v4.8.0）
+- 同一群組的物件在字典裡有相同的 `PDFE_Grp`（字串，`newGroupId()`）。pdf.js 讀不到自訂鍵，所以 `loadGroups(i)` 用 `geoDoc()`（pdf-lib）讀，結果放在 `GROUPS`（鍵是 `版本:頁`）；`grpOf(i, id)` 是同步查詢。文件開啟時 `S.hasGroups = null`，第一次 `loadGroups` 掃全部頁面，沒有群組就設成 `false`，之後不再讀（組成群組或貼上時改回）。`ensureOverlay` 會先讀好這一頁的群組。
+- 點群組裡的物件：`setMulti` 整組＋`dragMulti`；整組已選取時再點其中一個（沒拖曳）：只選它（`dragMulti` 的 `onClick`，`selectedGroup()` 判斷選取是不是剛好一整組）。Shift＋點、框選（`withGroups`）都以整組為單位。右鍵：群組選單（`showMultiMenu` 多〔組成群組〕／〔取消群組〕）。
+- `groupSelected()`（Ctrl+G、群組列〔組成群組〕）、`ungroupSelected()`（Ctrl+Shift+G、〔取消群組〕；只選一個成員時拆掉它所在的整組），各是一個復原步驟。複製貼上時 `pasteObjects` 把群組 id 換成新的（同一次貼上的同一組換成同一個新 id）。
+- 測試：`object-group.mjs`。
+
+### 3.9.27 只顯示單數頁／雙數頁（v4.8.0）
+- 檢視列〔頁面：全部／單數頁／雙數頁〕（`#pageFilter`）→ `setPageFilter(f)`，存在 `S.pageFilter`（每個分頁各自，開檔時是 `all`）。`shownPages()` 是要排版的頁；`rowsFor()` 只用這些頁排（對開時 2、4 並排；封面單獨只在第 1 頁有顯示時才適用），`fitScale` 也以它為準。沒排版的頁的元素從畫面拿掉（`layout` 原本就這樣處理不在 `pos` 裡的頁）。
+- 上一頁／下一頁（`goPage`）、第一頁／最後一頁只在顯示的頁之間移動；`scrollToPage` 遇到沒顯示的頁（搜尋結果、縮圖、輸入頁碼）會改回顯示全部並提示。縮圖裡沒顯示的頁變淡（`.thumb.pf-off`）。只改檢視，不改文件；列印、轉存仍是全部頁面。
+- 測試：`page-filter.mjs`。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。

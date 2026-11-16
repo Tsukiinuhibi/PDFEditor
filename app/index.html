@@ -189,6 +189,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .tab.on{color:var(--seal-ink);border-bottom-color:var(--seal);font-weight:500}
 .panel{flex:1;overflow:auto;padding:10px;display:none}
 .panel.on{display:block}
+.thumb.pf-off{opacity:.35}
 .thumb{display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 4px;border-radius:7px;cursor:pointer;margin-bottom:2px}
 .thumb:hover{background:var(--hover2)}
 .thumb.on .tn{text-decoration:underline;text-underline-offset:3px}
@@ -1024,6 +1025,7 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
   <button class="vb" data-view="two" data-need title="對開雙頁顯示"><i data-i="vTwo"></i><span class="vt">對開</span></button>
   <button class="vb" data-view="two-continuous" data-need title="連續雙頁顯示"><i data-i="vTwoCont"></i><span class="vt">連續雙頁</span></button>
   <label class="chk" title="雙頁模式時第一頁（封面）單獨顯示"><input type="checkbox" id="coverChk"> <span class="vt">封面單獨</span><span class="vt2">封面</span></label>
+  <label class="chk" title="只顯示單數頁或雙數頁（只改變檢視，不會改到檔案；列印、轉存仍是全部頁面）"><span class="vt">頁面</span><select id="pageFilter" data-need><option value="all">全部</option><option value="odd">單數頁</option><option value="even">雙數頁</option></select></label>
   <span class="sep"></span>
   <button class="vb" id="bAids" data-act="aids" data-need title="網格、輔助線、標尺與貼齊"><i data-i="gridI"></i><span class="vt">輔助工具</span> ▾</button>
   <button class="vb" data-act="layers" data-need title="圖層面板：顯示／隱藏、鎖定、排列與管理圖層"><i data-i="layers"></i><span class="vt">圖層</span></button>
@@ -1494,7 +1496,7 @@ async function loadDoc(bytes, {name, keepView = false, scrollToCurrent = false} 
     pages.push({page:p, vp1:vp, w:vp.width, h:vp.height, rot:((p.rotate % 360) + 360) % 360});
   }
   if (prev) { prev.map = matchPages(prev.pages, pages); prev.pre = await prerenderNew(pages, prev); }
-  S.pdf = pdf; S.pages = pages; S.bytes = bytes; S.version = ++VSEQ;
+  S.pdf = pdf; S.pages = pages; S.bytes = bytes; S.version = ++VSEQ; S.hasGroups = null; S.pageFilter = 'all';
   if (name) S.name = name;
   S.imgCache.clear(); S.annCache.clear(); S.linkCache.clear();
   if (!keepView) { S.current = 0; S.zoomMode = 'fit-width'; }
@@ -1597,13 +1599,30 @@ async function openFile(file, handle = null, {rethrow = false} = {}){
    ==================================================================== */
 const isCont = () => S.view === 'continuous' || S.view === 'two-continuous';
 const isTwo = () => S.view === 'two' || S.view === 'two-continuous';
+/* 只顯示單數頁／雙數頁 (S.pageFilter 'all' | 'odd' | 'even'): only how the pages are shown; the document is not touched.
+   The pages left out are not laid out; moving page by page goes over the ones shown; going to one left out shows all again */
+function shownPages(){
+  const all = S.pages.map((_, i) => i), f = S.pageFilter;
+  const v = f === 'odd' ? all.filter(i => i % 2 === 0) : f === 'even' ? all.filter(i => i % 2 === 1) : all;
+  return v.length ? v : all;
+}
+const pageShown = i => { const f = S.pageFilter; return !f || f === 'all' || (f === 'odd' ? i % 2 === 0 : i % 2 === 1) || !shownPages().length; };
 function rowsFor(){
-  const n = S.pages.length, rows = [];
-  if (!isTwo()) { for (let i = 0; i < n; i++) rows.push([i]); return rows; }
-  let i = 0;
-  if (S.cover && n) { rows.push([0]); i = 1; }
-  for (; i < n; i += 2) rows.push(i + 1 < n ? [i, i + 1] : [i]);
+  const v = shownPages(), rows = [];
+  if (!isTwo()) { v.forEach(i => rows.push([i])); return rows; }
+  let k = 0;
+  if (S.cover && v[0] === 0) { rows.push([0]); k = 1; }
+  for (; k < v.length; k += 2) rows.push(k + 1 < v.length ? [v[k], v[k + 1]] : [v[k]]);
   return rows;
+}
+function setPageFilter(f){
+  if (!S.pdf) return;
+  S.pageFilter = f === 'odd' || f === 'even' ? f : 'all';
+  const v = shownPages(); if (!v.includes(S.current)) S.current = v.find(i => i > S.current) ?? v[v.length - 1];
+  setView(S.view);
+  const sel = $('#pageFilter'); if (sel) sel.value = S.pageFilter;
+  document.querySelectorAll('.thumb[data-i]').forEach(t => t.classList.toggle('pf-off', !pageShown(+t.dataset.i)));
+  if (S.pageFilter !== 'all') toast(S.pageFilter === 'odd' ? '只顯示單數頁（第 1、3、5…頁）' : '只顯示雙數頁（第 2、4、6…頁）');
 }
 const rowOf = p => S.rows.findIndex(r => r.includes(p));
 
@@ -1654,8 +1673,8 @@ function fitScale(mode){
   const rows = rowsFor(); const row = rows[Math.max(0, rows.findIndex(r => r.includes(S.current)))] || [0];
   // fit-width fits the widest page that is laid out (all pages in continuous views), so mixed
   // portrait/landscape documents never need a horizontal scrollbar; fit-page also fits the current spread's height
-  const shownPages = isCont() ? S.pages.map((_, i) => i) : row;
-  const pw = (isTwo() ? 2 : 1) * Math.max(...shownPages.map(p => S.pages[p].w));
+  const laid = isCont() ? shownPages() : row;
+  const pw = (isTwo() ? 2 : 1) * Math.max(...laid.map(p => S.pages[p].w));
   const ph = Math.max(...row.map(p => S.pages[p].h));
   const aw = viewer.clientWidth - 2 * MARGIN - (isTwo() ? GAP : 0) - (mode === 'fit-width' ? 2 : 0);
   const ah = viewer.clientHeight - 2 * MARGIN;
@@ -1708,6 +1727,7 @@ function setView(v){
 function scrollToPage(i){
   if (!S.pdf) return;
   i = clamp(i, 0, S.pages.length - 1);
+  if (S.pageFilter && S.pageFilter !== 'all' && !pageShown(i)) { S.pageFilter = 'all'; S.current = i; setView(S.view); const sel = $('#pageFilter'); if (sel) sel.value = 'all'; document.querySelectorAll('.thumb.pf-off').forEach(t => t.classList.remove('pf-off')); toast(`第 ${i + 1} 頁沒有顯示，已改回顯示全部頁面`); }
   if (!isCont()) { S.current = i; layout(); viewer.scrollTop = 0; }
   else {
     S.current = i;
@@ -1724,7 +1744,7 @@ function goPage(delta){
   if (isTwo()) {
     const ri = clamp(rowOf(S.current) + delta, 0, S.rows.length - 1);
     scrollToPage(S.rows[ri][0]);
-  } else scrollToPage(S.current + delta);
+  } else { const v = shownPages(), k = v.indexOf(S.current); scrollToPage(k < 0 ? (v.find(i => i > S.current) ?? v[v.length - 1]) : v[clamp(k + delta, 0, v.length - 1)]); }
 }
 
 function updateCurrentFromScroll(){
@@ -1798,6 +1818,7 @@ async function ensureOverlay(i){
   const [anns, imgs, lnks] = await Promise.all([getAnns(i), detectImages(i), pageLinks(i)]);
   if (ver !== S.version) return;
   ovl.querySelectorAll('.annhit,.imgbox,.lnk').forEach(n => n.remove());
+  if (S.hasGroups !== false) loadGroups(i);   // (which objects are grouped: ready before they are clicked)
   const pct = (v, t) => (v / t * 100) + '%';
   anns.forEach(a => {
     const d = document.createElement('div'); d.className = 'annhit' + (a.noap ? ' noap' : '') + (a.sig ? ' sig' : '') + (a.subtype === 'Text' ? ' txt' : ''); HIT_ANN.set(d, a);
@@ -1819,6 +1840,8 @@ async function ensureOverlay(i){
       ev.stopPropagation(); hideTip();
       if (a.sig) return;
       if (ev.shiftKey && movableAnn(a)) { toggleMulti(i, a); return; }
+      const g = movableAnn(a) && grpOf(i, a.id);
+      if (g) { setMulti(i, anns.filter(x => grpOf(i, x.id) === g)); if (MS) dragMulti(ev); return; }   // (one of a group: the whole group)
       selectAnnot(i, a);
       if (AS && AS.movable) dragAnnot(ev, 'move');
     });
@@ -2019,6 +2042,7 @@ function updateUI(){
   $$('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === S.tool));
   $('#bUndo').disabled = !S.undo.length; $('#bRedo').disabled = !S.redo.length;
   $('#coverChk').checked = S.cover; $('#coverChk').disabled = !isTwo();
+  { const pf = $('#pageFilter'); if (pf) { pf.value = S.pageFilter || 'all'; pf.disabled = !S.pdf; } }
   $('#stFile').innerHTML = S.pdf ? `<span class="dot${S.dirty ? ' dirty' : ''}"></span>${esc(S.name)}${S.dirty ? '（已修改）' : ''}` : '尚未開啟檔案';
   $('#stSig').innerHTML = S.signed ? '<span class="sig">✓ 已數位簽署</span>' : '';
   const sw = $('#stWrite');
@@ -2180,6 +2204,7 @@ window.addEventListener('keydown', e => {
     if (!S.spaceDown) { S.spaceDown = true; viewer.classList.add('pan-ready'); }
     return;
   }
+  if (mod && e.code === 'KeyG' && (MS || AS)) { e.preventDefault(); if (e.shiftKey) ungroupSelected(); else groupSelected(); return; }   // 組成群組／取消群組
   if (mod && e.key.toLowerCase() === 'w') { e.preventDefault(); if (active >= 0) closeTab(active); return; }
   if (mod && e.key === 'Tab' && docs.length > 1) { e.preventDefault(); switchTab((active + (e.shiftKey ? -1 : 1) + docs.length) % docs.length); return; }
   // a selected sticky note is copied / cut by Ctrl+C / Ctrl+X, unless the pages are being worked on in the thumbnails
@@ -2671,7 +2696,11 @@ viewer.addEventListener('contextmenu', async e => {
   const drew = await backToSelect();   // (a drawing this right-click finished: the new shape is not selected)
   if (pt && !drew && S.tool === 'select' && S.els[i]) {   // on an object: select it, and its menu
     const d0 = activeDoc(), a = await annAt(i, pt);
-    if (a && activeDoc() === d0 && S.els[i] && S.tool === 'select') { selectAnnot(i, a); showObjMenu(e, i, a); }
+    if (a && activeDoc() === d0 && S.els[i] && S.tool === 'select') {
+      const g = movableAnn(a) && grpOf(i, a.id);
+      if (g) { setMulti(i, (await getAnns(i)).filter(x => grpOf(i, x.id) === g)); if (MS) showMultiMenu(e); return; }
+      selectAnnot(i, a); showObjMenu(e, i, a);
+    }
   }
 });
 /* 右鍵編輯物件: the menu of a right-clicked object lists what its bar above the pages can change (colours, line width,
@@ -2791,7 +2820,8 @@ function showMultiMenu(e){
   if (!MS) return;
   const bar = $('#hint'), n = MS.items.length;
   const btns = sel => [...bar.querySelectorAll(sel)].map(b => ({label:b.title || b.textContent.trim(), run:() => b.click()}));
-  showEntries(e, `已選取 ${n} 個物件`, [btns('[data-al]'), btns('[data-dist]'),
+  const grp = selectedGroup();
+  showEntries(e, grp ? `群組（${n} 個物件）・已選取 ${n} 個物件` : `已選取 ${n} 個物件`, [grp ? [{label:'取消群組', ic:'gridI', kb:'Ctrl+Shift+G', run:() => ungroupSelected()}] : [{label:'組成群組', ic:'gridI', kb:'Ctrl+G', run:() => groupSelected()}], btns('[data-al]'), btns('[data-dist]'),
     [{label:'複製', ic:'copy', kb:'Ctrl+C', run:() => MS && copyObjects(MS.i, MS.items)}, {label:'剪下', ic:'cut', kb:'Ctrl+X', run:() => MS && copyObjects(MS.i, MS.items, {cut:true})}, {label:'刪除', ic:'trash', kb:'Delete', run:() => deleteMulti()}]]);
 }
 // the object under a point {x, y} of page i, the topmost one (a sticky note has its own menu; a signature field is not
@@ -4140,11 +4170,12 @@ async function pasteObjects(){
     const src = await PDFDocument.load(clip.bytes, {updateMetadata:false}), copier = PDFLib.PDFObjectCopier.for(src.context, doc.context), got = [];
     const dk = activeDoc(), placed = (clip.shared && clip.placed.get(dk)) || new Map();
     for (const [n, h] of Object.entries(clip.shared || {})) { const t = placed.get(+n); if (t != null && sameStream(doc, t, h)) copier.traversedObjects.set(PDFRef.of(+n), PDFRef.of(t)); }
-    const Vt = pg.vp1.transform;
+    const Vt = pg.vp1.transform, gmap = new Map();
     for (const it of clip.items) {
       const d = copier.copy(src.context.lookup(PDFRef.of(it.num), PDFDict));
       if (!destIn(doc, d)) { lost++; continue; }
       const V = it.vt; if (V && [0, 1, 2, 3].some(k => Math.abs(V[k] - Vt[k]) > 1e-6)) turnAnnotDict(doc, d, MUL(V, invM(Vt)));
+      const og = grpOfDict(d); if (og) { if (!gmap.has(og)) gmap.set(og, newGroupId()); d.set(N_('PDFE_Grp'), PDFString.of(gmap.get(og))); }   // (a copied group: a new group of the copies)
       got.push({it, d, ob:vRect(i, numArr(d.lookup(N_('Rect'), PDFArray)))});   // (where it would be on this page: pages differ in size)
     }
     if (!got.length) { toast('連到原文件頁面的連結，這份文件沒有那一頁，沒有貼上', 'err'); return false; }
@@ -4163,6 +4194,8 @@ async function pasteObjects(){
   if (!ok) return;
   if (lost) toast(`有 ${lost} 個連結連到這份文件沒有的頁面，沒有貼上`, 'err');
   if (S.tool !== 'select') setTool('select');
+  if (S.hasGroups === false) S.hasGroups = null;   // (a group may have come with it)
+  await loadGroups(i);
   const list = (await getAnns(i)).filter(a => ids.includes(a.id));
   if (list.length === 1) selectAnnot(i, list[0]); else if (list.length > 1) setMulti(i, list);
 }
@@ -7840,6 +7873,49 @@ function cleanMove(i, ids, items){   // items: [{b (box where it was), el, veil}
   } };
   if (e.val) apply(e.val); else e.p.then(apply);
 }
+/* 物件群組: objects of one group carry the same PDFE_Grp (a string) in their dictionaries. GROUPS keeps, per document
+   version and page, which object is in which group (read with pdf-lib, which sees our own keys); a document that has none
+   (S.hasGroups false, found once when it is opened) is not read again until a group is made or pasted. */
+const GROUPS = new Map();   // `${version}:${page}` → Map(object id → group id)
+const annId = r => r.objectNumber + 'R' + (r.generationNumber ? r.generationNumber : '');
+const grpOfDict = d => { const g = d && d.lookupMaybe && d.lookupMaybe(N_('PDFE_Grp'), PDFString, PDFHexString); return g ? g.decodeText() : null; };
+const groupsNow = i => GROUPS.get(S.version + ':' + i) || null;
+const grpOf = (i, id) => { const m = groupsNow(i); return m && m.get(id) || null; };
+const newGroupId = () => 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+async function loadGroups(i){
+  if (!S.pdf || S.hasGroups === false) return null;
+  const key = S.version + ':' + i; if (GROUPS.has(key)) return GROUPS.get(key);
+  const ver = S.version, doc = await geoDoc(); if (ver !== S.version) return null;
+  const read = k => { const m = new Map(); try { const an = doc.getPage(k).node.Annots(); if (an) an.asArray().forEach(r => { if (!(r instanceof PDFRef)) return; const g = grpOfDict(doc.context.lookup(r)); if (g) m.set(annId(r), g); }); } catch (_) {} return m; };
+  if (S.hasGroups == null) { let any = false; for (let k = 0; k < doc.getPageCount() && !any; k++) any = read(k).size > 0; S.hasGroups = any; if (!any) return null; }
+  const m = read(i); if (GROUPS.size > 60) GROUPS.clear(); GROUPS.set(key, m); return m;
+}
+// the objects of page i a list stands for: each grouped one brings its whole group
+function withGroups(i, all, list){
+  const gs = new Set(list.map(a => grpOf(i, a.id)).filter(Boolean)); if (!gs.size) return list;
+  return [...list, ...all.filter(x => gs.has(grpOf(i, x.id)) && !list.some(y => y.id === x.id))];
+}
+// the selected group, when the selection is exactly one whole group
+function selectedGroup(){
+  if (!MS) return null; const g = grpOf(MS.i, MS.items[0].id);
+  return g && MS.items.every(a => grpOf(MS.i, a.id) === g) ? g : null;
+}
+async function groupSelected(){
+  if (!MS || MS.items.length < 2) { toast('請先選取兩個以上的物件（Shift＋點選，或拖曳框選）', 'err'); return; }
+  const {i, items} = MS, g = newGroupId(), ids = items.map(a => a.id);
+  const ok = await mutate(`已組成群組（${items.length} 個物件）`, doc => { for (const a of items) { const ref = findAnnotRef(doc, i, a.id); if (ref) doc.context.lookup(ref, PDFDict).set(N_('PDFE_Grp'), PDFString.of(g)); } });
+  if (!ok) return; S.hasGroups = true; await loadGroups(i);
+  if (S.tool === 'select' && S.els[i]) setMulti(i, (await getAnns(i)).filter(x => ids.includes(x.id)));
+}
+async function ungroupSelected(){
+  const i = MS ? MS.i : AS ? AS.i : -1; if (i < 0) return;
+  const list = MS ? MS.items : [AS.a], gs = new Set(list.map(a => grpOf(i, a.id)).filter(Boolean));
+  if (!gs.size) { toast('選取的物件不是群組', 'err'); return; }
+  const all = await getAnns(i), members = all.filter(x => gs.has(grpOf(i, x.id))), ids = members.map(a => a.id);
+  const ok = await mutate('已取消群組', doc => { for (const a of members) { const ref = findAnnotRef(doc, i, a.id); if (ref) doc.context.lookup(ref, PDFDict).delete(N_('PDFE_Grp')); } });
+  if (!ok) return; await loadGroups(i);
+  if (S.tool === 'select' && S.els[i]) { const l = (await getAnns(i)).filter(x => ids.includes(x.id)); if (l.length > 1) setMulti(i, l); else if (l.length) selectAnnot(i, l[0]); }
+}
 function holdSelection(){
   if (!AS) return;
   AS.el.querySelectorAll('.h,.eh,.rh').forEach(h => h.remove());
@@ -7884,7 +7960,7 @@ function setMulti(i, items){
   const els = items.map(a => {
     const el = document.createElement('div'); el.className = 'asel multi';
     Object.assign(el.style, {left:a.x / pg.w * 100 + '%', top:a.y / pg.h * 100 + '%', width:a.w / pg.w * 100 + '%', height:a.h / pg.h * 100 + '%'});
-    el.addEventListener('pointerdown', e => { if (e.button !== 0 || S.spaceDown) return; e.preventDefault(); e.stopPropagation(); if (e.shiftKey) toggleMulti(i, pickUnder(e, a)); else dragMulti(e); });
+    el.addEventListener('pointerdown', e => { if (e.button !== 0 || S.spaceDown) return; e.preventDefault(); e.stopPropagation(); if (e.shiftKey) toggleMulti(i, pickUnder(e, a)); else dragMulti(e, {onClick:() => { if (selectedGroup()) selectAnnot(i, pickUnder(e, a)); }}); });   // (a click on one of a selected group: that one, to change it)
     ovl.appendChild(el); return el;
   });
   S.els[i].style.zIndex = 4;
@@ -7893,8 +7969,9 @@ function setMulti(i, items){
 }
 async function toggleMulti(i, a){
   if (NUDGE) await flushNudge();   // an arrow-key nudge not written yet: written first (the group starts where it is now)
-  const list = MS && MS.i === i ? MS.items.slice() : AS && AS.i === i ? [AS.a] : [], k = list.findIndex(x => x.id === a.id);
-  if (k >= 0) list.splice(k, 1); else list.push(a);
+  let list = MS && MS.i === i ? MS.items.slice() : AS && AS.i === i ? [AS.a] : [];
+  const unit = withGroups(i, await getAnns(i), [a]);   // (one of a group: the whole group)
+  if (list.some(x => x.id === a.id)) list = list.filter(x => !unit.some(u => u.id === x.id)); else list.push(...unit.filter(u => !list.some(x => x.id === u.id)));
   if (!list.length) { clearMulti(); deselectAnnot(); return; }
   setMulti(i, list);
 }
@@ -7917,7 +7994,7 @@ function startMarquee(i, e, add, at = null){
       const x0 = Math.max(a.x, 0), y0 = Math.max(a.y, 0), x1 = Math.min(a.x + a.w, pg.w), y1 = Math.min(a.y + a.h, pg.h);
       return movableAnn(a) && x1 >= x0 && y1 >= y0 && x0 >= box.x - .5 && y0 >= box.y - .5 && x1 <= box.x + box.w + .5 && y1 <= box.y + box.h + .5;
     });
-    if (S.tool === 'select' && S.els[i]) setMulti(i, [...base, ...inside]);
+    if (S.tool === 'select' && S.els[i]) setMulti(i, withGroups(i, await getAnns(i), [...base, ...inside]));
   };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
 }
@@ -7931,7 +8008,7 @@ async function moveObjects(i, moves, label){
   return ok;
 }
 // drag one of the selected objects: all of them move by the same amount
-function dragMulti(e){
+function dragMulti(e, {onClick = null} = {}){
   const {i, items, els} = MS, pg = S.pages[i], p0 = pagePointXY(i, e.clientX, e.clientY), MS0 = MS;   // (the group let go meanwhile, a right-click: nothing moves)
   // as with one object, each keeps at least half of itself on the page
   const xr = [Math.max(...items.map(a => -a.x - a.w / 2)), Math.min(...items.map(a => pg.w - a.w / 2 - a.x))];
@@ -7974,7 +8051,7 @@ function dragMulti(e){
   const esc = ev => { if (ev.key !== 'Escape') return; ev.preventDefault(); ev.stopImmediatePropagation(); cancel(); };   // (also when the window loses the focus mid-drag)
   const up = () => {
     end();
-    if (!moved || MS !== MS0) { unghost(); els.forEach(el => { el.style.transform = ''; }); return; }
+    if (!moved || MS !== MS0) { unghost(); els.forEach(el => { el.style.transform = ''; }); if (!moved && MS === MS0 && onClick) onClick(); return; }
     const n = items.length;
     hold();
     moveObjects(i, items.map(a => ({a, ob:{x:a.x, y:a.y, w:a.w, h:a.h}, nb:{x:a.x + dx, y:a.y + dy, w:a.w, h:a.h}})), `已移動 ${n} 個物件`).then(ok => { if (!ok) clearHolds(i); });
@@ -8081,7 +8158,7 @@ async function paintObjBar_(){
   const h = $('#hint');
   const drop = () => { OBJBAR = null; if (h.classList.contains('objbar')) { h.classList.remove('objbar', 'show', 'styl', 'multi'); h.innerHTML = ''; } };
   if (S.tool === 'select' && MS) {
-    h.classList.remove('multi'); h.innerHTML = multiBarHTML(MS.items.length); h.classList.add('show', 'styl', 'objbar', 'multi');
+    h.classList.remove('multi'); h.innerHTML = multiBarHTML(MS.items.length, selectedGroup()); h.classList.add('show', 'styl', 'objbar', 'multi');
     OBJBAR = {multi:true, i:MS.i, doc:activeDoc()};
     return;
   }
@@ -8102,11 +8179,12 @@ async function paintObjBar_(){
 }
 // the bar of several selected objects: align (to the selection or the page), distribute (3 or more), delete
 let ALIGN_TO = 'sel';
-function multiBarHTML(n){
+function multiBarHTML(n, grp = null){
   const b = (k, label, ic) => `<button class="pchip" data-al="${k}" title="${label}">${icon(ic)}${label}</button>`;
   return `<b class="sb-t">${icon('select')}已選取 ${n} 個物件</b><span class="sb-row"><span class="sb-h">對齊</span>${b('left', '靠左', 'alL')}${b('hcenter', '水平置中', 'alC')}${b('right', '靠右', 'alR')}${b('top', '靠上', 'alT')}${b('vcenter', '垂直置中', 'alM')}${b('bottom', '靠下', 'alB')}
     ${n >= 3 ? `<button class="pchip" data-dist="h" title="水平平均分配">${icon('distH')}水平平均分配</button><button class="pchip" data-dist="v" title="垂直平均分配">${icon('distV')}垂直平均分配</button>` : ''}
     <label class="sb-l">對齊到<select data-alto><option value="sel"${ALIGN_TO === 'sel' ? ' selected' : ''}>選取範圍</option><option value="page"${ALIGN_TO === 'page' ? ' selected' : ''}>頁面</option></select></label>
+    ${grp ? `<button class="pchip" data-ma="ungroup" title="取消群組 (Ctrl+Shift+G)：各自獨立">${icon('gridI')}取消群組</button>` : `<button class="pchip" data-ma="group" title="組成群組 (Ctrl+G)：之後點其中一個就選到整組">${icon('gridI')}組成群組</button>`}
     <button class="pchip" data-ma="copy" title="複製 (Ctrl+C)，到任何頁面或其他分頁按 Ctrl+V 貼上">${icon('copy')}複製</button><button class="pchip" data-ma="del">${icon('trash')}刪除</button></span>`;
 }
 // line up the selected objects by what can be seen of each (a turned one: its turned frame): against the frame round all of
@@ -8438,6 +8516,8 @@ async function changeImageOf(ob){
 $('#hint').addEventListener('click', e => {
   if (!OBJBAR || !OBJBAR.multi || !MS) return;
   if (e.target.closest('[data-ma="del"]')) deleteMulti();
+  if (e.target.closest('[data-ma="group"]')) groupSelected();
+  if (e.target.closest('[data-ma="ungroup"]')) ungroupSelected();
   if (e.target.closest('[data-ma="copy"]') && MS) copyObjects(MS.i, MS.items);
   const al = e.target.closest('[data-al]'); if (al) alignSelected(al.dataset.al, ALIGN_TO);
   const ds = e.target.closest('[data-dist]'); if (ds) distributeSelected(ds.dataset.dist);
@@ -9676,7 +9756,7 @@ function buildThumbs(map = null, pre = null){
     if (ver === S.version && shown.isConnected) shown.replaceWith(c);
   }), {root:panel, rootMargin:'200px'});
   S.pages.forEach((pg, i) => {
-    const t = document.createElement('div'); t.className = 'thumb'; t.dataset.i = i;
+    const t = document.createElement('div'); t.className = 'thumb' + (pageShown(i) ? '' : ' pf-off'); t.dataset.i = i;
     const w = 120, h = Math.round(w * pg.h / pg.w);
     const W = h > 170 ? Math.round(170 * pg.w / pg.h) : w, H = Math.min(h, 170);
     t.innerHTML = `<canvas class="tc" style="width:${W}px;height:${H}px"></canvas><span class="tn">${i + 1}</span>`;
@@ -12302,6 +12382,7 @@ document.addEventListener('click', e => {
 });
 $('#fOpen').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; openFile(f); });
 $('#coverChk').addEventListener('change', e => { S.cover = e.target.checked; setView(S.view); });
+$('#pageFilter').addEventListener('change', e => { setPageFilter(e.target.value); e.target.blur(); });
 $('#pgIn').addEventListener('keydown', e => { if (e.key === 'Enter') { const n = parseInt(e.target.value, 10); if (n >= 1) scrollToPage(n - 1); e.target.blur(); } });
 $('#pgIn').addEventListener('focus', e => e.target.select());
 $('#pgIn').addEventListener('blur', updatePager);
@@ -12337,8 +12418,8 @@ updateUI();
 const BIND_ACTIONS = [
   {id:'prevPage', label:'上一頁', run:() => goPage(-1)},
   {id:'nextPage', label:'下一頁', run:() => goPage(1)},
-  {id:'firstPage', label:'第一頁', run:() => scrollToPage(0)},
-  {id:'lastPage', label:'最後一頁', run:() => scrollToPage(S.pages.length - 1)},
+  {id:'firstPage', label:'第一頁', run:() => scrollToPage(shownPages()[0])},
+  {id:'lastPage', label:'最後一頁', run:() => { const v = shownPages(); scrollToPage(v[v.length - 1]); }},
   {id:'prevTab', label:'上一個分頁', run:() => docs.length > 1 && switchTab((active - 1 + docs.length) % docs.length)},
   {id:'nextTab', label:'下一個分頁', run:() => docs.length > 1 && switchTab((active + 1) % docs.length)},
 ];
