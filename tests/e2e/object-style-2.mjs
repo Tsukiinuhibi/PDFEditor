@@ -50,12 +50,12 @@ let tb = (await anns(0, 'FreeText'))[0];
 await pick(tb);
 const runs = s => (s && s.rt ? s.rt.lines.flat() : []);
 let st = tb && await style(tb.id);
-const tbar = () => A(() => { const h = document.querySelector('#hint.objbar'); if (!h) return null; const sz = h.querySelector('select[data-tb="size"]'), b = h.querySelector('.tfmt[data-tb="bold"]');
+const tbar = () => A(() => { const h = document.querySelector('#hint.objbar'); if (!h) return null; const sz = h.querySelector('[data-tb="size"]'), b = h.querySelector('.tfmt[data-tb="bold"]');
   return {size:sz ? +sz.value : null, bold:b ? b.classList.contains('on') : null, font:(h.querySelector('[data-tbfont]') || {}).textContent || null}; });
 let tb0 = await tbar();
 check('a text box selected: 已選取：文字方塊, its size in the bar', !!tb && (await title() || '').includes('已選取：文字方塊') && !!tb0 && tb0.size === runs(st)[0]?.size && tb0.bold === false, {title:await title(), tb0, runs:runs(st)});
 const box0 = {x:tb.x, y:tb.y, w:tb.w, h:tb.h};
-await win.selectOption('#hint.objbar select[data-tb="size"]', '24'); await settle();
+await win.fill('#hint.objbar input[data-tb="size"]', '24'); await win.press('#hint.objbar input[data-tb="size"]', 'Enter'); await settle();
 st = await style(tb.id); tb = (await anns(0, 'FreeText')).find(a => a.id === tb.id);
 check('字級 24: every run 24, the box grows from its top-left corner, the text the same, still selected',
   runs(st).length > 0 && runs(st).every(r => r.size === 24) && tb.h > box0.h + 4 && near(tb.x, box0.x) && near(tb.y, box0.y) && tb.contents === 'Hello 世界' && (await sel())?.id === tb.id, {runs:runs(st), tb, box0, sel:await sel()});
@@ -88,7 +88,7 @@ check('the text box tool\'s own defaults unchanged', (await A(() => localStorage
 // two runs of different sizes: a new colour keeps them different
 await win.keyboard.press('Escape'); await tool('textbox'); await click(await see(0, 100, 260)); await win.keyboard.type('AB');
 await win.keyboard.down('Shift'); await win.keyboard.press('ArrowLeft'); await win.keyboard.up('Shift');
-await win.selectOption('#hint select[data-tb="size"]', '20'); await win.waitForTimeout(300);
+await win.fill('#hint input[data-tb="size"]', '20'); await win.press('#hint input[data-tb="size"]', 'Enter'); await win.waitForTimeout(300);
 await win.keyboard.press('Escape'); await settle();
 const tb2 = (await anns(0, 'FreeText')).find(a => a.id !== tb.id);
 await pick(tb2);
