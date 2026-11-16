@@ -36,9 +36,10 @@ const setSeen = async v => { await A(v => v == null ? localStorage.removeItem('p
 ({ app, win, A } = await open('wn2.pdf'));
 await setSeen('1.0.26');
 let w = await shown();
-const after126 = VERS.filter(v => cmp(v, '1.0.26') > 0 && cmp(v, PKG.version) <= 0).map(v => 'v' + v);
+// (v4.5.0) 1.0.26 is an old number: the versions were numbered again, it is 3.3.0 now
+const after126 = VERS.filter(v => cmp(v, '3.3.0') > 0 && cmp(v, PKG.version) <= 0).map(v => 'v' + v);
 check('updated from 1.0.26: 已更新到 the current version', !!w && w.title === `已更新到 v${PKG.version}`, w);
-check('updated from 1.0.26: every newer version, newest first', !!w && JSON.stringify(w.vers) === JSON.stringify(after126), w && w.vers);
+check('updated from 1.0.26 (old number of 3.3.0): every newer version, newest first, not the whole history', !!w && JSON.stringify(w.vers) === JSON.stringify(after126), w && w.vers);
 await win.click('#modal .mf button:has-text("知道了")'); await win.waitForTimeout(300);
 check('知道了 closes it; the version recorded', (await shown()) === null && (await seen()) === PKG.version);
 await app.close(); ({ app, win, A } = await open('wn3.pdf'));

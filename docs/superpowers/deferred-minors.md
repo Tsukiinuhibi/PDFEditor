@@ -52,3 +52,14 @@ section out of this file when its batch ships.
 - blob URLs of pictures not placed are never revoked (up to 50 MB each, for the session)
 - the picture's name drops anything after a last dot ("v1.2" → "v1"); Content-Disposition is not used for pictures
 - tests: GIF, WebP, BMP, JPEG (original bytes kept), over 50 MB, cancel, a redirect
+
+## v4.5.0（物件的複製貼上，原本預定的 v1.0.56）留下的小問題
+- 頁面右鍵選單與貼上提示裡的 Ctrl+V 說明仍以頁面為主，沒有提到物件。
+- 滑鼠在頁面上時沒有「貼在原位置」的方式（只能把滑鼠移出頁面）。
+- `clip.step++` 在 `mutate` 之前，貼上失敗也會累加；換頁後沒有歸零。
+- `copyObjects` 沒有檢查來源是否為加密檔，也沒有忙碌狀態。
+- 剪下時刪的是目前的選取，不是剛複製的那份清單（兩者通常相同）。
+- `OBJ_CLIP.src.doc` 讓關掉的分頁物件留在記憶體裡。
+- 選著文字時 Ctrl+C 與 Ctrl+X 的行為不一致。
+- 連結物件選不到，所以 `destOut`／`destIn` 實際上用不到；連結被丟掉時留下的資料沒清。
+- 測試覆蓋：多選含便利貼、跨檔的轉向頁、字型共用沒有專門的檢查。
