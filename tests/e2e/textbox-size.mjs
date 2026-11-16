@@ -31,6 +31,8 @@ await win.keyboard.type('Size test 字級'); await win.keyboard.press('Control+a
 const sb0 = await sizeBox();
 check('the size box is a box to type in', !!sb0 && sb0.tag === 'INPUT', sb0);
 if (sb0 && sb0.tag === 'INPUT') {
+  await win.click('#hint input[data-tb="size"]'); await win.waitForTimeout(200);
+  check('the size box focused: the highlighted text is still marked', await A(() => !!(window.CSS && CSS.highlights && CSS.highlights.has('tb-sel'))));
   await setSize('13.5');
   const ed = await A(() => (window.__pdfapp.TBE() || {}).html || '');
   check('a typed size with a decimal: the highlighted text takes 13.5', /font-size:\s*13\.5px/.test(ed), ed.slice(0, 200));

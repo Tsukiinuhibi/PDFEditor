@@ -3139,15 +3139,15 @@ async function openExportImages(){
     sel:new Set(selectedPages()), custom:new Map(),
     fmt:IMG_FORMATS[pr.fmt] ? pr.fmt : 'png', dpi:pr.dpi || 150, quality:pr.quality || 92,
     transparent:!!pr.transparent, annots:true,   // pages are always exported with everything added to them
-    tpl:pr.tpl || '{檔案名稱}_第{頁碼}頁', pad:pr.pad ?? 'auto', policy:pr.policy || 'rename',
+    tpl:pr.tpl || '{檔案名稱}_第{頁碼}頁', pad:/^(auto|\d)$/.test(String(pr.pad ?? 'auto')) ? String(pr.pad ?? 'auto') : 'auto', policy:pr.policy || 'rename',   // (values from a settings file: only the ones offered)
     nameMode:pr.nameMode || 'macro',
     macOrder:Array.isArray(pr.macOrder) && pr.macOrder.length === 4 ? pr.macOrder : ['name', 'page', 'date', 'seq'],
-    macOn:pr.macOn || {name:true, page:true, date:false, seq:false},
+    macOn:Object.fromEntries(Object.entries({name:true, page:true, date:false, seq:false}).map(([k, d]) => [k, isPlainObj(pr.macOn) && typeof pr.macOn[k] === 'boolean' ? pr.macOn[k] : d])),
     pageStyle:pr.pageStyle || 'cjk', dateFmt:pr.dateFmt || 'dash', sep:pr.sep || 'us', seqStart:pr.seqStart || 1,
     useSub:!!pr.useSub, subTpl:pr.subTpl || '{檔案名稱}_圖片', dir:null,
   };
   // default output folder: the last folder the user picked, otherwise the PDF's own folder, otherwise Pictures
-  if (DESK) st.dir = await DESK.exportImages.defaultDir(S.handle && S.handle.path, pr.keepDir ? pr.lastDir : null);
+  if (DESK) st.dir = await DESK.exportImages.defaultDir(S.handle && S.handle.path, pr.keepDir && typeof pr.lastDir === 'string' ? pr.lastDir : null);
   const body = document.createElement('div');
   body.innerHTML = `
   <div class="ex-grid">
@@ -5003,6 +5003,11 @@ async function pickFont(f){
   }
   applyTextFormat('font', f); noteRecentFont(f);
 }
+// a size box (the bar's, or the right-click menu's) taking the focus from the text being written: its highlighted text
+// stays marked (as with the font list)
+document.addEventListener('focusin', e => { const t = e.target; if (!TBE || !t.matches || !t.matches('#hint input[data-tb="size"], #ctx input[data-in]')) return;
+  if (TBE.range && !TBE.range.collapsed && window.Highlight && window.CSS && CSS.highlights) CSS.highlights.set('tb-sel', new Highlight(TBE.range.cloneRange())); });
+document.addEventListener('focusout', e => { const t = e.target; if (FM || !t.matches || !t.matches('#hint input[data-tb="size"], #ctx input[data-in]')) return; if (window.CSS && CSS.highlights) CSS.highlights.delete('tb-sel'); });
 function closeFontMenu(){ if (!FM) return; if (FM.io) FM.io.disconnect(); FM = null; if (window.CSS && CSS.highlights) CSS.highlights.delete('tb-sel'); const m = $('#fontMenu'); m.style.display = 'none'; m.innerHTML = ''; }
 document.addEventListener('pointerdown', e => { if (FM && !e.target.closest('#fontMenu,[data-tbfont]')) closeFontMenu(); }, true);
 document.addEventListener('pointerup', () => { if (FM && FM.down) { FM.down = false; if (FM.stale) refreshFontMenu(); } }, true);
@@ -8168,11 +8173,11 @@ function tbObjStyle(rt){
     bold:all('bold'), italic:all('italic'), underline:all('underline'), boxBg:normHex(rt.box && rt.box.boxBg) || '', border:!!(rt.box && rt.box.border)};   // (colours read from the file: only #rrggbb goes into the page's HTML)
 }
 let OBJBAR = null;   // the object the bar shows: {i, id, kind, doc, st (a text box's tbObjStyle)}
-let OBJBAR_FOR = null;   // the selected object whose bar is settled (shown, or none for it): the right-click menu waits for it
+let OBJBAR_FOR = null, OBJBAR_GEN = 0;   // the selected object whose bar is settled (shown, or none for it): the right-click menu waits for it
 async function paintObjBar(){
   markLayerSel();
-  OBJBAR_FOR = null;
-  try { await paintObjBar_(); } finally { OBJBAR_FOR = AS ? AS.a.id : null; }
+  OBJBAR_FOR = null; const gen = ++OBJBAR_GEN;
+  try { await paintObjBar_(); } finally { if (gen === OBJBAR_GEN) OBJBAR_FOR = AS ? AS.a.id : null; }   // (an older paint ending after a newer one began says nothing)
 }
 async function paintObjBar_(){
   const h = $('#hint');
@@ -9268,7 +9273,7 @@ async function openDigiSign(i, box){
     f.querySelectorAll('input[name=cm]').forEach(r => r.onchange = sync); sync();
   }});
   if (!res) return;
-  if (!(await settleEdits())) return;   // (a nudge or text not written yet goes in before the signature, not after it)
+  if (!(await settleEdits())) { toast('文字還在修改中：完成修改後再簽署', 'err'); return; }   // (a nudge or text not written yet goes in before the signature, not after it)
   // signed here (S.signed) or by someone else: signing rewrites the whole file and the signature there would break
   const signedBefore = S.signed || await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false}).then(signedDoc, () => false);
   if (signedBefore && !(await confirmDlg('再次簽署', '此文件已有數位簽章，本工具會重寫整份檔案，原有簽章將失效。確定要繼續？', '繼續'))) return;
@@ -12657,8 +12662,9 @@ const SETTING_SHAPE = {
   'pdfeditor.fonts.recent.v1':j => Array.isArray(j) && j.every(n => typeof n === 'string'),
   ...Object.fromEntries(['ribbon.v1', 'print.v1', 'find.v1', 'fontid.v1'].map(k => ['pdfeditor.' + k, isPlainObj])),   // (their readers check each value)
   // the image export window takes these as they are: a DPI that is not a number would make every size NaN
-  'pdfeditor.export.v1':j => likeDefaults(j, {fmt:'png', dpi:150, quality:92, transparent:false, tpl:'', subTpl:'', useSub:false, seqStart:1},
-    {dpi:v => Number.isFinite(v) && v >= 24 && v <= 1200, quality:v => Number.isFinite(v) && v >= 10 && v <= 100, seqStart:v => Number.isInteger(v) && v >= 0}),
+  'pdfeditor.export.v1':j => likeDefaults(j, {fmt:'png', dpi:150, quality:92, transparent:false, tpl:'', subTpl:'', useSub:false, seqStart:1, pad:'auto', macOn:{}, lastDir:''},
+    {dpi:v => Number.isFinite(v) && v >= 24 && v <= 1200, quality:v => Number.isFinite(v) && v >= 10 && v <= 100, seqStart:v => Number.isInteger(v) && v >= 0,
+     pad:v => /^(auto|\d)$/.test(String(v)), macOn:v => isPlainObj(v) && Object.values(v).every(x => typeof x === 'boolean'), lastDir:v => v === null || typeof v === 'string'}),
   // (their known values of the right kind: a 0 mm grid or a width that is not a number would break snapping and drawing)
   'pdfeditor.view.v1':j => likeDefaults(j, {grid:false, guides:true, rulers:false, snap:true, gridMm:10}, {gridMm:v => Number.isFinite(v) && v >= 1 && v <= 100}),
   'pdfeditor.textbox.v1':j => likeDefaults(j, TB_DEF, {size:v => Number.isFinite(v) && v >= 4 && v <= 400}),
@@ -13075,7 +13081,7 @@ window.__pdfapp = {
   fontBytesInfo:async (family, bold) => { const r = await realFontInfo(family, bold); return {bytes:r.bytes.length, synthetic:r.synthetic}; },
   failEmbed:family => { EMBED_FAIL.add(family); },
   fontkitPatch:on => { fkPatchOn = !!on; },
-  oldLayout:on => { TB_OLD_SPLIT = !!on; }, nudgeDelay:ms => { NUDGE_DELAY = ms; }, cutPages:() => copySelected(true), copyPages:() => copySelected(false), pendImage:async f => { PENDING_IMG = await loadImageFile(f); setTool('image'); }, objClip:() => OBJ_CLIP && {n:OBJ_CLIP.n, from:OBJ_CLIP.from, i:OBJ_CLIP.src.i, subs:OBJ_CLIP.items.map(t => t.sub), shared:OBJ_CLIP.shared},
+  oldLayout:on => { TB_OLD_SPLIT = !!on; }, nudgeDelay:ms => { NUDGE_DELAY = ms; }, cutPages:() => copySelected(true), copyPages:() => copySelected(false), settingShapeOk:(k, v) => settingShapeOk(k, v), pendImage:async f => { PENDING_IMG = await loadImageFile(f); setTool('image'); }, objClip:() => OBJ_CLIP && {n:OBJ_CLIP.n, from:OBJ_CLIP.from, i:OBJ_CLIP.src.i, subs:OBJ_CLIP.items.map(t => t.sub), shared:OBJ_CLIP.shared},
   writeSettingsNow:() => { saveView_(); saveTB(); saveStyles(); },
   settleEdits, nudgeState:() => ({pending:!!NUDGE, running:!!NUDGE_RUN}), pageClipBytes:() => PAGE_CLIP ? PAGE_CLIP.bytes : null,
   faceChoice:(styles, bold) => { const r = chooseFace(styles.map(style => ({style})), bold); return {style:r.face.style, synthetic:r.synthetic}; },
