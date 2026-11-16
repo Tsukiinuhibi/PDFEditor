@@ -7887,7 +7887,8 @@ const grpOfDict = d => { const g = d && d.lookupMaybe && d.lookupMaybe(N_('PDFE_
 const groupsNow = i => GROUPS.get(S.version + ':' + i) || null;
 const grpOf = (i, id) => { const m = groupsNow(i); return m && m.get(id) || null; };
 const newGroupId = () => 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-async function loadGroups(i){
+async function loadGroups(i){ try { return await loadGroups_(i); } catch (e) { console.warn('groups', e); return null; } }   // (never in the way of the page)
+async function loadGroups_(i){
   if (!S.pdf || S.hasGroups === false) return null;
   const key = S.version + ':' + i; if (GROUPS.has(key)) return GROUPS.get(key);
   const ver = S.version, doc = await geoDoc(); if (ver !== S.version) return null;
