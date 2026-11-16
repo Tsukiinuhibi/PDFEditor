@@ -2147,9 +2147,12 @@ window.addEventListener('keydown', e => {
   if (mod && e.key === 'Tab' && docs.length > 1) { e.preventDefault(); switchTab((active + (e.shiftKey ? -1 : 1) + docs.length) % docs.length); return; }
   // a selected sticky note is copied / cut by Ctrl+C / Ctrl+X, unless the pages are being worked on in the thumbnails
   const noteSel = AS && AS.a.subtype === 'Text' && !(document.activeElement && document.activeElement.closest && document.activeElement.closest('#side'));
-  if (mod && !e.shiftKey && e.key.toLowerCase() === 'c' && !String(window.getSelection())) { e.preventDefault(); if (noteSel) copyNote(AS.i, AS.a); else copySelected(false); return; }
-  if (mod && !e.shiftKey && e.key.toLowerCase() === 'x') { e.preventDefault(); if (noteSel) cutNote(AS.i, AS.a); else copySelected(true); return; }
-  if (mod && !e.shiftKey && e.key.toLowerCase() === 'v') { e.preventDefault(); if (LAST_CLIP === 'note' && NOTE_CLIP) pasteNote(); else pasteClip(); return; }
+  // selected objects (one, or a group) are copied / cut as objects; with none selected, or in the thumbnails, the pages
+  const inSide = !!(document.activeElement && document.activeElement.closest && document.activeElement.closest('#side'));
+  const objSel = !inSide && (MS ? {i:MS.i, list:MS.items} : AS && AS.movable ? {i:AS.i, list:[AS.a]} : null);
+  if (mod && !e.shiftKey && e.key.toLowerCase() === 'c' && !String(window.getSelection())) { e.preventDefault(); if (noteSel && !MS) copyNote(AS.i, AS.a); else if (objSel) copyObjects(objSel.i, objSel.list); else copySelected(false); return; }
+  if (mod && !e.shiftKey && e.key.toLowerCase() === 'x') { e.preventDefault(); if (noteSel && !MS) cutNote(AS.i, AS.a); else if (objSel) copyObjects(objSel.i, objSel.list, {cut:true}); else copySelected(true); return; }
+  if (mod && !e.shiftKey && e.key.toLowerCase() === 'v') { e.preventDefault(); if (LAST_CLIP === 'note' && NOTE_CLIP) pasteNote(); else if (LAST_CLIP === 'objs' && OBJ_CLIP) pasteObjects(); else pasteClip(); return; }
   if (mod && e.key.toLowerCase() === 'a' && document.activeElement && document.activeElement.closest && document.activeElement.closest('#side')) { e.preventDefault(); S.thumbSel = new Set(S.pages.map((_, i) => i)); paintThumbSel(); return; }
   if (e.key === 'Delete' && document.activeElement && document.activeElement.closest && document.activeElement.closest('#side')) { e.preventDefault(); actions.delPage(); return; }
   if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); actions.undo(); return; }
@@ -3506,6 +3509,18 @@ function addAnnot(doc, i, lit){
   if (lit.OC) restack(doc);
   return ref;
 }
+// an annotation dictionary made elsewhere (a pasted copy) put on page i, in the current layer
+function addAnnotDict(doc, i, dict){
+  const page = doc.getPage(i), ctx = doc.context, sub = String(dict.get(PDFName.of('Subtype'))).slice(1);
+  dict.set(PDFName.of('P'), page.ref);
+  if (!LAYER_SKIP.has(sub)) { const lr = activeLayerRef(doc); if (lr) dict.set(PDFName.of('OC'), lr); }
+  const ref = ctx.register(dict);
+  let annots = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray);
+  if (!annots) { annots = ctx.obj([]); page.node.set(PDFName.of('Annots'), annots); }
+  annots.push(ref);
+  if (dict.get(PDFName.of('OC'))) restack(doc);
+  return ref;
+}
 function formAP(doc, content, w, h, rot, resources){
   const ctx = doc.context;
   const dict = {Type:'XObject', Subtype:'Form', BBox:[0, 0, w, h], Matrix:rotMatrix(rot)};
@@ -3835,12 +3850,14 @@ function thumbClick(e, i){
 // the page clipboard is shared by every tab: copy in one file, paste in another
 let PAGE_CLIP = null;
 // a copied sticky note: {contents, author, i, x, y, pw, ph} (page points); LAST_CLIP says what Ctrl+V pastes
-let NOTE_CLIP = null, LAST_CLIP = null;   // 'pages' | 'note'
+let NOTE_CLIP = null, LAST_CLIP = null;   // 'pages' | 'note' | 'objs'
 let PTR = null;   // where the mouse last was (window coordinates): a note is pasted there
 window.addEventListener('pointermove', e => { PTR = {x:e.clientX, y:e.clientY}; }, {passive:true});
 function updateClipUI(){
   const el = $('#stClip'); if (!el) return;
-  if (LAST_CLIP === 'note' && NOTE_CLIP) {
+  if (LAST_CLIP === 'objs' && OBJ_CLIP) {
+    el.innerHTML = `<span title="在任何頁面或分頁按 Ctrl+V，貼到滑鼠所在的位置">📋 剪貼簿：${OBJ_CLIP.n} 個物件（${esc(OBJ_CLIP.from)} 第 ${OBJ_CLIP.src.i + 1} 頁）</span>`;
+  } else if (LAST_CLIP === 'note' && NOTE_CLIP) {
     const t = NOTE_CLIP.contents.replace(/\s+/g, ' ').trim();
     el.innerHTML = `<span title="按 Ctrl+V 貼到滑鼠所在的位置">📋 剪貼簿：便利貼「${esc(t.slice(0, 12))}${t.length > 12 ? '…' : ''}」</span>`;
   } else el.innerHTML = PAGE_CLIP ? `<span title="可在任何分頁按 Ctrl+V 貼上">📋 剪貼簿：${PAGE_CLIP.count} 頁（${esc(PAGE_CLIP.from)} 第 ${esc(PAGE_CLIP.range)} 頁）</span>` : '';
@@ -3876,6 +3893,83 @@ async function pasteNote(){
   }
   const box = {...noteDefaults(icon, S.pages[i]), w:clip.pw, h:clip.ph};
   await createNote(i, icon, clip.contents, box, {author:clip.author, label:'已貼上便利貼'});
+}
+/* 物件的複製、剪下、貼上: objects (one, or a group) copied to another place of the same page, another page or another open
+   PDF, where they stay editable (they keep what makes them ours: PDFE, PDFE_RT, their appearance and resources).
+   OBJ_CLIP = {bytes: a small PDF holding copies of them (no page, layer or popup links), items:[{num, sub, x, y, w, h, pw, ph}]
+   (their boxes on the page they came from), n, from, src:{doc, i}, step} */
+let OBJ_CLIP = null;
+const OBJ_DROP = ['P', 'OC', 'Popup', 'IRT', 'Parent', 'StructParent', 'NM'];
+// a link to a page of its document: the page kept by its number (a page object of one file means nothing in another)
+function destOut(src, d){
+  const pages = src.getPages().map(p => p.ref), fix = arr => { const r = arr && arr.get && arr.get(0), k = r instanceof PDFRef ? pages.findIndex(p => p === r) : -1; return k; };
+  const dest = d.lookupMaybe(N_('Dest'), PDFArray); if (dest) { const k = fix(dest); if (k >= 0) { d.set(N_('PDFE_DestPage'), PDFNumber.of(k)); d.set(N_('PDFE_Dest'), PDFArray.withContext(src.context)); dest.asArray().slice(1).forEach(x => d.lookup(N_('PDFE_Dest'), PDFArray).push(x)); d.delete(N_('Dest')); } }
+  const a = d.lookupMaybe(N_('A'), PDFDict), ad = a && a.lookupMaybe(N_('D'), PDFArray);
+  if (ad) { const k = fix(ad); if (k >= 0) { d.set(N_('PDFE_DestPage'), PDFNumber.of(k)); d.set(N_('PDFE_Dest'), src.context.obj(ad.asArray().slice(1))); d.delete(N_('A')); } }
+}
+function destIn(doc, d){   // → false: the page is not in this document
+  const k = d.get(N_('PDFE_DestPage')); if (!k) return true;
+  const n = k.asNumber(), rest = d.lookupMaybe(N_('PDFE_Dest'), PDFArray);
+  d.delete(N_('PDFE_DestPage')); d.delete(N_('PDFE_Dest'));
+  if (n >= doc.getPageCount()) return false;
+  d.set(N_('Dest'), doc.context.obj([doc.getPage(n).ref, ...(rest ? rest.asArray() : [PDFName.of('Fit')])]));
+  return true;
+}
+async function copyObjects(i, list, {cut = false} = {}){
+  if (!S.pdf || !list.length) return;
+  try { await flushNudge(); } catch (_) {}
+  try {
+    const src = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false}), out = await PDFDocument.create();
+    const copier = PDFLib.PDFObjectCopier.for(src.context, out.context), items = [], fresh = await getAnns(i);
+    for (const a0 of list) {
+      const a = fresh.find(x => x.id === a0.id) || a0, ref = findAnnotRef(src, i, a.id); if (!ref) continue;
+      const d = src.context.lookup(ref, PDFDict).clone(src.context);
+      OBJ_DROP.forEach(k => d.delete(N_(k))); destOut(src, d);
+      const r = out.context.register(copier.copy(d)), pb = a.popupBox;
+      items.push({num:r.objectNumber, sub:a.subtype, x:a.x, y:a.y, w:a.w, h:a.h, pw:pb ? pb.w : 300 / PX, ph:pb ? pb.h : 170 / PX});
+    }
+    if (!items.length) { toast('找不到要複製的物件', 'err'); return; }
+    OBJ_CLIP = {bytes:await out.save({useObjectStreams:false}), items, n:items.length, from:S.name, src:{doc:activeDoc(), i}, step:0}; LAST_CLIP = 'objs';
+  } catch (e) { console.error(e); toast('複製失敗：' + (e.message || e), 'err'); return; }
+  updateClipUI();
+  const n = OBJ_CLIP.n, what = n > 1 ? `${n} 個物件` : '物件';
+  if (!cut) { toast(`已複製${what}：到任何頁面或其他分頁，按 Ctrl+V 貼到滑鼠所在的位置`); return; }
+  if (MS) { await deleteMulti(); } else if (AS) { const {i: k, a} = AS; deselectAnnot(); await deleteAnnot(k, a.id, `已剪下${what}，按 Ctrl+V 貼上`); }
+}
+// on the page under the mouse, centred on it; with the mouse elsewhere, on the current page where they were (a step
+// further when that is the page they came from). One undo step; what was pasted is selected
+async function pasteObjects(){
+  const clip = OBJ_CLIP; if (!clip || !S.pdf) return;
+  let i, at = null;
+  const over = PTR && document.elementFromPoint(PTR.x, PTR.y), pel = over && over.closest && over.closest('.page');
+  if (pel && pagesEl.contains(pel)) { i = +pel.dataset.i; at = pagePointXY(i, PTR.x, PTR.y); } else i = S.current;
+  const pg = S.pages[i]; if (!pg) return;
+  const same = !at && clip.src.doc === activeDoc() && clip.src.i === i; if (same) clip.step++;
+  const ids = []; let lost = 0;
+  const ok = await mutate(clip.n > 1 ? `已貼上 ${clip.n} 個物件` : '已貼上物件', async doc => {
+    const src = await PDFDocument.load(clip.bytes, {updateMetadata:false}), copier = PDFLib.PDFObjectCopier.for(src.context, doc.context), got = [];
+    for (const it of clip.items) {
+      const d = copier.copy(src.context.lookup(PDFRef.of(it.num), PDFDict));
+      if (!destIn(doc, d)) { lost++; continue; }
+      got.push({it, d, ob:vRect(i, numArr(d.lookup(N_('Rect'), PDFArray)))});   // (where it would be on this page: pages differ in size)
+    }
+    if (!got.length) { toast('連到原文件頁面的連結，這份文件沒有那一頁，沒有貼上', 'err'); return false; }
+    const x0 = Math.min(...got.map(g => g.ob.x)), y0 = Math.min(...got.map(g => g.ob.y)), x1 = Math.max(...got.map(g => g.ob.x + g.ob.w)), y1 = Math.max(...got.map(g => g.ob.y + g.ob.h));
+    let dx = 0, dy = 0;
+    if (at) { dx = at.x - (x0 + x1) / 2; dy = at.y - (y0 + y1) / 2; } else if (same) dx = dy = 12 * clip.step;
+    dx = x1 - x0 <= pg.w ? clamp(dx, -x0, pg.w - x1) : -x0; dy = y1 - y0 <= pg.h ? clamp(dy, -y0, pg.h - y1) : -y0;   // (kept on the page)
+    for (const {it, d, ob} of got) {
+      const ref = addAnnotDict(doc, i, d), id = ref.objectNumber + 'R', nb = {...ob, x:ob.x + dx, y:ob.y + dy};
+      moveAnnotInDoc(doc, i, id, ob, nb);
+      if (it.sub === 'Text') addPopupAnnot(doc, i, ref, {...noteDefaults(nb, pg), w:it.pw, h:it.ph});
+      ids.push(id);
+    }
+  });
+  if (!ok) return;
+  if (lost) toast(`有 ${lost} 個連結連到這份文件沒有的頁面，沒有貼上`, 'err');
+  if (S.tool !== 'select') setTool('select');
+  const list = (await getAnns(i)).filter(a => ids.includes(a.id));
+  if (list.length === 1) selectAnnot(i, list[0]); else if (list.length > 1) setMulti(i, list);
 }
 async function copySelected(cut){
   if (!S.pdf) return;
@@ -7650,7 +7744,7 @@ function selectAnnot(i, a){
   if (resizable) el.innerHTML = (a.subtype === 'FreeText' ? ['nw', 'ne', 'se', 'sw'] : ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']).map(d => `<div class="h" data-d="${d}"></div>`).join('');   // (a text box: its corners, the text scales)
   const bar = document.createElement('div'); bar.className = 'xbar abar';
   const snip = a.contents && a.subtype !== 'Stamp' ? `：${esc(a.contents.slice(0, 24))}${a.contents.length > 24 ? '…' : ''}` : '';
-  bar.innerHTML = `<span class="dim">${esc(a.label)}${snip}</span>${movable ? `<span class="dim hintk">拖曳移動${resizable ? '・把手調整大小' : ''}</span>` : ''}${a.subtype === 'FreeText' ? '<button data-x="edit">✎ 編輯文字</button>' : ''}${a.sig ? '' : zButtons()}<button data-x="del">🗑 刪除 (Del)</button>`;
+  bar.innerHTML = `<span class="dim">${esc(a.label)}${snip}</span>${movable ? `<span class="dim hintk">拖曳移動${resizable ? '・把手調整大小' : ''}</span>` : ''}${a.subtype === 'FreeText' ? '<button data-x="edit">✎ 編輯文字</button>' : ''}${a.sig ? '' : zButtons()}${movable ? '<button data-x="copy" title="複製 (Ctrl+C)，到任何頁面或其他分頁按 Ctrl+V 貼上">⧉ 複製</button>' : ''}<button data-x="del">🗑 刪除 (Del)</button>`;
   if (a.subtype === 'FreeText') el.addEventListener('dblclick', e => { e.stopPropagation(); const k = AS.i; deselectAnnot(); editTextBox(k, a); });
   ovl.appendChild(el); ovl.appendChild(bar); S.els[i].style.zIndex = 4;
   AS = {i, a, box:{x:a.x, y:a.y, w:a.w, h:a.h}, el, bar, movable, resizable, keep:a.subtype === 'Stamp'};
@@ -7665,6 +7759,7 @@ function selectAnnot(i, a){
   bar.addEventListener('pointerdown', e => e.stopPropagation());
   bar.addEventListener('click', e => {
     if (e.target.closest('[data-x="del"]')) deleteSelected();
+    if (e.target.closest('[data-x="copy"]')) { if (a.subtype === 'Text') copyNote(i, a); else copyObjects(i, [a]); }
     if (e.target.closest('[data-x="edit"]')) { deselectAnnot(); editTextBox(i, a); }
     const z = e.target.closest('[data-x^="z-"]'); if (z) stackObj(i, a.id, Z_HOW[z.dataset.x]);
   });
@@ -7743,7 +7838,7 @@ function multiBarHTML(n){
   return `<b class="sb-t">${icon('select')}已選取 ${n} 個物件</b><span class="sb-row"><span class="sb-h">對齊</span>${b('left', '靠左', 'alL')}${b('hcenter', '水平置中', 'alC')}${b('right', '靠右', 'alR')}${b('top', '靠上', 'alT')}${b('vcenter', '垂直置中', 'alM')}${b('bottom', '靠下', 'alB')}
     ${n >= 3 ? `<button class="pchip" data-dist="h" title="水平平均分配">${icon('distH')}水平平均分配</button><button class="pchip" data-dist="v" title="垂直平均分配">${icon('distV')}垂直平均分配</button>` : ''}
     <label class="sb-l">對齊到<select data-alto><option value="sel"${ALIGN_TO === 'sel' ? ' selected' : ''}>選取範圍</option><option value="page"${ALIGN_TO === 'page' ? ' selected' : ''}>頁面</option></select></label>
-    <button class="pchip" data-ma="del">${icon('trash')}刪除</button></span>`;
+    <button class="pchip" data-ma="copy" title="複製 (Ctrl+C)，到任何頁面或其他分頁按 Ctrl+V 貼上">${icon('copy')}複製</button><button class="pchip" data-ma="del">${icon('trash')}刪除</button></span>`;
 }
 // line up the selected objects by what can be seen of each (a turned one: its turned frame): against the frame round all of
 // them, or the page
@@ -8049,6 +8144,7 @@ async function changeImageOf(ob){
 $('#hint').addEventListener('click', e => {
   if (!OBJBAR || !OBJBAR.multi || !MS) return;
   if (e.target.closest('[data-ma="del"]')) deleteMulti();
+  if (e.target.closest('[data-ma="copy"]') && MS) copyObjects(MS.i, MS.items);
   const al = e.target.closest('[data-al]'); if (al) alignSelected(al.dataset.al, ALIGN_TO);
   const ds = e.target.closest('[data-dist]'); if (ds) distributeSelected(ds.dataset.dist);
 });
@@ -12552,7 +12648,7 @@ window.__pdfapp = {
   fontBytesInfo:async (family, bold) => { const r = await realFontInfo(family, bold); return {bytes:r.bytes.length, synthetic:r.synthetic}; },
   failEmbed:family => { EMBED_FAIL.add(family); },
   fontkitPatch:on => { fkPatchOn = !!on; },
-  oldLayout:on => { TB_OLD_SPLIT = !!on; },
+  oldLayout:on => { TB_OLD_SPLIT = !!on; }, objClip:() => OBJ_CLIP && {n:OBJ_CLIP.n, from:OBJ_CLIP.from, i:OBJ_CLIP.src.i, subs:OBJ_CLIP.items.map(t => t.sub)},
   writeSettingsNow:() => { saveView_(); saveTB(); saveStyles(); },
   settleEdits, nudgeState:() => ({pending:!!NUDGE, running:!!NUDGE_RUN}), pageClipBytes:() => PAGE_CLIP ? PAGE_CLIP.bytes : null,
   faceChoice:(styles, bold) => { const r = chooseFace(styles.map(style => ({style})), bold); return {style:r.face.style, synthetic:r.synthetic}; },

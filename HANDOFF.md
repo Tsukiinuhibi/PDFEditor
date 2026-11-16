@@ -431,6 +431,13 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 下載到的圖在畫面裡用 `loadImageFile`（`new File(...)`）讀；讀不出來視窗留著說明。成功後跟選檔案一樣：`PENDING_IMG`＋插入圖片工具，點一下或拖曳放置。
 - 測試：`image-url.mjs`（本機網頁伺服器：PNG、沒有名稱與類型的 PNG、SVG、網頁、404）。
 
+### 3.9.21 物件的複製、剪下、貼上（同一份的其他頁、其他分頁的檔案；v1.0.56）
+- 選著物件（一個 `AS`，或一群 `MS`）時 Ctrl+C／Ctrl+X 複製／剪下物件（以前是複製頁面；沒選物件、或焦點在縮圖時仍是頁面）。單獨選著便利貼時照舊走 `copyNote`。物件列多一個〔⧉ 複製〕，群組列多〔複製〕。
+- `copyObjects`：把每個註解字典 `clone` 後拿掉 `P`、`OC`、`Popup`、`IRT`、`Parent`、`StructParent`、`NM`，用 `PDFLib.PDFObjectCopier` 複製進一份小 PDF（`OBJ_CLIP.bytes`，連同外觀、圖片、字型等），所以來源分頁關掉也能貼。連到本文件頁面的連結（`Dest`／`A /D`）改記頁碼（`PDFE_DestPage`、`PDFE_Dest`），貼上時接回那一頁（沒有那一頁的就不貼並提示）。
+- `pasteObjects`（Ctrl+V，`LAST_CLIP === 'objs'`）：滑鼠在頁面上就以滑鼠為中心貼在那一頁；不在頁面上就貼在目前頁的原位置（貼回同一份同一頁時每次錯開 12 pt）。位置用每個物件在目標頁的框計算（頁面大小、方向不同也對），整群留在頁面內。`addAnnotDict` 放進目前的圖層；便利貼補一個新的 Popup。一次修改一個復原步驟，貼上的物件會被選起來。
+- 貼上的物件保有 `PDFE`、`PDFE_RT`、外觀，所以樣式列、雙擊編輯文字方塊、換圖等都照常可以用。
+- 測試：`object-copy.mjs`（跨頁、群組、文字方塊再編輯、另一個檔案、剪下、復原、圖層）；`align.mjs` 的微調後 Ctrl+C 改成複製物件。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。

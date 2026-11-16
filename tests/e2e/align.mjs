@@ -397,14 +397,15 @@ const fw = await A(async id => { const app = window.__pdfapp, t0 = performance.n
   const caught = app.nudgeState().running; await app.settleEdits(); const a = (await app.getAnns(0)).find(x => x.id === id); return {caught, x:a && a.x}; }, row4[1].id);
 check('a nudge being written when 列印 / 轉存 starts: waited for, the document read has it', fw.caught && near(fw.x, fw0.x + 2, .3), {fw, x0:fw0.x});
 await win.keyboard.press('Escape'); await win.waitForTimeout(300);
-// (v1.0.53) a nudge, then Ctrl+C at once (with an object selected it copies the page): the copied page has the nudge
+// (v1.0.53, v1.0.56) a nudge, then Ctrl+C at once (with an object selected it copies the object): the copy has the nudge
 const cp0 = (await anns(0)).find(x => x.id === row4[1].id);
 await win.mouse.click(...await P(0, cp0.x + 6, cp0.y + cp0.h / 2)); await win.waitForTimeout(600);
 for (let k = 0; k < 3; k++) await win.keyboard.press('ArrowRight');
 await win.keyboard.press('Control+c'); await win.waitForTimeout(1500);
-const clipXs = await A(async () => { const b = window.__pdfapp.pageClipBytes(); if (!b) return null; const P = PDFLib, d = await P.PDFDocument.load(b), an = d.getPage(0).node.Annots();
-  return an ? an.asArray().map(r => d.context.lookup(r)).filter(o => String(o.get(P.PDFName.of('Subtype'))) === '/Square').map(o => { const R = o.lookup(P.PDFName.of('Rect')).asArray().map(n => n.asNumber()); return Math.min(R[0], R[2]); }) : []; });
-check('a nudge, then Ctrl+C (copy the page) at once: the copied page has the nudge', !!clipXs && clipXs.some(x => near(x, cp0.x + 3, .3)) && !clipXs.some(x => near(x, cp0.x, .3)), {clipXs, x0:cp0.x});
+await win.mouse.move(5, 300); await win.keyboard.press('Control+v'); await win.waitForTimeout(2000);   // (the mouse off the pages: a step from where it was)
+const cps = (await anns(0)).filter(x => x.sub === 'Square' && Math.abs(x.y - cp0.y - 12) < .6).map(x => x.x);
+check('a nudge, then Ctrl+C (copy the object) at once: the copy has the nudge', cps.some(x => near(x, cp0.x + 3 + 12, .6)), {cps, x0:cp0.x});
+await win.click('#bUndo'); await win.waitForTimeout(1800);
 await win.keyboard.press('Escape'); await win.waitForTimeout(300);
 // closing the last tab with a group selected: the group is let go, the bar loses its object look
 await marq4();
