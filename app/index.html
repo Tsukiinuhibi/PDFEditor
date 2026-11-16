@@ -11352,6 +11352,7 @@ function dataUrlFile(v){
 function urlWhy(r, kind = 'pdf'){
   const img = kind === 'image', after = img ? '請先在瀏覽器把圖片存下來，再用「插入圖片」選擇它' : '請先在瀏覽器登入並下載，再用「開啟」開啟下載的檔案';
   if (r.why === 'notpdf') return '這個網址下載到的不是 PDF 檔（可能需要登入，或是一個網頁）';
+  if (r.why === 'isimage') return '這個網址是一張圖片，不是 PDF：先開啟一個 PDF，再用「插入 ▾ 從網址插入圖片」放進去';
   if (r.why === 'status') return r.status === 401 || r.status === 403 ? `這個網址需要登入，或沒有權限（${r.status}）。${after}`
     : r.status === 404 || r.status === 410 ? `找不到這個檔案（${r.status}）` : `下載失敗（伺服器回應 ${r.status}）`;
   if (r.why === 'notimage') return '這個網址下載到的不是圖片（支援 PNG、JPEG、GIF、WebP、BMP、SVG；可能需要登入，或是一個網頁）';
@@ -11425,6 +11426,7 @@ async function urlDialog(pre, auto, kind = 'pdf'){
     }
     setSt(''); $b('#urlIn').disabled = false; check();
     if (r.ok) return r;
+    if (!img && r.why === 'isimage' && S.pdf) return {ok:false, image:url};   // (a picture where a PDF was asked for, a PDF open: inserted as a picture)
     if (r.why !== 'cancel') setErr(urlWhy(r, kind));
     return undefined;
   };
@@ -11442,6 +11444,7 @@ async function urlDialog(pre, auto, kind = 'pdf'){
   }});
   alive = false;
   if (URLJOB) { DESK.url.cancel(URLJOB.id); URLJOB = null; }   // closed (Esc, the mask) while downloading: stop (it winds down on its own)
+  if (res && res.image) { setTimeout(() => imageUrlDialog(res.image, {auto:true}), 0); return; }
   if (!res || !res.ok) return;
   if (img) { setPendingImg(res.pic); setTool('image'); toast('在頁面上點一下放置圖片，或拖曳決定大小'); return; }
   busy(true, '開啟中…');

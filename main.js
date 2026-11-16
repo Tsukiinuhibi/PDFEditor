@@ -376,7 +376,7 @@ ipcMain.handle('url:fetch', async (e, id, url, kind = 'pdf') => {
         .replace(/\.(png|jpe?g|gif|webp|bmp|svg|tiff?|ico|avif|heic)$/i, '') || 'picture';
       return { ok: true, data, name: n + '.' + k, type: k === 'svg' ? 'image/svg+xml' : k === 'jpg' ? 'image/jpeg' : 'image/' + k };
     }
-    if (!data.subarray(0, 1024).includes('%PDF')) return { ok: false, why: 'notpdf' };
+    if (!data.subarray(0, 1024).includes('%PDF')) return { ok: false, why: imageKind(data) ? 'isimage' : 'notpdf' };   // (a picture: the window offers to insert it)
     return { ok: true, data, name: urlFileName(res.headers.get('content-disposition'), res.url || u.href), url: res.url || u.href };
   } catch (err) {
     const r = ctl.signal.aborted ? String(ctl.signal.reason || 'cancel') : '', m = /\b(ERR_[A-Z0-9_]+)/.exec(String((err && err.message) || err));

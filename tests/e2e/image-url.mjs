@@ -132,6 +132,14 @@ await win.waitForTimeout(3000);
   check('a picture dragged from a web page: it waits to be placed in this PDF (not opened as a PDF)', tool === 'image' && !d.open, {tool, d, tabs});
   if (d.open) { await win.keyboard.press('Escape'); await win.waitForTimeout(400); } }
 
+// ---- (leftovers) a picture link with no ending dropped: found to be a picture after the download, inserted as one ----------------
+await Ev(() => window.__pdfapp.setTool('select')); await win.waitForTimeout(300);
+await Ev(u => { const dt = new DataTransfer(); dt.setData('text/uri-list', u); window.dispatchEvent(new DragEvent('drop', {dataTransfer:dt, bubbles:true, cancelable:true})); }, BASE + '/noext');
+await win.waitForTimeout(5000);
+{ const d = await dlg(), tool = await Ev(() => window.__pdfapp.S.tool);
+  check('a link with no ending that is a picture: inserted as a picture (not 「不是 PDF」)', tool === 'image' && !d.open, {tool, d});
+  if (d.open) { await win.keyboard.press('Escape'); await win.waitForTimeout(400); } }
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 server.close();
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
