@@ -61,6 +61,8 @@ await win.keyboard.press('Control+a'); await win.waitForTimeout(200);
 { const e = await A(() => { const r = document.querySelector('.tbed').getBoundingClientRect(); return {x:r.left + r.width / 2, y:r.top + r.height / 2}; }); await win.mouse.click(e.x, e.y, {button:'right'}); await win.waitForTimeout(600); }
 m = await menu();
 check('right-click in the text being written: the full text settings (font, typed size, colours with the wheel, B I U, the box)', !!m && /文字格式/.test(m.hd) && ['字型', '字級', '文字顏色', '文字底色', '樣式', '方塊背景'].every(l => m.rows.includes(l)) && ['剪下', '複製', '貼上', '完成編輯'].every(l => m.items.some(t => t.startsWith(l))), m);
+const sws = await A(() => [...document.querySelectorAll('#ctx .sw')].map(b => { const r = b.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; }));
+check('the colours are squares side by side, each its full size (not squeezed)', sws.length >= 10 && sws.every(([w, h]) => w >= 20 && Math.abs(w - h) <= 1), sws);
 if (m) await typeIn('字級', '20.5');
 check('…a size typed there (20.5) + Enter: the highlighted text takes it', /font-size:\s*20\.5px/.test(await A(() => (window.__pdfapp.TBE() || {}).html || '')), (await A(() => (window.__pdfapp.TBE() || {}).html || '')).slice(0, 200));
 { const e = await A(() => { const r = document.querySelector('.tbed').getBoundingClientRect(); return {x:r.left + r.width / 2, y:r.top + r.height / 2}; }); await win.mouse.click(e.x, e.y, {button:'right'}); await win.waitForTimeout(600); }

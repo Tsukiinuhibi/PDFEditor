@@ -110,7 +110,8 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .picocr{position:absolute;outline:2px dashed var(--seal);outline-offset:1px;pointer-events:none;z-index:2}
 .ctx.fmx .r{display:flex;align-items:center;gap:6px;padding:3px 10px;min-height:30px}
 .ctx.fmx .r>.l{width:54px;flex:none;color:var(--ink2);font-size:12px}
-.ctx.fmx .r .grow{flex:1;display:flex;gap:3px;flex-wrap:wrap;align-items:center}
+.ctx.fmx .r .grow{flex:1;display:flex;gap:4px;flex-wrap:wrap;align-items:center;min-width:0}
+.ctx.fmx .r .grow>button{flex:none}
 .ctx.fmx .r button{width:auto;padding:0;justify-content:center;border-radius:4px}
 .ctx.fmx .r button:hover:not(:disabled){background:var(--hover)}
 .ctx.fmx .fb{flex:1;display:flex!important;justify-content:space-between!important;background:var(--surface2)!important;border:1px solid var(--line2)!important;border-radius:5px!important;padding:4px 8px!important;font-size:13px;min-width:0}
@@ -118,15 +119,15 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .ctx.fmx .sz{display:flex;border:1px solid var(--line2);border-radius:5px;overflow:hidden;background:var(--surface2)}
 .ctx.fmx .sz input{width:48px;border:0;background:transparent;padding:4px 6px;font-size:13px;outline:none}
 .ctx.fmx .sz button,.ctx.fmx .sz b{padding:3px 7px!important;border-left:1px solid var(--line2)!important;border-radius:0!important;font-weight:400;color:var(--ink2)}
-.ctx.fmx .chip{min-width:24px;padding:3px 5px!important;border:1px solid var(--line)!important;font-size:12px}
+.ctx.fmx .chip{flex:none;width:auto!important;min-width:24px;padding:3px 5px!important;border:1px solid var(--line)!important;font-size:12px}
 .ctx.fmx .chip.on{border-color:var(--seal)!important;background:var(--seal-soft)!important;color:var(--seal-ink)}
-.ctx.fmx .sw{width:19px;height:19px;border-radius:50%!important;border:1px solid rgba(127,127,127,.35)!important;font-size:11px;color:#555}
+.ctx.fmx .sw{flex:none;width:22px!important;height:22px;min-width:22px;border-radius:3px!important;border:1px solid rgba(127,127,127,.45)!important;font-size:12px;color:#555}
 .ctx.fmx .sw.on{outline:2px solid var(--seal-ink);outline-offset:1px}
-.ctx.fmx .wheel{gap:4px;padding:2px 7px 2px 3px!important;border:1px solid var(--line2)!important;border-radius:12px!important;font-size:12px;color:var(--ink2)}
+.ctx.fmx .wheel{flex:none;width:auto!important;gap:4px;padding:2px 7px 2px 3px!important;border:1px solid var(--line2)!important;border-radius:12px!important;font-size:12px;color:var(--ink2)}
 .ctx.fmx .wheel i{width:16px;height:16px;border-radius:50%;background:conic-gradient(red,yellow,lime,cyan,blue,magenta,red)}
-.ctx.fmx .tg{width:30px;height:26px;border:1px solid var(--line2)!important;border-radius:5px!important}
+.ctx.fmx .tg{flex:none;width:30px!important;height:26px;border:1px solid var(--line2)!important;border-radius:5px!important}
 .ctx.fmx .tg.on{background:var(--seal-soft)!important;border-color:var(--seal)!important;color:var(--seal-ink)}
-.ctx.fmx .zb{width:34px;height:26px;border:1px solid var(--line2)!important;border-radius:5px!important}
+.ctx.fmx .zb{flex:none;width:34px!important;height:26px;border:1px solid var(--line2)!important;border-radius:5px!important}
 .ctx.fmx .zb svg.i{width:15px;height:15px}
 .ctx.fmx .ckb{gap:6px;font-size:12px;color:var(--ink2);padding:2px 4px!important}
 .ctx.fmx .ckb s{width:14px;height:14px;border:1px solid var(--line2);border-radius:3px;display:inline-grid;place-items:center;text-decoration:none;font-size:10px}
@@ -2156,6 +2157,7 @@ window.addEventListener('keydown', e => {
   }
   // the right-click menu open (keys typed in its own boxes aside): Esc closes it; another key closes it, then does what it does
   if (ctx.style.display === 'block' && !ctx.contains(e.target) && !/^(Shift|Control|Alt|Meta)$/.test(e.key)) { hideCtx(); if (e.key === 'Escape') { e.preventDefault(); return; } }
+  if (e.key === 'Escape' && $('#cpMenu').style.display === 'block' && !$('#cpMenu').contains(e.target)) { e.preventDefault(); closeColorPicker(); return; }   // (an open colour picker: Esc closes it, nothing else)
   if ($('#busy').classList.contains('show')) { if (e.ctrlKey || e.metaKey || e.altKey || e.key === 'Tab' || e.key === 'Delete') e.preventDefault(); return; }   // (working: e.g. Ctrl+W would close the tab under it)
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.shiftKey && e.code === 'KeyO') { e.preventDefault(); actions.openUrl(); return; }
