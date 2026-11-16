@@ -106,7 +106,8 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .ctx hr{border:0;border-top:1px solid var(--line);margin:4px 2px}
 .ctx .hd{font-size:11px;color:var(--ink3);padding:4px 10px 2px}
 /* 右鍵編輯選單 (formatMenu) */
-.ctx.fmx{width:338px}
+.ctx.fmx{width:338px;max-height:calc(100vh - 16px);overflow-y:auto}
+.picocr{position:absolute;outline:2px dashed var(--seal);outline-offset:1px;pointer-events:none;z-index:2}
 .ctx.fmx .r{display:flex;align-items:center;gap:6px;padding:3px 10px;min-height:30px}
 .ctx.fmx .r>.l{width:54px;flex:none;color:var(--ink2);font-size:12px}
 .ctx.fmx .r .grow{flex:1;display:flex;gap:3px;flex-wrap:wrap;align-items:center}
@@ -2044,7 +2045,7 @@ const HINTS = {
 function setTool(t){
   if (!S.pdf) return;
   if (t !== 'extract') cancelXSel();
-  if (t !== 'ocr') closeOcr();
+  if (t !== 'ocr') { closeOcr(); clearPicOcr(); }
   if (t !== 'select') { deselectAnnot(); clearMulti(); }
   if (t !== S.tool && S.tool === 'textbox' && TBE) {   // the text is saved first; when its check keeps the editor open (回去修改) the tool stays
     const done = commitTextEditor();
@@ -2670,7 +2671,7 @@ viewer.addEventListener('contextmenu', async e => {
 function ctxAt(e, html, onclick){
   ctx.classList.remove('fmx'); ctx.innerHTML = html; ctx.style.display = 'block'; ctxShownAt = performance.now();
   const w = ctx.offsetWidth, h = ctx.offsetHeight;
-  ctx.style.left = Math.min(e.clientX, innerWidth - w - 8) + 'px'; ctx.style.top = Math.min(e.clientY, innerHeight - h - 8) + 'px';
+  ctx.style.left = Math.max(8, Math.min(e.clientX, innerWidth - w - 8)) + 'px'; ctx.style.top = Math.max(8, Math.min(e.clientY, innerHeight - h - 8)) + 'px';
   ctx.onclick = onclick;
 }
 const ctxBtn = (k, label, on, ic, more = '') => `<button data-k="${k}">${ic ? icon(ic) : ''}${esc(label)}${on ? ' ✓' : ''}${more}</button>`;
@@ -2730,6 +2731,7 @@ function formatMenu(e, head, rows, {keepSel = false} = {}){
   }).join('');
   ctxAt(e, `<div class="hd">${esc(head)}</div>${html}`, ev => { const b = ev.target.closest('[data-a]'); if (!b) return; const f = acts[+b.dataset.a]; if (f) f(ev, b); });
   ctx.classList.add('fmx');
+  { const w = ctx.offsetWidth, h = ctx.offsetHeight; ctx.style.left = Math.max(8, Math.min(e.clientX, innerWidth - w - 8)) + 'px'; ctx.style.top = Math.max(8, Math.min(e.clientY, innerHeight - h - 8)) + 'px'; }
   ctx.onpointerdown = ev => { if (keepSel && !ev.target.closest('input')) ev.preventDefault(); };
   ctx.onkeydown = ev => {
     const el = ev.target; if (!el.matches || !el.matches('input[data-in]')) return;
@@ -2756,7 +2758,7 @@ async function showObjMenu(e, i, a){
     rows.push({t:'it', label:'更換戳記…', ic:'stamp', run:() => changeStampOf(ob)});
     if (st.spec) rows.push({t:'col', label:'顏色', cur:STAMP_COLORS[st.spec.c] || st.spec.c, list:Object.values(STAMP_COLORS), title:'戳記顏色', set:set('color')});
   } else if (kind === 'image') {
-    rows.push({t:'it', label:'更換圖片…', ic:'insImg', run:() => changeImageOf(ob)}, {t:'it', label:'辨識文字', ic:'ocr', run:() => readPictureText(ob)});
+    rows.push({t:'it', label:'更換圖片…', ic:'insImg', run:() => changeImageOf(ob)}, {t:'it', label:'辨識整張圖片的文字', ic:'ocr', run:() => readPictureText(ob)}, {t:'it', label:'框選範圍辨識文字…', ic:'rectI', run:() => pictureOcrBox(ob)});
   } else if (def) {
     const k = def.kind;
     rows.push({t:'col', label:k === 'line' ? '線條顏色' : (k === 'box' || k === 'poly') ? '框線顏色' : '顏色', cur:st.color, list:k === 'text' ? FM_HL : FM_LINE, title:'顏色', set:set('color')});
@@ -8070,7 +8072,7 @@ function objBarHTML(kind, dict, doc = null){
     const spec = stampSpec(dict), op = readAnnStyle(dict).opacity;
     return {name:'戳記', ic:'stamp', st:{spec}, html:`<button class="pchip" data-o="stamp">更換戳記…</button>${spec ? `<span class="sb-h">顏色</span><button class="cpick" data-cp="color" title="選擇顏色" style="--c:${STAMP_COLORS[spec.c] || spec.c}"><i></i>▾</button>` : ''}${opacitySel(op)}${spec ? '' : '<span class="sb-tip">舊版蓋的戳記無法改顏色，可以更換戳記</span>'}`};
   }
-  if (kind === 'image') return {name:'圖片', ic:'insImg', st:null, html:`<button class="pchip" data-o="image">更換圖片…</button><button class="pchip" data-o="ocr" title="用影像辨識讀出這張圖片裡的文字（在文字辨識視窗，可以複製）">${icon('ocr')}辨識文字</button>${opacitySel(readAnnStyle(dict).opacity)}`};
+  if (kind === 'image') return {name:'圖片', ic:'insImg', st:null, html:`<button class="pchip" data-o="image">更換圖片…</button><button class="pchip" data-o="ocr" title="用影像辨識讀出整張圖片裡的文字（在文字辨識視窗，可以複製）">${icon('ocr')}辨識整張</button><button class="pchip" data-o="ocrbox" title="在圖片上拖曳框選要辨識的範圍">${icon('rectI')}框選辨識</button>${opacitySel(readAnnStyle(dict).opacity)}`};
   const def = DRAW_TOOLS[kind], st = readObjStyle(dict);
   if (kind === 'fill' && subOf(dict) === 'Stamp' && !dict.get(N_('CA')) && doc) st.opacity = fillAlpha(doc, dict);   // (made before v1.0.34: the opacity is in its picture only)
   return {name:subjOf(dict) === '區域螢光筆' ? '區域螢光筆' : def.label.replace('工具', ''), ic:def.ic, html:styleBar(kind, st, true), st:null, style:st};
@@ -8342,6 +8344,22 @@ async function readPictureText(ob){
   const pg = S.pages[ob.i], x0 = clamp(a.x, 0, pg.w), y0 = clamp(a.y, 0, pg.h);
   readRegion(ob.i, {x:x0, y:y0, w:clamp(a.x + a.w, 0, pg.w) - x0, h:clamp(a.y + a.h, 0, pg.h) - y0}, {image:true});
 }
+// 框選辨識: the 文字辨識 tool limited to the picture: the part of it a box is dragged over is read as an image (the
+// picture is outlined meanwhile; another tool or Esc ends it)
+let PIC_OCR = null;   // {i, box (the picture)}
+function clearPicOcr(){ PIC_OCR = null; document.querySelectorAll('.picocr').forEach(n => n.remove()); }
+async function pictureOcrBox(ob){
+  const a = (await getAnns(ob.i)).find(x => x.id === ob.id); if (!a) { toast('找不到這張圖片', 'err'); return; }
+  const i = ob.i, pg = S.pages[i];
+  setTool('ocr');
+  if (S.tool !== 'ocr') return;
+  clearPicOcr(); PIC_OCR = {i, box:{x:a.x, y:a.y, w:a.w, h:a.h}};
+  const d = document.createElement('div'); d.className = 'picocr';
+  Object.assign(d.style, {left:a.x / pg.w * 100 + '%', top:a.y / pg.h * 100 + '%', width:a.w / pg.w * 100 + '%', height:a.h / pg.h * 100 + '%'});
+  S.els[i].querySelector('.ovl').appendChild(d);
+  const tip = $('#hint span'); if (tip) tip.textContent = '在圖片上拖曳框選要辨識的範圍（只讀框住的部分）；Esc 或換工具結束';
+  toast('在圖片上拖曳框選要辨識的範圍');
+}
 async function changeImageOf(ob){
   const img = await pickImage();
   if (img) objChange(ob, (i, id) => replaceImage(i, id, img));
@@ -8369,6 +8387,7 @@ $('#hint').addEventListener('click', e => {
   if (e.target.closest('[data-o="stamp"]')) { changeStampOf(ob); return; }
   if (e.target.closest('[data-o="image"]')) { changeImageOf(ob); return; }
   if (e.target.closest('[data-o="ocr"]')) { readPictureText(ob); return; }
+  if (e.target.closest('[data-o="ocrbox"]')) { pictureOcrBox(ob); return; }
   const cp = e.target.closest('.cpick');
   if (cp) { const key = cp.dataset.cp; openColorPicker({anchor:cp, value:cp.style.getPropertyValue('--c').trim(), none:!!cp.dataset.none, title:key === 'fill' ? '填色顏色' : '顏色', onPick:v => restyleSelected({[key]:v}, ob)}); return; }
   const p = e.target.closest('[data-p]');
@@ -9192,6 +9211,11 @@ function startOcrDraw(i, e){
   const up = () => {
     window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); d.remove();
     if (box.w < 6 || box.h < 6) return;
+    if (PIC_OCR && PIC_OCR.i === i) {   // 框選辨識 on a picture: only the part on it, read as an image
+      const P = PIC_OCR.box, x0 = Math.max(box.x, P.x), y0 = Math.max(box.y, P.y), x1 = Math.min(box.x + box.w, P.x + P.w), y1 = Math.min(box.y + box.h, P.y + P.h);
+      if (x1 - x0 < 6 || y1 - y0 < 6) { toast('請在圖片上框選要辨識的範圍', 'err'); return; }
+      readRegion(i, {x:x0, y:y0, w:x1 - x0, h:y1 - y0}, {image:true}); return;
+    }
     readRegion(i, box);
   };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);

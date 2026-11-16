@@ -449,6 +449,18 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 方向鍵微調（`nudgeSelected`）以前也只移動外框；現在第一次按鍵就做截圖和遮罩，寫入時由 `holdSelection` 接手。
 - 測試：`move-flicker.mjs` 在放開滑鼠／按完方向鍵之後連續擷取視窗畫面（`capturePage`），每一張都要看到物件在新位置、舊位置沒有它。
 
+### 3.9.24 右鍵編輯選單（v4.7.0）
+- 選取工具在物件上按右鍵：選取它（`selectAnnot`）並開 `showObjMenu`；在已選取群組的其中一個上按右鍵：群組選單 `showMultiMenu`（對齊、平均分配、複製、剪下、刪除，群組保留）。便利貼照舊是 `showNoteMenu`。編輯文字中按右鍵是 `showTextMenu`。
+- 版面由 `formatMenu(e, head, rows, {keepSel})` 畫在 `#ctx`（加 `.fmx`）：一列一種設定——`font`（字型…，開 `openFontMenu(null, at)`）、`size`（可輸入的字級框＋▾＋常用字級，Enter 套用、Esc 取消）、`col`（色票＋〔色環…〕開 `openColorPicker({at})`；目前的顏色不在色票裡就多一個）、`tog`（B／I／U）、`chips`、`num`（粗細，可輸入）、`chk`（框線）、`z`（上下層級四鈕）、`it`（一般項目）。點一下立即套用並關閉選單。
+- 文字方塊的列由 `textFormatRows(st, apply, toggle, openFont, editing)` 產生：編輯中 `apply = applyTextFormat`（套用到反白的文字，`keepSel` 讓選單裡點按不搶走反白；字級框例外，靠 `saveTBRange`／`restoreTBRange`），選取整個方塊時 `restyleSelected`。圖形類依 `DRAW_TOOLS[kind].kind` 列出顏色、填色、粗細、實線／虛線、箭頭（讀物件列的 `select[data-s="head"]`）、透明度；戳記：更換、顏色；圖片：更換、辨識整張、框選辨識。目前樣式在 `OBJBAR.style`（`paintObjBar` 存的 `readObjStyle`）。
+- `OBJBAR_FOR`：`paintObjBar` 完成（有物件列或確定沒有）時記下物件 id，右鍵選單等它，不用固定等一秒。
+- 選單太高時限制在視窗內並可捲動（`.ctx.fmx` 的 `max-height`），位置不會超出畫面上緣。
+- 測試：`object-menu.mjs`（矩形：粗細輸入、色票、色環；文字方塊：字級輸入、編輯文字；編輯中：字級 20.5、粗體、色環；群組：靠上；刪除；螢光筆；圖片）。`right-click.mjs`、`textbox-font.mjs` 改成新的行為（右鍵物件會出選單、字型是一列）。
+
+### 3.9.25 插入的圖片：框選範圍辨識（v4.7.0）
+- 圖片的物件列：〔辨識整張〕（`readPictureText`）和〔框選辨識〕（`pictureOcrBox`）。框選辨識切到文字辨識工具，記下 `PIC_OCR = {i, box}`，圖片外圍畫虛線框（`.picocr`）；`startOcrDraw` 放開時若在同一頁，只取框和圖片重疊的部分，用 `readRegion(…, {image:true})` 讀。換工具（`setTool`）或 Esc 結束（`clearPicOcr`）。
+- 測試：`image-ocr.mjs` 框住 HELLO 2026 圖片的左半，只讀出 HELLO。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。
