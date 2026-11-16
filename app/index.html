@@ -2713,7 +2713,7 @@ viewer.addEventListener('contextmenu', async e => {
    and delete. Each choice works the bar's own control (a list opens as a second page of the menu), so the menu always
    offers what the bar does. */
 function ctxAt(e, html, onclick){
-  ctx.classList.remove('fmx'); ctx.innerHTML = html; ctx.style.display = 'block'; ctxShownAt = performance.now();
+  ctx.classList.remove('fmx'); delete ctx.dataset.for; ctx.innerHTML = html; ctx.style.display = 'block'; ctxShownAt = performance.now();
   const w = ctx.offsetWidth, h = ctx.offsetHeight;
   ctx.style.left = Math.max(8, Math.min(e.clientX, innerWidth - w - 8)) + 'px'; ctx.style.top = Math.max(8, Math.min(e.clientY, innerHeight - h - 8)) + 'px';
   ctx.onclick = onclick;
@@ -3139,7 +3139,7 @@ async function openExportImages(){
     sel:new Set(selectedPages()), custom:new Map(),
     fmt:IMG_FORMATS[pr.fmt] ? pr.fmt : 'png', dpi:pr.dpi || 150, quality:pr.quality || 92,
     transparent:!!pr.transparent, annots:true,   // pages are always exported with everything added to them
-    tpl:pr.tpl || '{檔案名稱}_第{頁碼}頁', pad:/^(auto|\d)$/.test(String(pr.pad ?? 'auto')) ? String(pr.pad ?? 'auto') : 'auto', policy:pr.policy || 'rename',   // (values from a settings file: only the ones offered)
+    tpl:pr.tpl || '{檔案名稱}_第{頁碼}頁', pad:/^(auto|[0234])$/.test(String(pr.pad ?? 'auto')) ? String(pr.pad ?? 'auto') : 'auto', policy:pr.policy || 'rename',   // (values from a settings file: only the ones offered)
     nameMode:pr.nameMode || 'macro',
     macOrder:Array.isArray(pr.macOrder) && pr.macOrder.length === 4 ? pr.macOrder : ['name', 'page', 'date', 'seq'],
     macOn:Object.fromEntries(Object.entries({name:true, page:true, date:false, seq:false}).map(([k, d]) => [k, isPlainObj(pr.macOn) && typeof pr.macOn[k] === 'boolean' ? pr.macOn[k] : d])),
@@ -4244,7 +4244,7 @@ async function pasteClip(at){
   }, {scrollToCurrent:true, highlight:{from:at, count:clip.count, label:'貼上的頁面'}});
 }
 const ctx = $('#ctx');
-function hideCtx(){ ctx.style.display = 'none'; ctx.onpointerdown = null; ctx.onkeydown = null; ctx.classList.remove('fmx'); delete ctx.dataset.for; }
+function hideCtx(){ ctx.style.display = 'none'; ctx.onpointerdown = null; ctx.onkeydown = null; ctx.classList.remove('fmx'); delete ctx.dataset.for; try { if (!FM && window.CSS && CSS.highlights) CSS.highlights.delete('tb-sel'); } catch (_) {} }
 document.addEventListener('pointerdown', e => { if (!ctx.contains(e.target) && !(ctx.dataset.for === 'nau' && e.target.closest && e.target.closest('.nau')) && !(ctx.dataset.for === 'sz' && e.target.closest && e.target.closest('[data-szm]'))) hideCtx(); }, true);   // (the author button closes its own list on its click)
 let ctxShownAt = 0;
 viewer.addEventListener('scroll', () => { if (performance.now() - ctxShownAt > 600) hideCtx(); });   // ignore the scroll a right-click itself causes
@@ -8918,10 +8918,12 @@ const nudgeWaits = () => PTR_HELD || !!TBE || !!NP || !!POLY || !!FPOLY || !!XS 
 function nudgeTick(){ if (!NUDGE) return; if (nudgeWaits()) { nudgeTimer = setTimeout(nudgeTick, 300); return; } flushNudge(); }
 async function flushNudge(){
   clearTimeout(nudgeTimer);
+  // an open note closed first (not inside the nudge's own change, where its write would wait for that change and that change
+  // for it): the note's change writes the nudge before itself, so the order is the same however the note is closed
+  if (NP && NUDGE) await closeNote(true);
   while (NUDGE_RUN) await NUDGE_RUN;   // (one write at a time)
   const n = NUDGE; NUDGE = null;
   if (!n || n.doc !== activeDoc()) return;
-  if (NP) await closeNote(true);   // (an open note written first: written inside the nudge's change, it would wait for that change, and that change for it)
   const run = (async () => {
     if (NUDGE_DELAY) await new Promise(r => setTimeout(r, NUDGE_DELAY));
     if (AS && AS.i === n.i && AS.a.id === n.id) return commitAnnotBox(n.i, AS.a, n.ob, n.nb, {nudge:true});   // still selected: it stays selected where it went
@@ -12664,7 +12666,7 @@ const SETTING_SHAPE = {
   // the image export window takes these as they are: a DPI that is not a number would make every size NaN
   'pdfeditor.export.v1':j => likeDefaults(j, {fmt:'png', dpi:150, quality:92, transparent:false, tpl:'', subTpl:'', useSub:false, seqStart:1, pad:'auto', macOn:{}, lastDir:''},
     {dpi:v => Number.isFinite(v) && v >= 24 && v <= 1200, quality:v => Number.isFinite(v) && v >= 10 && v <= 100, seqStart:v => Number.isInteger(v) && v >= 0,
-     pad:v => /^(auto|\d)$/.test(String(v)), macOn:v => isPlainObj(v) && Object.values(v).every(x => typeof x === 'boolean'), lastDir:v => v === null || typeof v === 'string'}),
+     pad:v => /^(auto|[0234])$/.test(String(v)), macOn:v => isPlainObj(v) && Object.values(v).every(x => typeof x === 'boolean'), lastDir:v => v === null || typeof v === 'string'}),
   // (their known values of the right kind: a 0 mm grid or a width that is not a number would break snapping and drawing)
   'pdfeditor.view.v1':j => likeDefaults(j, {grid:false, guides:true, rulers:false, snap:true, gridMm:10}, {gridMm:v => Number.isFinite(v) && v >= 1 && v <= 100}),
   'pdfeditor.textbox.v1':j => likeDefaults(j, TB_DEF, {size:v => Number.isFinite(v) && v >= 4 && v <= 400}),
