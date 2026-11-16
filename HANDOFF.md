@@ -467,6 +467,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 同一群組的物件在字典裡有相同的 `PDFE_Grp`（字串，`newGroupId()`）。pdf.js 讀不到自訂鍵，所以 `loadGroups(i)` 用 `geoDoc()`（pdf-lib）讀，結果放在 `GROUPS`（鍵是 `版本:頁`）；`grpOf(i, id)` 是同步查詢。文件開啟時 `S.hasGroups = null`，第一次 `loadGroups` 掃全部頁面，沒有群組就設成 `false`，之後不再讀（組成群組或貼上時改回）。`ensureOverlay` 會先讀好這一頁的群組。
 - 點群組裡的物件：`setMulti` 整組＋`dragMulti`；整組已選取時再點其中一個（沒拖曳）：只選它（`dragMulti` 的 `onClick`，`selectedGroup()` 判斷選取是不是剛好一整組）。Shift＋點、框選（`withGroups`）都以整組為單位。右鍵：群組選單（`showMultiMenu` 多〔組成群組〕／〔取消群組〕）。
 - `groupSelected()`（Ctrl+G、群組列〔組成群組〕）、`ungroupSelected()`（Ctrl+Shift+G、〔取消群組〕；只選一個成員時拆掉它所在的整組），各是一個復原步驟。複製貼上時 `pasteObjects` 把群組 id 換成新的（同一次貼上的同一組換成同一個新 id）。
+- 審查後：`pageFilter`、`hasGroups` 列在 `DOC_KEYS`（每個分頁各自）；`loadDoc` 只在開新檔（不是修改、復原、重做）時重設，修改後目前頁被隱藏就移到顯示的頁。`ensureOverlay` 等這一頁的群組讀完才放點擊區。只剩一個（或只有一個看得到）的群組成員當一般物件；只貼上群組中的一個時不帶群組 id。便利貼不加入群組；已經是一整組時 Ctrl+G 不再動作。`GROUPS` 超過 60 筆時只清掉舊版本的。
 - 測試：`object-group.mjs`。
 
 ### 3.9.27 只顯示單數頁／雙數頁（v4.8.0）

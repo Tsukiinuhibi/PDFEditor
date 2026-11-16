@@ -1342,7 +1342,7 @@ async function saveFile(filename, data){
    Each open PDF is a document with its own pages, view, undo history and file handle.
    The active document's fields live on S; switching tabs stashes them and restores another set. */
 const DOC_KEYS = ['bytes', 'name', 'pdf', 'pages', 'scale', 'zoomMode', 'view', 'cover', 'current', 'undo', 'redo',
-  'dirty', 'signed', 'sigChecked', 'version', 'imgCache', 'annCache', 'linkCache', 'handle', 'thumbSel', 'guides', 'activeLayer'];
+  'dirty', 'signed', 'sigChecked', 'version', 'imgCache', 'annCache', 'linkCache', 'handle', 'thumbSel', 'guides', 'activeLayer', 'pageFilter', 'hasGroups'];
 const docs = [];
 let active = -1, docSeq = 0, VSEQ = 0;
 S.thumbSel = new Set();
@@ -1350,7 +1350,7 @@ const activeDoc = () => docs[active] || null;
 function blankDoc(){
   return {id:++docSeq, bytes:null, name:'', pdf:null, pages:[], scale:PX, zoomMode:'fit-width', view:S.view || 'continuous',
     cover:S.cover, current:0, undo:[], redo:[], dirty:false, signed:false, sigChecked:false, version:0, imgCache:new Map(), annCache:new Map(), linkCache:new Map(),
-    handle:null, thumbSel:new Set(), guides:{h:[], v:[]}, scrollTop:0, scrollLeft:0, activeLayer:null};
+    handle:null, thumbSel:new Set(), guides:{h:[], v:[]}, scrollTop:0, scrollLeft:0, activeLayer:null, pageFilter:'all', hasGroups:null};
 }
 function stashActive(){
   const d = activeDoc(); if (!d) return;
@@ -1496,7 +1496,9 @@ async function loadDoc(bytes, {name, keepView = false, scrollToCurrent = false} 
     pages.push({page:p, vp1:vp, w:vp.width, h:vp.height, rot:((p.rotate % 360) + 360) % 360});
   }
   if (prev) { prev.map = matchPages(prev.pages, pages); prev.pre = await prerenderNew(pages, prev); }
-  S.pdf = pdf; S.pages = pages; S.bytes = bytes; S.version = ++VSEQ; S.hasGroups = null; S.pageFilter = 'all';
+  S.pdf = pdf; S.pages = pages; S.bytes = bytes; S.version = ++VSEQ;
+  if (!keepView) { S.hasGroups = null; S.pageFilter = 'all'; }   // (an edit, undo or redo keeps both: only grouping and pasting make groups, and they say so)
+  else if (S.pageFilter && S.pageFilter !== 'all' && !shownPages().includes(S.current)) { const v = shownPages(); S.current = v.find(k => k > S.current) ?? v[v.length - 1]; }   // (pages added or taken away: a page shown)
   if (name) S.name = name;
   S.imgCache.clear(); S.annCache.clear(); S.linkCache.clear();
   if (!keepView) { S.current = 0; S.zoomMode = 'fit-width'; }
@@ -1606,7 +1608,7 @@ function shownPages(){
   const v = f === 'odd' ? all.filter(i => i % 2 === 0) : f === 'even' ? all.filter(i => i % 2 === 1) : all;
   return v.length ? v : all;
 }
-const pageShown = i => { const f = S.pageFilter; return !f || f === 'all' || (f === 'odd' ? i % 2 === 0 : i % 2 === 1) || !shownPages().length; };
+const pageShown = i => shownPages().includes(i);
 function rowsFor(){
   const v = shownPages(), rows = [];
   if (!isTwo()) { v.forEach(i => rows.push([i])); return rows; }
@@ -1815,10 +1817,9 @@ async function renderPage(i){
 async function ensureOverlay(i){
   const st = S.st[i]; if (st.ovlVer === S.version) return; st.ovlVer = S.version;
   const ver = S.version, el = S.els[i], ovl = el.querySelector('.ovl'), pg = S.pages[i];
-  const [anns, imgs, lnks] = await Promise.all([getAnns(i), detectImages(i), pageLinks(i)]);
+  const [anns, imgs, lnks] = await Promise.all([getAnns(i), detectImages(i), pageLinks(i), S.hasGroups !== false ? loadGroups(i) : null]);   // (which objects are grouped: known before they can be clicked)
   if (ver !== S.version) return;
   ovl.querySelectorAll('.annhit,.imgbox,.lnk').forEach(n => n.remove());
-  if (S.hasGroups !== false) loadGroups(i);   // (which objects are grouped: ready before they are clicked)
   const pct = (v, t) => (v / t * 100) + '%';
   anns.forEach(a => {
     const d = document.createElement('div'); d.className = 'annhit' + (a.noap ? ' noap' : '') + (a.sig ? ' sig' : '') + (a.subtype === 'Text' ? ' txt' : ''); HIT_ANN.set(d, a);
@@ -1841,7 +1842,8 @@ async function ensureOverlay(i){
       if (a.sig) return;
       if (ev.shiftKey && movableAnn(a)) { toggleMulti(i, a); return; }
       const g = movableAnn(a) && grpOf(i, a.id);
-      if (g) { setMulti(i, anns.filter(x => grpOf(i, x.id) === g)); if (MS) dragMulti(ev); return; }   // (one of a group: the whole group)
+      const mem = g ? anns.filter(x => grpOf(i, x.id) === g && movableAnn(x)) : [];
+      if (mem.length > 1) { setMulti(i, mem); if (MS) dragMulti(ev); return; }   // (one of a group: the whole group)
       selectAnnot(i, a);
       if (AS && AS.movable) dragAnnot(ev, 'move');
     });
@@ -2698,7 +2700,8 @@ viewer.addEventListener('contextmenu', async e => {
     const d0 = activeDoc(), a = await annAt(i, pt);
     if (a && activeDoc() === d0 && S.els[i] && S.tool === 'select') {
       const g = movableAnn(a) && grpOf(i, a.id);
-      if (g) { setMulti(i, (await getAnns(i)).filter(x => grpOf(i, x.id) === g)); if (MS) showMultiMenu(e); return; }
+      const mem = g ? (await getAnns(i)).filter(x => grpOf(i, x.id) === g && movableAnn(x)) : [];
+      if (mem.length > 1) { setMulti(i, mem); if (MS) showMultiMenu(e); return; }
       selectAnnot(i, a); showObjMenu(e, i, a);
     }
   }
@@ -4179,6 +4182,8 @@ async function pasteObjects(){
       got.push({it, d, ob:vRect(i, numArr(d.lookup(N_('Rect'), PDFArray)))});   // (where it would be on this page: pages differ in size)
     }
     if (!got.length) { toast('連到原文件頁面的連結，這份文件沒有那一頁，沒有貼上', 'err'); return false; }
+    { const cnt = new Map(); got.forEach(({d}) => { const g = grpOfDict(d); if (g) cnt.set(g, (cnt.get(g) || 0) + 1); });
+      got.forEach(({d}) => { const g = grpOfDict(d); if (g && cnt.get(g) < 2) d.delete(N_('PDFE_Grp')); }); }   // (one of a group pasted alone: not a group)
     const x0 = Math.min(...got.map(g => g.ob.x)), y0 = Math.min(...got.map(g => g.ob.y)), x1 = Math.max(...got.map(g => g.ob.x + g.ob.w)), y1 = Math.max(...got.map(g => g.ob.y + g.ob.h));
     let dx = 0, dy = 0;
     if (at) { dx = at.x - (x0 + x1) / 2; dy = at.y - (y0 + y1) / 2; } else if (same) dx = dy = 12 * clip.step;
@@ -7888,7 +7893,8 @@ async function loadGroups(i){
   const ver = S.version, doc = await geoDoc(); if (ver !== S.version) return null;
   const read = k => { const m = new Map(); try { const an = doc.getPage(k).node.Annots(); if (an) an.asArray().forEach(r => { if (!(r instanceof PDFRef)) return; const g = grpOfDict(doc.context.lookup(r)); if (g) m.set(annId(r), g); }); } catch (_) {} return m; };
   if (S.hasGroups == null) { let any = false; for (let k = 0; k < doc.getPageCount() && !any; k++) any = read(k).size > 0; S.hasGroups = any; if (!any) return null; }
-  const m = read(i); if (GROUPS.size > 60) GROUPS.clear(); GROUPS.set(key, m); return m;
+  const m = read(i); if (GROUPS.size > 60) for (const k of [...GROUPS.keys()]) if (!k.startsWith(S.version + ':')) GROUPS.delete(k);
+  GROUPS.set(key, m); return m;
 }
 // the objects of page i a list stands for: each grouped one brings its whole group
 function withGroups(i, all, list){
@@ -7901,8 +7907,10 @@ function selectedGroup(){
   return g && MS.items.every(a => grpOf(MS.i, a.id) === g) ? g : null;
 }
 async function groupSelected(){
-  if (!MS || MS.items.length < 2) { toast('請先選取兩個以上的物件（Shift＋點選，或拖曳框選）', 'err'); return; }
-  const {i, items} = MS, g = newGroupId(), ids = items.map(a => a.id);
+  if (MS && selectedGroup()) { toast('選取的物件已經是一個群組'); return; }
+  const items = MS ? MS.items.filter(a => a.subtype !== 'Text') : [];   // (sticky notes stay on their own)
+  if (items.length < 2) { toast('請先選取兩個以上的物件（Shift＋點選，或拖曳框選；便利貼不會加入群組）', 'err'); return; }
+  const i = MS.i, g = newGroupId(), ids = items.map(a => a.id);
   const ok = await mutate(`已組成群組（${items.length} 個物件）`, doc => { for (const a of items) { const ref = findAnnotRef(doc, i, a.id); if (ref) doc.context.lookup(ref, PDFDict).set(N_('PDFE_Grp'), PDFString.of(g)); } });
   if (!ok) return; S.hasGroups = true; await loadGroups(i);
   if (S.tool === 'select' && S.els[i]) setMulti(i, (await getAnns(i)).filter(x => ids.includes(x.id)));

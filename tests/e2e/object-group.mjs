@@ -79,5 +79,24 @@ check('…a click now selects only that one', (await selState()).one === r1.id &
 await win.click('#bUndo'); await win.waitForTimeout(1800);
 { const g = await grpOf(); check('復原: the group again', !!g[0] && g[0] === g[1], g); }
 
+// ---- (review) Ctrl+G on a group already made: no new step; a group left with one object acts as one object -------------------
+await win.keyboard.press('Escape'); await win.waitForTimeout(300); await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+[r1, r2, r3] = await sq();
+await click(r1);
+const u0 = await A(() => window.__pdfapp.S.undo.length);
+await win.keyboard.press('Control+g'); await win.waitForTimeout(1500);
+check('Ctrl+G on a group already made: nothing changes (no new undo step)', await A(() => window.__pdfapp.S.undo.length) === u0, {u0, u1:await A(() => window.__pdfapp.S.undo.length)});
+await click(r2);   // (a click on one of the selected group: only it)
+await win.keyboard.press('Delete'); await win.waitForTimeout(1800);
+const left = (await sq())[0];
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+{ const p = await at(left.x + 3, left.y + left.h / 2), q = await at(left.x + 3 + 30, left.y + left.h / 2 + 20); await win.mouse.move(p.x, p.y); await win.mouse.down(); await win.mouse.move(q.x, q.y, {steps:8}); await win.mouse.up(); await win.waitForTimeout(2000); }
+const moved = (await sq())[0];
+check('the one left of a group: pressed and dragged in one go, it moves', Math.abs(moved.x - left.x - 30) < 1, {left, moved});
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+{ const p = await at(moved.x + 3, moved.y + moved.h / 2); await win.mouse.click(p.x, p.y, {button:'right'}); await win.waitForTimeout(1000); }
+check('…and a right-click on it opens its menu', await A(() => document.querySelector('#ctx').style.display === 'block'));
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
