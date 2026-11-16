@@ -1843,8 +1843,9 @@ async function ensureOverlay(i){
       if (ev.shiftKey && movableAnn(a)) { toggleMulti(i, a); return; }
       const g = movableAnn(a) && grpOf(i, a.id);
       const mem = g ? anns.filter(x => grpOf(i, x.id) === g && movableAnn(x)) : [];
-      if (mem.length > 1) { const all = groupsNow(i), n = all ? [...all.values()].filter(x => x === g).length : 0;
-        if (n > mem.length && !HIDDEN_TOLD.has(g)) { HIDDEN_TOLD.add(g); toast(`這個群組有 ${n - mem.length} 個物件在隱藏或鎖定的圖層上，不會一起移動或刪除`); }
+      { const all = g && groupsNow(i), n = all ? [...all.values()].filter(x => x === g).length : 0;   // (members not shown: on a hidden or locked layer, or hidden themselves)
+        if (n > mem.length && !HIDDEN_TOLD.has(g)) { HIDDEN_TOLD.add(g); toast(`這個群組有 ${n - mem.length} 個物件沒有顯示（隱藏或鎖定），不會一起移動或刪除`); } }
+      if (mem.length > 1) {
         setMulti(i, mem); if (MS) dragMulti(ev); return; }   // (one of a group: the whole group)
       selectAnnot(i, a);
       if (AS && AS.movable) dragAnnot(ev, 'move');
@@ -4213,7 +4214,8 @@ async function pasteObjects({inPlace = false} = {}){   // inPlace (Ctrl+Shift+V)
 }
 let COPYING = false;   // (a second Ctrl+C / Ctrl+X while the first is under way: not done twice)
 async function copySelected(cut){
-  if (!S.pdf || COPYING) return;
+  if (!S.pdf) return;
+  if (COPYING) { toast('上一次的複製／剪下還在進行，請稍候'); return; }
   COPYING = true;
   try { await copySelected_(cut); } finally { COPYING = false; }
 }
@@ -6470,11 +6472,14 @@ function textboxHover(e){
 
 /* ---------------- 插入圖片 ---------------- */
 let PENDING_IMG = null;   // {png|jpg bytes, kind, w, h, name, url}
+// another picture to place: the one waiting before is let go (its blob address freed)
+function setPendingImg(img){ if (PENDING_IMG && PENDING_IMG !== img && PENDING_IMG.url) { try { URL.revokeObjectURL(PENDING_IMG.url); } catch (_) {} } PENDING_IMG = img; }
 async function loadImageFile(file){
   const url = URL.createObjectURL(file);
   const img = new Image(); img.src = url;
   try { await img.decode(); } catch (_) { URL.revokeObjectURL(url); throw new Error('無法讀取這張圖片'); }
   let w = img.naturalWidth || 300, h = img.naturalHeight || 200;
+  if (w * h > 150e6) { URL.revokeObjectURL(url); throw new Error('圖片太大（超過 1.5 億像素），無法插入'); }
   const isJpg = /jpe?g$/i.test(file.type) || /\.jpe?g$/i.test(file.name);
   let bytes, kind;
   if (isJpg && Math.max(w, h) <= 6000) { bytes = new Uint8Array(await file.arrayBuffer()); kind = 'jpg'; }   // keep the original JPEG data
@@ -6500,7 +6505,7 @@ function pickImage(){
 }
 async function chooseImage(){
   const img = await pickImage(); if (!img) return;
-  PENDING_IMG = img; setTool('image'); toast('在頁面上點一下放置圖片，或拖曳決定大小');
+  setPendingImg(img); setTool('image'); toast('在頁面上點一下放置圖片，或拖曳決定大小');
 }
 // a picture's appearance: img (loadImageFile) filling box b
 async function pictureAP(doc, img, b, rot){
@@ -11316,6 +11321,18 @@ let URLJOB = null;   // {id, set}: the download under way and how it reports
 const urlProgressText = (got, total) => `下載中…（${(got / 1048576).toFixed(1)}${total && got <= total ? ' / ' + (total / 1048576).toFixed(1) : ''} MB）`;
 if (DESK && DESK.url) DESK.url.onProgress((id, got, total) => { if (URLJOB && URLJOB.id === id) URLJOB.set(urlProgressText(got, total)); });
 const URL_OK = u => /^https?:\/\/[^\s/?#]+/i.test(String(u || '').trim());
+// a picture written into its address (data:image/…, as 「複製圖片位址」 often gives): read here, nothing downloaded
+const DATA_IMG = /^data:(image\/(?:png|jpeg|jpg|gif|webp|bmp|svg\+xml))(;[^,]*)?,/i;
+function dataUrlFile(v){
+  const m = DATA_IMG.exec(v); if (!m) return null;
+  const body = v.slice(m[0].length), b64 = /;base64/i.test(m[2] || '');
+  if (body.length > 70e6) throw new Error('圖片太大（超過 50 MB）');
+  let bytes;
+  if (b64) { const bin = atob(body.replace(/\s+/g, '')); bytes = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k); }
+  else bytes = new TextEncoder().encode(decodeURIComponent(body));
+  const type = m[1].toLowerCase().replace('jpg', 'jpeg'), ext = {'image/jpeg':'jpg', 'image/svg+xml':'svg'}[type] || type.slice(6);
+  return new File([bytes], '貼上的圖片.' + ext, {type});
+}
 function urlWhy(r, kind = 'pdf'){
   const img = kind === 'image', after = img ? '請先在瀏覽器把圖片存下來，再用「插入圖片」選擇它' : '請先在瀏覽器登入並下載，再用「開啟」開啟下載的檔案';
   if (r.why === 'notpdf') return '這個網址下載到的不是 PDF 檔（可能需要登入，或是一個網頁）';
@@ -11363,20 +11380,29 @@ async function urlDialog(pre, auto, kind = 'pdf'){
     <div class="pr-err" id="urlErr"></div><div class="url-st" id="urlSt"></div>`;
   let alive = true;
   const $b = q => body.querySelector(q), setErr = t => { $b('#urlErr').textContent = t; }, setSt = t => { $b('#urlSt').textContent = t; };
-  const check = () => { const v = $b('#urlIn').value.trim(), bad = !!v && !URL_OK(v); setErr(bad ? '網址要以 http:// 或 https:// 開頭' : ''); const g = $('#urlGo'); if (g && !URLJOB) g.disabled = !URL_OK(v); };
+  const ok = v => URL_OK(v) || (img && DATA_IMG.test(v));
+  const check = () => { const v = $b('#urlIn').value.trim(), bad = !!v && !ok(v); setErr(bad ? '網址要以 http:// 或 https:// 開頭' : ''); const g = $('#urlGo'); if (g && !URLJOB) g.disabled = !ok(v); };
   const download = async () => {
-    const url = $b('#urlIn').value.trim(); if (!URL_OK(url) || URLJOB) return undefined;
+    const url = $b('#urlIn').value.trim(); if (!ok(url) || URLJOB) return undefined;
+    if (img && DATA_IMG.test(url)) {   // (read here)
+      $('#urlGo').disabled = true; setErr(''); setSt('讀取圖片中…');
+      try { return {ok:true, pic:await loadImageFile(dataUrlFile(url))}; }
+      catch (e) { setErr(e && e.message || '無法讀取這張圖片'); return undefined; }
+      finally { if (alive) { setSt(''); check(); } }
+    }
     const id = 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     URLJOB = {id, set:setSt}; setErr(''); setSt('下載中…'); $('#urlGo').disabled = true; $b('#urlIn').disabled = true;
     let r;
     try { r = await DESK.url.fetch(id, url, kind); } catch (e) { r = {ok:false, why:'net'}; }
     finally { if (URLJOB && URLJOB.id === id) URLJOB = null; }   // (a window opened since has its own)
     if (!alive) return undefined;   // the window was closed meanwhile: nothing more
-    setSt(''); $b('#urlIn').disabled = false; check();
-    if (r.ok && img) {   // a picture: read it here (the window stays open if it cannot be shown)
+    if (r.ok && img) {   // a picture: read it here (the window stays open if it cannot be shown); 〔下載〕 stays grey meanwhile
+      setSt('讀取圖片中…');
       try { return {ok:true, pic:await loadImageFile(new File([r.data instanceof Uint8Array ? r.data : new Uint8Array(r.data)], r.name, {type:r.type || ''}))}; }
-      catch (_) { setErr('無法讀取這張圖片'); return undefined; }
+      catch (e) { setErr(e && /太大/.test(e.message) ? e.message : '無法讀取這張圖片'); return undefined; }
+      finally { if (alive) { setSt(''); $b('#urlIn').disabled = false; check(); } }
     }
+    setSt(''); $b('#urlIn').disabled = false; check();
     if (r.ok) return r;
     if (r.why !== 'cancel') setErr(urlWhy(r, kind));
     return undefined;
@@ -11393,7 +11419,7 @@ async function urlDialog(pre, auto, kind = 'pdf'){
   alive = false;
   if (URLJOB) { DESK.url.cancel(URLJOB.id); URLJOB = null; }   // closed (Esc, the mask) while downloading: stop (it winds down on its own)
   if (!res || !res.ok) return;
-  if (img) { PENDING_IMG = res.pic; setTool('image'); toast('在頁面上點一下放置圖片，或拖曳決定大小'); return; }
+  if (img) { setPendingImg(res.pic); setTool('image'); toast('在頁面上點一下放置圖片，或拖曳決定大小'); return; }
   busy(true, '開啟中…');
   try { await openInNewTab(res.data instanceof Uint8Array ? res.data : new Uint8Array(res.data), res.name, null); toast(`已從網址開啟「${res.name}」`); }   // (no copy)
   catch (e) { toast(e && e.name === 'PasswordException' ? `「${res.name}」需要密碼才能開啟，PDF 工作台目前不支援` : '無法開啟這個 PDF：' + (e.message || e), 'err'); }
@@ -13093,7 +13119,7 @@ window.__pdfapp = {
   fontBytesInfo:async (family, bold) => { const r = await realFontInfo(family, bold); return {bytes:r.bytes.length, synthetic:r.synthetic}; },
   failEmbed:family => { EMBED_FAIL.add(family); },
   fontkitPatch:on => { fkPatchOn = !!on; },
-  oldLayout:on => { TB_OLD_SPLIT = !!on; }, nudgeDelay:ms => { NUDGE_DELAY = ms; }, cutPages:() => copySelected(true), copyPages:() => copySelected(false), settingShapeOk:(k, v) => settingShapeOk(k, v), pendImage:async f => { PENDING_IMG = await loadImageFile(f); setTool('image'); }, objClip:() => OBJ_CLIP && {n:OBJ_CLIP.n, from:OBJ_CLIP.from, i:OBJ_CLIP.src.i, subs:OBJ_CLIP.items.map(t => t.sub), shared:OBJ_CLIP.shared},
+  oldLayout:on => { TB_OLD_SPLIT = !!on; }, nudgeDelay:ms => { NUDGE_DELAY = ms; }, cutPages:() => copySelected(true), copyPages:() => copySelected(false), settingShapeOk:(k, v) => settingShapeOk(k, v), pendImage:async f => { setPendingImg(await loadImageFile(f)); setTool('image'); }, objClip:() => OBJ_CLIP && {n:OBJ_CLIP.n, from:OBJ_CLIP.from, i:OBJ_CLIP.src.i, subs:OBJ_CLIP.items.map(t => t.sub), shared:OBJ_CLIP.shared},
   writeSettingsNow:() => { saveView_(); saveTB(); saveStyles(); },
   settleEdits, nudgeState:() => ({pending:!!NUDGE, running:!!NUDGE_RUN}), pageClipBytes:() => PAGE_CLIP ? PAGE_CLIP.bytes : null,
   faceChoice:(styles, bold) => { const r = chooseFace(styles.map(style => ({style})), bold); return {style:r.face.style, synthetic:r.synthetic}; },

@@ -337,8 +337,8 @@ function imageKind(b) {
   if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'jpg';
   if (b.toString('latin1', 0, 4) === 'GIF8') return 'gif';
   if (b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP') return 'webp';
-  if (b.toString('latin1', 0, 2) === 'BM') return 'bmp';
-  if (/<svg[\s>]/i.test(b.subarray(0, 4096).toString('utf8')) && /^\s*(<\?xml|<!--|<!doctype svg|<svg)/i.test(b.subarray(0, 512).toString('utf8').replace(/^\ufeff/, ''))) return 'svg';
+  if (b.length > 30 && b.toString('latin1', 0, 2) === 'BM' && [12, 40, 52, 56, 64, 108, 124].includes(b.readUInt32LE(14))) return 'bmp';   // (its header's size: a real BMP, not text starting "BM")
+  { const head = b.subarray(0, 4096).toString('utf8'); if (/<svg[\s>]/i.test(head) && !/<html[\s>]/i.test(head) && /^\s*(<\?xml|<!--|<!doctype svg|<svg)/i.test(b.subarray(0, 512).toString('utf8').replace(/^\ufeff/, ''))) return 'svg'; }   // (an HTML page with a drawing in it is not an SVG)
   return '';
 }
 const IMG_MAX = 50 * 1024 * 1024;
@@ -370,8 +370,9 @@ ipcMain.handle('url:fetch', async (e, id, url, kind = 'pdf') => {
     const data = one ? one.subarray(0, got) : Buffer.concat(parts);
     if (kind === 'image') {   // (插入圖片：從網址) the bytes must be a picture; its name: the address's last part, with the right ending
       const k = imageKind(data); if (!k) return { ok: false, why: 'notimage' };
-      let n = ''; try { n = decodeURIComponent(new URL(res.url || u.href).pathname.split('/').filter(Boolean).pop() || ''); } catch (_) {}
-      n = safeName(path.basename(n || 'picture')).replace(/\.[a-z0-9]{1,5}$/i, '') || 'picture';
+      // (the server's file name when it gives one, otherwise the address's; only a picture ending is taken off: "v1.2" stays)
+      const n = safeName(path.basename(urlFileName(res.headers.get('content-disposition'), res.url || u.href).replace(/\.pdf$/i, '') || 'picture'))
+        .replace(/\.(png|jpe?g|gif|webp|bmp|svg|tiff?|ico|avif|heic)$/i, '') || 'picture';
       return { ok: true, data, name: n + '.' + k, type: k === 'svg' ? 'image/svg+xml' : k === 'jpg' ? 'image/jpeg' : 'image/' + k };
     }
     if (!data.subarray(0, 1024).includes('%PDF')) return { ok: false, why: 'notpdf' };

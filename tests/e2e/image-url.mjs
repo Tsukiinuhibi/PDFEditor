@@ -23,6 +23,9 @@ const server = http.createServer((req, res) => {
   if (u === '/pics/red.png') { res.writeHead(200, {'Content-Type':'image/png', 'Content-Length':png.length}); res.end(png); return; }
   if (u === '/noext') { res.writeHead(200, {'Content-Type':'application/octet-stream'}); res.end(png); return; }   // (no name, no type: the bytes say PNG)
   if (u === '/logo.svg') { res.writeHead(200, {'Content-Type':'image/svg+xml'}); res.end(SVG); return; }
+  if (u === '/v1.2') { res.writeHead(200, {'Content-Type':'image/png'}); res.end(png); return; }   // (a name with a dot that is not an ending)
+  if (u === '/dl') { res.writeHead(200, {'Content-Type':'image/png', 'Content-Disposition':'attachment; filename="logo-final.png"'}); res.end(png); return; }
+  if (u === '/fake.bmp') { res.writeHead(200, {'Content-Type':'image/bmp'}); res.end('BM this is not a picture at all, only text'); return; }
   if (u === '/forbidden.png') { res.writeHead(403, {'Content-Type':'text/plain'}); res.end('no'); return; }
   if (u === '/page.png') { res.writeHead(200, {'Content-Type':'text/html'}); res.end('<!doctype html><html><body>Please sign in</body></html>'); return; }
   res.writeHead(404, {'Content-Type':'text/plain'}); res.end('not here');
@@ -91,6 +94,20 @@ d = await dlg();
 check('refused (403): the advice is about pictures (save it in the browser, then 插入圖片), not about opening a PDF', d.open && d.err.includes('插入圖片') && !d.err.includes('「開啟」'), d);
 await win.keyboard.press('Escape'); await win.waitForTimeout(400);
 check('closed: no picture waiting', (await Ev(() => window.__pdfapp.S.tool)) !== 'image');
+
+// ---- (leftovers) a data: address, names, a fake BMP --------------------------------------------------------------------------------
+const tryUrl = async u => { await Ev(() => { window.__pdfapp.setTool('select'); window.__pdfapp.actions.imageUrl(); }); await win.waitForTimeout(500); await fill(u);
+  const can = await Ev(() => !document.querySelector('#urlGo').disabled); if (can) { await win.click('#urlGo'); await win.waitForTimeout(2200); }
+  const r = {can, d:await dlg(), tool:await Ev(() => window.__pdfapp.S.tool), bar:await Ev(() => document.querySelector('#hint').textContent)};
+  if (r.d.open) { await win.keyboard.press('Escape'); await win.waitForTimeout(400); } return r; };
+let q = await tryUrl('data:image/png;base64,' + png.toString('base64'));
+check('a data:image address (「複製圖片位址」 often gives one): taken, the picture waits to be placed', q.can && q.tool === 'image', q);
+q = await tryUrl(BASE + '/v1.2');
+check('an address ending "v1.2": the name keeps it (v1.2.png)', q.tool === 'image' && q.bar.includes('v1.2.png'), q.bar);
+q = await tryUrl(BASE + '/dl');
+check('a server that names the file (Content-Disposition): that name', q.tool === 'image' && q.bar.includes('logo-final.png'), q.bar);
+q = await tryUrl(BASE + '/fake.bmp');
+check('text starting "BM" is not taken for a BMP picture', q.d.open && q.tool !== 'image', q);
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 server.close();
