@@ -60,6 +60,13 @@ check('a box over part of the picture: only that part read (HELLO, not 2026), as
 await Ev(() => window.__pdfapp.setTool('select')); await win.waitForTimeout(300);
 check('another tool: the outline goes', await Ev(() => !document.querySelector('.picocr')));
 
+// (review) 框選辨識 left by choosing the 文字辨識 tool again: a plain 文字辨識 box from then on
+{ const p = await at(pic.x + pic.w / 2, pic.y + pic.h / 2); await win.mouse.click(p.x, p.y); await win.waitForTimeout(1200); }
+await win.click('#hint.objbar [data-o="ocrbox"]'); await win.waitForTimeout(500);
+await Ev(() => window.__pdfapp.setTool('ocr')); await win.waitForTimeout(300);
+check('the 文字辨識 tool chosen again: out of 框選辨識 (no outline)', await Ev(() => !document.querySelector('.picocr')));
+await Ev(() => window.__pdfapp.setTool('select')); await win.waitForTimeout(300);
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 server.close();
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

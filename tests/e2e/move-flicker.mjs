@@ -72,5 +72,16 @@ const center = async k => { const b = (await A(async () => (await window.__pdfap
   check('…and not back at its old place', shots.every(s => !s[1]), shots.map(s => +s[1]).join(''));
 }
 
+// (review) a second nudge right when the first is written (before the page is drawn again): when all is drawn, the object
+// is shown plainly at its place (no veil or empty picture left over it)
+{
+  await A(async () => { const a = (await window.__pdfapp.getAnns(0)).filter(x => x.subtype === 'Square')[0]; window.__pdfapp.selectById ? 0 : 0; });
+  for (let k = 0; k < 3; k++) { await win.keyboard.press('ArrowDown'); await win.waitForTimeout(650); await win.keyboard.press('ArrowDown'); await win.waitForTimeout(30); }
+  await win.waitForTimeout(3000);
+  const c = await center(0), p = await at(c.x, c.y);
+  const shot = await red([p], async () => {}, 300);
+  check('nudged again just as the first nudge is written: in the end shown plainly, no veil left', shot.every(s => s[0]) && await A(() => !document.querySelector('.aveil')), {shot:shot.map(s => +s[0]).join(''), veil:await A(() => document.querySelectorAll('.aveil').length)});
+}
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

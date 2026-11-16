@@ -110,5 +110,24 @@ m = await menu();
 check('right-click on a picture: 更換圖片, 辨識文字, opacity, order, copy, delete', !!pic && !!m && ['更換圖片', '辨識整張', '框選範圍', '複製', '刪除'].every(l => m.items.some(t => t.startsWith(l))) && ['透明度', '上下層級'].every(l => m.rows.includes(l)), {pic, m});
 await win.keyboard.press('Escape'); await win.waitForTimeout(300);
 
+// ---- (review) keys while the menu is open: Esc closes it (the object stays); Delete does not leave the menu up -----------
+{ const t5 = (await anns('FreeText'))[0]; await rclick(t5.x + t5.w / 2, t5.y + t5.h / 2); }
+await win.keyboard.press('Escape'); await win.waitForTimeout(400);
+check('Esc with the menu open: the menu closes, the object stays selected', (await menu()) === null && await A(() => !!window.__pdfapp.sel()), {menu:await menu()});
+{ const t5 = (await anns('FreeText'))[0]; await rclick(t5.x + t5.w / 2, t5.y + t5.h / 2); }
+await win.keyboard.press('Control+v'); await win.waitForTimeout(1500);
+check('another key with the menu open (Ctrl+V): the menu closes', (await menu()) === null, await menu());
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+
+// ---- (review) a colour read from the file is not HTML ------------------------------------------------------------------------
+await A(() => window.__pdfapp.mutate('test', doc => { const P = PDFLib, N = k => P.PDFName.of(k), an = doc.getPage(0).node.Annots().asArray().map(r => doc.context.lookup(r));
+  const d = an.find(x => x.get(N('PDFE_RT'))), rt = JSON.parse(d.lookupMaybe(N('PDFE_RT'), P.PDFHexString, P.PDFString).decodeText());
+  rt.lines.flat().forEach(r => { r.color = '"><img src=x onerror="window.__inj=1">'; });
+  d.set(N('PDFE_RT'), P.PDFHexString.fromText(JSON.stringify(rt))); }));
+await win.waitForTimeout(1500);
+{ const t6 = (await anns('FreeText'))[0]; await rclick(t6.x + t6.w / 2, t6.y + t6.h / 2); await win.waitForTimeout(800); }
+check('a text box whose colour in the file is HTML: shown as nothing, not run', await A(() => !window.__inj && !document.querySelector('#ctx img, #hint img[src="x"]')), await A(() => ({inj:window.__inj || 0, img:!!document.querySelector('#ctx img')})));
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

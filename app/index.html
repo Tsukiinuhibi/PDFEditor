@@ -1530,6 +1530,7 @@ async function prerenderNew(pages, prev){
   return out;
 }
 function mountDoc({scroll = 'current', anchorOffset = 0, scrollTop = 0, scrollLeft = 0, prev = null} = {}){
+  clearPicOcr(); hideCtx();
   // after an edit the old picture of each page stays up until its new rendering is ready (no blank flash);
   // pages are matched by identity, so after adding or deleting pages every picture still sits on its own page
   const reuse = prev && prev.els && prev.pages && prev.map ? prev : null;
@@ -2045,7 +2046,8 @@ const HINTS = {
 function setTool(t){
   if (!S.pdf) return;
   if (t !== 'extract') cancelXSel();
-  if (t !== 'ocr') { closeOcr(); clearPicOcr(); }
+  hideCtx(); clearPicOcr();
+  if (t !== 'ocr') closeOcr();
   if (t !== 'select') { deselectAnnot(); clearMulti(); }
   if (t !== S.tool && S.tool === 'textbox' && TBE) {   // the text is saved first; when its check keeps the editor open (回去修改) the tool stays
     const done = commitTextEditor();
@@ -2152,6 +2154,8 @@ window.addEventListener('keydown', e => {
     else if (e.key === 'Escape' && PR && PR.job) { PR.job.cancel = true; if (PR.job.wake) PR.job.wake(); }   // (printing: Esc is 〔取消〕)
     return;
   }
+  // the right-click menu open (keys typed in its own boxes aside): Esc closes it; another key closes it, then does what it does
+  if (ctx.style.display === 'block' && !ctx.contains(e.target) && !/^(Shift|Control|Alt|Meta)$/.test(e.key)) { hideCtx(); if (e.key === 'Escape') { e.preventDefault(); return; } }
   if ($('#busy').classList.contains('show')) { if (e.ctrlKey || e.metaKey || e.altKey || e.key === 'Tab' || e.key === 'Delete') e.preventDefault(); return; }   // (working: e.g. Ctrl+W would close the tab under it)
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.shiftKey && e.code === 'KeyO') { e.preventDefault(); actions.openUrl(); return; }
@@ -2709,7 +2713,7 @@ function textFormatRows(st, apply, toggle, openFont, editing){
 function formatMenu(e, head, rows, {keepSel = false} = {}){
   const acts = [], inputs = [], A = f => { acts.push(f); return acts.length - 1; };
   const same = (a, b) => (normHex(a) || '') === (normHex(b) || '');
-  const sw = (c, on, set) => c ? `<button class="sw${on ? ' on' : ''}" data-a="${A(() => set(c))}" title="${c}" style="background:${c}"></button>` : `<button class="sw${on ? ' on' : ''}" data-a="${A(() => set(''))}" title="無" style="background:#fff">∅</button>`;
+  const sw = (c, on, set) => c && !normHex(c) ? '' : c ? `<button class="sw${on ? ' on' : ''}" data-a="${A(() => set(c))}" title="${c}" style="background:${c}"></button>` : `<button class="sw${on ? ' on' : ''}" data-a="${A(() => set(''))}" title="無" style="background:#fff">∅</button>`;
   const wheel = r => `<button class="wheel" data-a="${A((ev, b) => { const q = b.getBoundingClientRect(); hideCtx(); openColorPicker({anchor:null, at:{left:q.left, top:q.top, bottom:q.bottom}, value:r.cur || '', none:!!r.none, title:r.title, onPick:r.set}); })}" title="色環、滴管、我的最愛"><i></i>色環…</button>`;
   const row = (l, inner) => `<div class="r"><span class="l">${esc(l || '')}</span>${inner}</div>`;
   const html = rows.map(r => {
@@ -2721,7 +2725,7 @@ function formatMenu(e, head, rows, {keepSel = false} = {}){
       + row('', `<span class="grow">${FM_SIZES.map(v => `<button class="chip${Math.abs(v - r.cur) < .05 ? ' on' : ''}" data-a="${A(() => { hideCtx(); r.set(v); })}">${v}</button>`).join('')}</span>`); }
     if (r.t === 'num') { inputs.push({k:'num', set:r.set, min:r.min, max:r.max}); return row(r.label, `<span class="sz"><input data-in="${inputs.length - 1}" value="${+(+r.cur).toFixed(2)}" data-v="${+(+r.cur).toFixed(2)}" inputmode="decimal" spellcheck="false" autocomplete="off" title="輸入數字後按 Enter 套用"><b>${esc(r.unit || '')}</b></span>`)
       + row('', `<span class="grow">${r.chips.map(v => `<button class="chip${Math.abs(v - r.cur) < .01 ? ' on' : ''}" data-a="${A(() => { hideCtx(); r.set(v); })}">${v}</button>`).join('')}</span>`); }
-    if (r.t === 'col') { const set = v => { hideCtx(); r.set(v); }, list = r.list.slice(); if (r.cur && !list.some(c => same(c, r.cur))) list.push(r.cur);
+    if (r.t === 'col') { const set = v => { hideCtx(); r.set(v); }, list = r.list.slice(), cur = normHex(r.cur); if (cur && !list.some(c => same(c, cur))) list.push(cur);
       return row(r.label, `<span class="grow">${list.map(c => sw(c, c ? same(c, r.cur) : !r.cur, set)).join('')}${wheel(r)}</span>`); }
     if (r.t === 'tog') return row(r.label || '', `<span class="grow">${r.items.map(it => `<button class="tg${it.on ? ' on' : ''}" title="${esc(it.title)}" data-a="${A(() => { hideCtx(); it.run(); })}">${it.h}</button>`).join('')}</span>`);
     if (r.t === 'chips') return row(r.label, `<span class="grow">${r.items.map(it => `<button class="chip${it.on ? ' on' : ''}" data-a="${A(() => { hideCtx(); it.run(); })}">${esc(it.label)}</button>`).join('')}</span>`);
@@ -2756,7 +2760,7 @@ async function showObjMenu(e, i, a){
     rows.push(...textFormatRows(st, (k, v) => restyleSelected({[k]:v}, ob), k => restyleSelected({[k]:'toggle'}, ob), at => openFontMenu(null, at, {cur:st.font, onPick:f => restyleSelected({font:f}, ob)}), false));
   } else if (kind === 'stamp') {
     rows.push({t:'it', label:'更換戳記…', ic:'stamp', run:() => changeStampOf(ob)});
-    if (st.spec) rows.push({t:'col', label:'顏色', cur:STAMP_COLORS[st.spec.c] || st.spec.c, list:Object.values(STAMP_COLORS), title:'戳記顏色', set:set('color')});
+    if (st.spec) rows.push({t:'col', label:'顏色', cur:STAMP_COLORS[st.spec.c] || normHex(st.spec.c) || '', list:Object.values(STAMP_COLORS), title:'戳記顏色', set:set('color')});
   } else if (kind === 'image') {
     rows.push({t:'it', label:'更換圖片…', ic:'insImg', run:() => changeImageOf(ob)}, {t:'it', label:'辨識整張圖片的文字', ic:'ocr', run:() => readPictureText(ob)}, {t:'it', label:'框選範圍辨識文字…', ic:'rectI', run:() => pictureOcrBox(ob)});
   } else if (def) {
@@ -2773,7 +2777,7 @@ async function showObjMenu(e, i, a){
   if (AS.bar.querySelector('[data-x^="z-"]')) rows.push({t:'hr'}, {t:'z', i, id:a.id});
   rows.push({t:'hr'});
   if (copyableAnn(a)) rows.push({t:'it', label:'複製', ic:'copy', kb:'Ctrl+C', run:() => copyObjects(i, [a])}, {t:'it', label:'剪下', ic:'cut', kb:'Ctrl+X', run:() => copyObjects(i, [a], {cut:true})});
-  rows.push({t:'it', label:'刪除', ic:'trash', kb:'Delete', run:() => deleteSelected()});
+  rows.push({t:'it', label:'刪除', ic:'trash', kb:'Delete', run:() => { if (AS && AS.a.id === a.id) deleteSelected(); }});   // (the object right-clicked, not another selected meanwhile)
   const name = $('#hint').classList.contains('objbar') && $('#hint .sb-t') ? $('#hint .sb-t').textContent.trim() : '已選取：' + a.label;
   formatMenu(e, name, rows);
 }
@@ -4770,6 +4774,7 @@ $('#hint').addEventListener('keydown', e => {
 // the list of usual sizes under the size box's 〔▾〕
 function showSizeMenu(btn, onPick){
   const r = btn.getBoundingClientRect();
+  ctx.classList.remove('fmx'); ctx.onkeydown = null;
   ctx.innerHTML = `<div class="hd">字級</div><div class="tm-sizes">${TB_SIZES.map(v => `<button data-sz="${v}">${v}</button>`).join('')}</div>`;
   ctx.style.display = 'block'; ctxShownAt = performance.now();
   ctx.style.left = Math.max(4, Math.min(r.left, innerWidth - ctx.offsetWidth - 8)) + 'px'; ctx.style.top = Math.min(r.bottom + 4, innerHeight - ctx.offsetHeight - 8) + 'px';
@@ -7774,6 +7779,8 @@ const NO_MOVE = new Set(['Highlight', 'StrikeOut', 'Underline', 'Squiggly', 'Wid
 const REGEN = new Set(['Line', 'Square', 'Circle', 'Polygon', 'PolyLine', 'Ink']);
 let AS = null;   // {i, a, box, el, bar, ghost, veil}
 // keep the moved picture (and the veil over the old place) on screen until the page is redrawn
+// the page's drawing is not the document's yet (a change on its way to the screen): a picture taken from it would be wrong
+const staleDrawing = i => !S.els[i] || !!S.els[i].querySelector('.hold') || !S.st[i] || S.st[i].ver !== S.version;
 function holdSelection(){
   if (!AS) return;
   AS.el.querySelectorAll('.h,.eh,.rh').forEach(h => h.remove());
@@ -7883,6 +7890,7 @@ function dragMulti(e){
   // until the page is drawn again with them moved (no jump back when the mouse is let go)
   const veils = [];
   const begin = () => {
+    if (staleDrawing(i)) return;   // (outlines only)
     const ovl = S.els[i].querySelector('.ovl');
     items.forEach((a, k) => {
       const g = snapshot(i, a); if (g) { g.className = 'aghost'; els[k].appendChild(g); }
@@ -7999,8 +8007,8 @@ const readRT = dict => { try { const v = dict.lookupMaybe(N_('PDFE_RT'), PDFHexS
 // what the text bar shows for a whole box: the first run's values; bold / italic / underline only when every run has it
 function tbObjStyle(rt){
   const rs = rt.lines.flat(), f = rs[0] || {}, all = k => rs.length > 0 && rs.every(r => !!r[k]);
-  return {font:f.font || '', size:+f.size || TB_STYLE.size, color:f.color || '#1f2328', bg:rs.length && rs.every(r => (r.bg || '') === (f.bg || '')) ? f.bg || '' : '',
-    bold:all('bold'), italic:all('italic'), underline:all('underline'), boxBg:rt.box && rt.box.boxBg || '', border:!!(rt.box && rt.box.border)};
+  return {font:f.font || '', size:+f.size || TB_STYLE.size, color:normHex(f.color) || '#1f2328', bg:rs.length && rs.every(r => (r.bg || '') === (f.bg || '')) ? normHex(f.bg) || '' : '',
+    bold:all('bold'), italic:all('italic'), underline:all('underline'), boxBg:normHex(rt.box && rt.box.boxBg) || '', border:!!(rt.box && rt.box.border)};   // (colours read from the file: only #rrggbb goes into the page's HTML)
 }
 let OBJBAR = null;   // the object the bar shows: {i, id, kind, doc, st (a text box's tbObjStyle)}
 let OBJBAR_FOR = null;   // the selected object whose bar is settled (shown, or none for it): the right-click menu waits for it
@@ -8070,7 +8078,7 @@ function objBarHTML(kind, dict, doc = null){
   if (kind === 'textbox') { const st = tbObjStyle(readRT(dict)); return {name:subjOf(dict) === '修改的文字' ? '修改的文字' : '文字方塊', ic:'text', html:textBarHTML(st, true), st}; }
   if (kind === 'stamp') {
     const spec = stampSpec(dict), op = readAnnStyle(dict).opacity;
-    return {name:'戳記', ic:'stamp', st:{spec}, html:`<button class="pchip" data-o="stamp">更換戳記…</button>${spec ? `<span class="sb-h">顏色</span><button class="cpick" data-cp="color" title="選擇顏色" style="--c:${STAMP_COLORS[spec.c] || spec.c}"><i></i>▾</button>` : ''}${opacitySel(op)}${spec ? '' : '<span class="sb-tip">舊版蓋的戳記無法改顏色，可以更換戳記</span>'}`};
+    return {name:'戳記', ic:'stamp', st:{spec}, html:`<button class="pchip" data-o="stamp">更換戳記…</button>${spec ? `<span class="sb-h">顏色</span><button class="cpick" data-cp="color" title="選擇顏色" style="--c:${STAMP_COLORS[spec.c] || normHex(spec.c) || '#d6336c'}"><i></i>▾</button>` : ''}${opacitySel(op)}${spec ? '' : '<span class="sb-tip">舊版蓋的戳記無法改顏色，可以更換戳記</span>'}`};
   }
   if (kind === 'image') return {name:'圖片', ic:'insImg', st:null, html:`<button class="pchip" data-o="image">更換圖片…</button><button class="pchip" data-o="ocr" title="用影像辨識讀出整張圖片裡的文字（在文字辨識視窗，可以複製）">${icon('ocr')}辨識整張</button><button class="pchip" data-o="ocrbox" title="在圖片上拖曳框選要辨識的範圍">${icon('rectI')}框選辨識</button>${opacitySel(readAnnStyle(dict).opacity)}`};
   const def = DRAW_TOOLS[kind], st = readObjStyle(dict);
@@ -8140,6 +8148,8 @@ function dragAnnot(e, d, onDone){
   };
   const begin = () => {
     moved = true; AS.dragging = true;
+    if (AS.ghost || AS.veil) return;   // (a nudge's picture and veil, still waiting to be written: they go on)
+    if (staleDrawing(i)) return;
     AS.ghost = rot ? snapshotTurned(i, s0, rot) : snapshot(i, s0);
     if (AS.ghost) { AS.ghost.className = 'aghost'; AS.el.appendChild(AS.ghost); }
     const v = document.createElement('div'); v.className = 'aveil';
@@ -8346,14 +8356,14 @@ async function readPictureText(ob){
 }
 // 框選辨識: the 文字辨識 tool limited to the picture: the part of it a box is dragged over is read as an image (the
 // picture is outlined meanwhile; another tool or Esc ends it)
-let PIC_OCR = null;   // {i, box (the picture)}
+var PIC_OCR = null;   // {doc, i, id, box (the picture)} (var: setTool may run before this line on start)
 function clearPicOcr(){ PIC_OCR = null; document.querySelectorAll('.picocr').forEach(n => n.remove()); }
 async function pictureOcrBox(ob){
   const a = (await getAnns(ob.i)).find(x => x.id === ob.id); if (!a) { toast('找不到這張圖片', 'err'); return; }
   const i = ob.i, pg = S.pages[i];
   setTool('ocr');
   if (S.tool !== 'ocr') return;
-  clearPicOcr(); PIC_OCR = {i, box:{x:a.x, y:a.y, w:a.w, h:a.h}};
+  clearPicOcr(); PIC_OCR = {doc:activeDoc(), i, id:a.id, box:{x:a.x, y:a.y, w:a.w, h:a.h}};
   const d = document.createElement('div'); d.className = 'picocr';
   Object.assign(d.style, {left:a.x / pg.w * 100 + '%', top:a.y / pg.h * 100 + '%', width:a.w / pg.w * 100 + '%', height:a.h / pg.h * 100 + '%'});
   S.els[i].querySelector('.ovl').appendChild(d);
@@ -8718,7 +8728,7 @@ function nudgeSelected(dx, dy){
   if (!NUDGE) {
     NUDGE = {doc:activeDoc(), i:AS.i, id:AS.a.id, ob:{...AS.box}};
     // as when dragged: a picture of it moves with the keys and a veil covers where it was, until the page is drawn again
-    if (!AS.ghost) {
+    if (!AS.ghost && !staleDrawing(AS.i)) {
       const s0 = AS.box, pg = S.pages[AS.i], rot = AS.rot || 0;
       AS.ghost = rot ? snapshotTurned(AS.i, s0, rot) : snapshot(AS.i, s0);
       if (AS.ghost) { AS.ghost.className = 'aghost'; AS.el.appendChild(AS.ghost); }
@@ -9211,14 +9221,21 @@ function startOcrDraw(i, e){
   const up = () => {
     window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); d.remove();
     if (box.w < 6 || box.h < 6) return;
-    if (PIC_OCR && PIC_OCR.i === i) {   // 框選辨識 on a picture: only the part on it, read as an image
-      const P = PIC_OCR.box, x0 = Math.max(box.x, P.x), y0 = Math.max(box.y, P.y), x1 = Math.min(box.x + box.w, P.x + P.w), y1 = Math.min(box.y + box.h, P.y + P.h);
-      if (x1 - x0 < 6 || y1 - y0 < 6) { toast('請在圖片上框選要辨識的範圍', 'err'); return; }
-      readRegion(i, {x:x0, y:y0, w:x1 - x0, h:y1 - y0}, {image:true}); return;
+    if (PIC_OCR && PIC_OCR.i === i && PIC_OCR.doc === activeDoc()) {   // 框選辨識 on a picture: only the part on it, read as an image
+      pictureOcrRead(i, box); return;
     }
     readRegion(i, box);
   };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+}
+async function pictureOcrRead(i, box){
+  const pic = PIC_OCR, a = (await getAnns(i)).find(x => x.id === pic.id);
+  if (!a) { clearPicOcr(); toast('找不到那張圖片，改用一般的文字辨識'); readRegion(i, box); return; }
+  {
+      const P = {x:a.x, y:a.y, w:a.w, h:a.h}, x0 = Math.max(box.x, P.x), y0 = Math.max(box.y, P.y), x1 = Math.min(box.x + box.w, P.x + P.w), y1 = Math.min(box.y + box.h, P.y + P.h);
+      if (x1 - x0 < 6 || y1 - y0 < 6) { toast('請在圖片上框選要辨識的範圍', 'err'); return; }
+      readRegion(i, {x:x0, y:y0, w:x1 - x0, h:y1 - y0}, {image:true});
+  }
 }
 // read the text in box on page i: the PDF's own text unless `image` is asked for; dir 'h' / 'v' forces the writing direction
 async function readRegion(i, box, {image = false, dir = null} = {}){
