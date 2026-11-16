@@ -105,6 +105,32 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .ctx button kbd{margin-left:auto}
 .ctx hr{border:0;border-top:1px solid var(--line);margin:4px 2px}
 .ctx .hd{font-size:11px;color:var(--ink3);padding:4px 10px 2px}
+/* 右鍵編輯選單 (formatMenu) */
+.ctx.fmx{width:338px}
+.ctx.fmx .r{display:flex;align-items:center;gap:6px;padding:3px 10px;min-height:30px}
+.ctx.fmx .r>.l{width:54px;flex:none;color:var(--ink2);font-size:12px}
+.ctx.fmx .r .grow{flex:1;display:flex;gap:3px;flex-wrap:wrap;align-items:center}
+.ctx.fmx .r button{width:auto;padding:0;justify-content:center;border-radius:4px}
+.ctx.fmx .r button:hover:not(:disabled){background:var(--hover)}
+.ctx.fmx .fb{flex:1;display:flex!important;justify-content:space-between!important;background:var(--surface2)!important;border:1px solid var(--line2)!important;border-radius:5px!important;padding:4px 8px!important;font-size:13px;min-width:0}
+.ctx.fmx .fb span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ctx.fmx .sz{display:flex;border:1px solid var(--line2);border-radius:5px;overflow:hidden;background:var(--surface2)}
+.ctx.fmx .sz input{width:48px;border:0;background:transparent;padding:4px 6px;font-size:13px;outline:none}
+.ctx.fmx .sz button,.ctx.fmx .sz b{padding:3px 7px!important;border-left:1px solid var(--line2)!important;border-radius:0!important;font-weight:400;color:var(--ink2)}
+.ctx.fmx .chip{min-width:24px;padding:3px 5px!important;border:1px solid var(--line)!important;font-size:12px}
+.ctx.fmx .chip.on{border-color:var(--seal)!important;background:var(--seal-soft)!important;color:var(--seal-ink)}
+.ctx.fmx .sw{width:19px;height:19px;border-radius:50%!important;border:1px solid rgba(127,127,127,.35)!important;font-size:11px;color:#555}
+.ctx.fmx .sw.on{outline:2px solid var(--seal-ink);outline-offset:1px}
+.ctx.fmx .wheel{gap:4px;padding:2px 7px 2px 3px!important;border:1px solid var(--line2)!important;border-radius:12px!important;font-size:12px;color:var(--ink2)}
+.ctx.fmx .wheel i{width:16px;height:16px;border-radius:50%;background:conic-gradient(red,yellow,lime,cyan,blue,magenta,red)}
+.ctx.fmx .tg{width:30px;height:26px;border:1px solid var(--line2)!important;border-radius:5px!important}
+.ctx.fmx .tg.on{background:var(--seal-soft)!important;border-color:var(--seal)!important;color:var(--seal-ink)}
+.ctx.fmx .zb{width:34px;height:26px;border:1px solid var(--line2)!important;border-radius:5px!important}
+.ctx.fmx .zb svg.i{width:15px;height:15px}
+.ctx.fmx .ckb{gap:6px;font-size:12px;color:var(--ink2);padding:2px 4px!important}
+.ctx.fmx .ckb s{width:14px;height:14px;border:1px solid var(--line2);border-radius:3px;display:inline-grid;place-items:center;text-decoration:none;font-size:10px}
+.ctx.fmx .ckb.on s{background:var(--seal);border-color:var(--seal);color:#fff}
+.ctx.fmx .sec{font-size:11px;color:var(--ink3);padding:6px 10px 0}
 .viewbar{background:var(--bar);border-bottom:1px solid var(--line2);display:flex;align-items:center;gap:6px;padding:5px 10px;flex:none;overflow-x:auto;overflow-y:hidden;white-space:nowrap;scrollbar-width:thin}
 /* the bar never squashes its items; when narrow it sheds words step by step (fitViewbar), then scrolls sideways */
 .viewbar>*{flex-shrink:0}
@@ -2642,30 +2668,10 @@ viewer.addEventListener('contextmenu', async e => {
    and delete. Each choice works the bar's own control (a list opens as a second page of the menu), so the menu always
    offers what the bar does. */
 function ctxAt(e, html, onclick){
-  ctx.innerHTML = html; ctx.style.display = 'block'; ctxShownAt = performance.now();
+  ctx.classList.remove('fmx'); ctx.innerHTML = html; ctx.style.display = 'block'; ctxShownAt = performance.now();
   const w = ctx.offsetWidth, h = ctx.offsetHeight;
   ctx.style.left = Math.min(e.clientX, innerWidth - w - 8) + 'px'; ctx.style.top = Math.min(e.clientY, innerHeight - h - 8) + 'px';
   ctx.onclick = onclick;
-}
-// the controls of the bar shown now (#hint), as menu entries [{label, run, sub?:[{label, on, run}], on?}]
-function barEntries(){
-  const bar = $('#hint'), out = [];
-  const labelOf = el => { let p = el.previousElementSibling; while (p && !p.classList.contains('sb-h') && (p.classList.contains('cpick') || p.tagName === 'BUTTON')) p = p.previousElementSibling; return p && p.classList.contains('sb-h') ? p.textContent.trim() : ''; };
-  const TBC = {color:'文字顏色', bg:'文字底色', boxBg:'方塊背景'};
-  bar.querySelectorAll('button, select, input[type="checkbox"]').forEach(el => {
-    if (el.closest('.sb-g') || el.disabled) return;   // (the presets)
-    if (el.matches('[data-tbfont]')) out.push({label:'字型…', run:() => el.click()});
-    else if (el.matches('[data-szm]')) out.push({label:'字級…', run:() => el.click()});
-    else if (el.matches('.cpick[data-tbc]')) out.push({label:(TBC[el.dataset.tbc] || '顏色') + '…', run:() => el.click()});
-    else if (el.matches('.cpick[data-cp]')) { const l = el.dataset.cp === 'fill' ? '填色' : labelOf(el); out.push({label:(!l ? '顏色' : /色$/.test(l) ? l : l + '顏色') + '…', run:() => el.click()}); }
-    else if (el.matches('button.tfmt')) out.push({label:(el.title || '').replace(/\s*\(.*$/, ''), on:el.classList.contains('on'), run:() => el.click()});
-    else if (el.matches('button.pchip[data-o]')) out.push({label:el.textContent.trim(), run:() => el.click()});
-    else if (el.tagName === 'SELECT') {
-      const lab = el.closest('label'), l = lab ? [...lab.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('').trim() : '';
-      out.push({label:l || '選項', sub:[...el.options].map(o => ({label:o.textContent.trim(), on:o.selected, run:() => { el.value = o.value; el.dispatchEvent(new Event('change', {bubbles:true})); }}))});
-    } else if (el.type === 'checkbox') { const lab = el.closest('label'); out.push({label:lab ? lab.textContent.trim() : '', on:el.checked, run:() => { el.checked = !el.checked; el.dispatchEvent(new Event('change', {bubbles:true})); }}); }
-  });
-  return out;
 }
 const ctxBtn = (k, label, on, ic, more = '') => `<button data-k="${k}">${ic ? icon(ic) : ''}${esc(label)}${on ? ' ✓' : ''}${more}</button>`;
 function showEntries(e, head, groups){   // groups: [[entry]] with hr between; an entry with sub opens its list
@@ -2679,17 +2685,95 @@ function showEntries(e, head, groups){   // groups: [[entry]] with hr between; a
     en.run();
   });
 }
+/* 右鍵編輯選單: rows of settings that act at once (a colour, a size typed and Enter, a toggle), as the bar above the pages
+   offers them; 色環… opens the colour wheel, 字型… the font list. rows: {t:'font', cur, open(at)} | {t:'size', cur, set(v)} |
+   {t:'col', label, cur, list, none, title, set(v)} | {t:'tog', items:[{h, title, on, run}]} | {t:'chips', label, items:[{label,
+   on, run}]} | {t:'num', label, unit, cur, min, max, chips, set(v)} | {t:'chk', label, on, set(b)} | {t:'z', i, id} | {t:'sec', label}
+   | {t:'hr'} | {t:'it', label, ic, kb, run}. keepSel: the text editor's menu (the highlighted text stays highlighted) */
+const FM_TEXT = ['#1f2328', '#e03131', '#1c64d9', '#2b8a3e', '#f76707', '#ffd43b'], FM_BG = ['', '#ffd43b', '#b2f2bb', '#a5d8ff', '#fcc2d7'];
+const FM_BOX = ['', '#fff9db', '#e7f5ff', '#ebfbee', '#ffffff'], FM_LINE = ['#e03131', '#1c64d9', '#2b8a3e', '#f76707', '#1f2328', '#7048e8'];
+const FM_FILL = ['', '#ffc9c9', '#a5d8ff', '#b2f2bb', '#ffec99', '#ffffff'], FM_HL = ['#ffd43b', '#b2f2bb', '#a5d8ff', '#fcc2d7', '#ffc078'];
+const FM_SIZES = [8, 10, 12, 14, 18, 24, 36], FM_WIDTHS = [0.5, 1, 2, 3, 4, 6, 8], FM_OPS = [1, .75, .5, .25];
+function textFormatRows(st, apply, toggle, openFont, editing){
+  return [
+    {t:'font', cur:st.font, open:openFont},
+    {t:'size', cur:st.size, set:v => apply('size', v)},
+    {t:'col', label:'文字顏色', cur:st.color, list:FM_TEXT, title:'文字顏色', set:v => apply('color', v)},
+    {t:'col', label:'文字底色', cur:st.bg, list:FM_BG, none:true, title:'文字底色', set:v => apply('bg', v)},
+    {t:'tog', label:'樣式', items:[['bold', '<b>B</b>', '粗體'], ['italic', '<i>I</i>', '斜體'], ['underline', '<u>U</u>', '底線']].map(([k, h, title]) => ({h, title, on:!!st[k], run:() => toggle(k)}))},
+    ...(editing ? [{t:'sec', label:'整個方塊'}] : []),
+    {t:'col', label:'方塊背景', cur:st.boxBg, list:FM_BOX, none:true, title:'方塊背景', set:v => apply('boxBg', v)},
+    {t:'chk', label:'框線', on:!!st.border, set:b => apply('border', b)}];
+}
+function formatMenu(e, head, rows, {keepSel = false} = {}){
+  const acts = [], inputs = [], A = f => { acts.push(f); return acts.length - 1; };
+  const same = (a, b) => (normHex(a) || '') === (normHex(b) || '');
+  const sw = (c, on, set) => c ? `<button class="sw${on ? ' on' : ''}" data-a="${A(() => set(c))}" title="${c}" style="background:${c}"></button>` : `<button class="sw${on ? ' on' : ''}" data-a="${A(() => set(''))}" title="無" style="background:#fff">∅</button>`;
+  const wheel = r => `<button class="wheel" data-a="${A((ev, b) => { const q = b.getBoundingClientRect(); hideCtx(); openColorPicker({anchor:null, at:{left:q.left, top:q.top, bottom:q.bottom}, value:r.cur || '', none:!!r.none, title:r.title, onPick:r.set}); })}" title="色環、滴管、我的最愛"><i></i>色環…</button>`;
+  const row = (l, inner) => `<div class="r"><span class="l">${esc(l || '')}</span>${inner}</div>`;
+  const html = rows.map(r => {
+    if (r.t === 'hr') return '<hr>';
+    if (r.t === 'sec') return `<div class="sec">${esc(r.label)}</div>`;
+    if (r.t === 'it') return `<button data-a="${A(() => { hideCtx(); r.run(); })}">${r.ic ? icon(r.ic) : ''}${esc(r.label)}${r.kb ? `<kbd>${esc(r.kb)}</kbd>` : ''}</button>`;
+    if (r.t === 'font') return row('字型', `<button class="fb" data-a="${A((ev, b) => { const q = b.getBoundingClientRect(); hideCtx(); r.open({left:q.left, top:q.top, bottom:q.bottom}); })}" style="font-family:${esc(fontStack(r.cur))}"><span>${esc(fontButtonLabel(r.cur))}</span>▾</button>`);
+    if (r.t === 'size') { inputs.push({k:'size', set:r.set}); return row('字級', `<span class="sz"><input data-in="${inputs.length - 1}" value="${fmtTBSize(r.cur)}" data-v="${fmtTBSize(r.cur)}" inputmode="decimal" spellcheck="false" autocomplete="off" title="字級（4～400，可以有小數點，按 Enter 套用）"><button data-a="${A((ev, b) => showSizeMenu(b, r.set))}" title="常用字級">▾</button></span>`)
+      + row('', `<span class="grow">${FM_SIZES.map(v => `<button class="chip${Math.abs(v - r.cur) < .05 ? ' on' : ''}" data-a="${A(() => { hideCtx(); r.set(v); })}">${v}</button>`).join('')}</span>`); }
+    if (r.t === 'num') { inputs.push({k:'num', set:r.set, min:r.min, max:r.max}); return row(r.label, `<span class="sz"><input data-in="${inputs.length - 1}" value="${+(+r.cur).toFixed(2)}" data-v="${+(+r.cur).toFixed(2)}" inputmode="decimal" spellcheck="false" autocomplete="off" title="輸入數字後按 Enter 套用"><b>${esc(r.unit || '')}</b></span>`)
+      + row('', `<span class="grow">${r.chips.map(v => `<button class="chip${Math.abs(v - r.cur) < .01 ? ' on' : ''}" data-a="${A(() => { hideCtx(); r.set(v); })}">${v}</button>`).join('')}</span>`); }
+    if (r.t === 'col') { const set = v => { hideCtx(); r.set(v); }, list = r.list.slice(); if (r.cur && !list.some(c => same(c, r.cur))) list.push(r.cur);
+      return row(r.label, `<span class="grow">${list.map(c => sw(c, c ? same(c, r.cur) : !r.cur, set)).join('')}${wheel(r)}</span>`); }
+    if (r.t === 'tog') return row(r.label || '', `<span class="grow">${r.items.map(it => `<button class="tg${it.on ? ' on' : ''}" title="${esc(it.title)}" data-a="${A(() => { hideCtx(); it.run(); })}">${it.h}</button>`).join('')}</span>`);
+    if (r.t === 'chips') return row(r.label, `<span class="grow">${r.items.map(it => `<button class="chip${it.on ? ' on' : ''}" data-a="${A(() => { hideCtx(); it.run(); })}">${esc(it.label)}</button>`).join('')}</span>`);
+    if (r.t === 'chk') return row('', `<button class="ckb${r.on ? ' on' : ''}" data-a="${A(() => { hideCtx(); r.set(!r.on); })}"><s>${r.on ? '✓' : ''}</s>${esc(r.label)}</button>`);
+    if (r.t === 'z') return row('上下層級', `<span class="grow">${Z_BTNS.map(([k, t, ic, kb]) => `<button class="zb" title="${t}（${kb}）" data-a="${A(() => { hideCtx(); stackObj(r.i, r.id, Z_HOW[k]); })}">${icon(ic)}</button>`).join('')}</span>`);
+    return '';
+  }).join('');
+  ctxAt(e, `<div class="hd">${esc(head)}</div>${html}`, ev => { const b = ev.target.closest('[data-a]'); if (!b) return; const f = acts[+b.dataset.a]; if (f) f(ev, b); });
+  ctx.classList.add('fmx');
+  ctx.onpointerdown = ev => { if (keepSel && !ev.target.closest('input')) ev.preventDefault(); };
+  ctx.onkeydown = ev => {
+    const el = ev.target; if (!el.matches || !el.matches('input[data-in]')) return;
+    if (ev.key !== 'Enter' && ev.key !== 'Escape') return;
+    ev.preventDefault(); ev.stopPropagation();
+    if (ev.key === 'Escape') { hideCtx(); if (keepSel && TBE) restoreTBRange(); return; }
+    const inp = inputs[+el.dataset.in];
+    if (inp.k === 'size') { const v = parseTBSize(el.value); if (v == null) { el.value = el.dataset.v; toast('字級請輸入 4～400 的數字（可以有小數點）', 'err'); el.select(); return; } hideCtx(); inp.set(v); return; }
+    const n = parseFloat(String(el.value).normalize('NFKC').replace(',', '.'));
+    if (!(n >= inp.min && n <= inp.max)) { el.value = el.dataset.v; toast(`請輸入 ${inp.min}～${inp.max} 的數字`, 'err'); el.select(); return; }
+    hideCtx(); inp.set(Math.round(n * 100) / 100);
+  };
+}
 async function showObjMenu(e, i, a){
-  for (let k = 0; k < 40 && !(OBJBAR && !OBJBAR.multi && OBJBAR.id === a.id && $('#hint').classList.contains('objbar')); k++) await new Promise(r => setTimeout(r, 25));   // (its bar is drawn)
+  for (let k = 0; k < 80 && OBJBAR_FOR !== a.id; k++) await new Promise(r => setTimeout(r, 25));   // (its bar is settled)
   if (!AS || AS.a.id !== a.id) return;
-  const style = OBJBAR && OBJBAR.id === a.id ? barEntries() : [];
-  const edit = [];
-  if (AS.bar.querySelector('[data-x="edit"]')) edit.push({label:'編輯文字', ic:'text', run:() => { deselectAnnot(); editTextBox(i, a); }});
-  const order = Z_BTNS.filter(z => AS.bar.querySelector(`[data-x="${z[0]}"]`)).map(([k, t, ic, kb]) => ({label:t, ic, kb, run:() => stackObj(i, a.id, Z_HOW[k])}));
-  const tail = [];
-  if (copyableAnn(a)) { tail.push({label:'複製', ic:'copy', kb:'Ctrl+C', run:() => copyObjects(i, [a])}); tail.push({label:'剪下', ic:'cut', kb:'Ctrl+X', run:() => copyObjects(i, [a], {cut:true})}); }
-  tail.push({label:'刪除', ic:'trash', kb:'Delete', run:() => deleteSelected()});
-  showEntries(e, (OBJBAR && OBJBAR.id === a.id && $('#hint .sb-t') ? $('#hint .sb-t').textContent.trim() : a.label) || a.label, [edit, style, order, tail]);
+  const ob = OBJBAR && !OBJBAR.multi && OBJBAR.id === a.id ? OBJBAR : null, kind = ob && ob.kind, st = ob && ob.style || {}, def = kind && DRAW_TOOLS[kind];
+  const set = k => v => restyleSelected({[k]:v}, ob);
+  const rows = [];
+  if (kind === 'textbox') {
+    if (AS.bar.querySelector('[data-x="edit"]')) rows.push({t:'it', label:'編輯文字', ic:'text', kb:'雙擊', run:() => { deselectAnnot(); editTextBox(i, a); }}, {t:'hr'});
+    rows.push(...textFormatRows(st, (k, v) => restyleSelected({[k]:v}, ob), k => restyleSelected({[k]:'toggle'}, ob), at => openFontMenu(null, at, {cur:st.font, onPick:f => restyleSelected({font:f}, ob)}), false));
+  } else if (kind === 'stamp') {
+    rows.push({t:'it', label:'更換戳記…', ic:'stamp', run:() => changeStampOf(ob)});
+    if (st.spec) rows.push({t:'col', label:'顏色', cur:STAMP_COLORS[st.spec.c] || st.spec.c, list:Object.values(STAMP_COLORS), title:'戳記顏色', set:set('color')});
+  } else if (kind === 'image') {
+    rows.push({t:'it', label:'更換圖片…', ic:'insImg', run:() => changeImageOf(ob)}, {t:'it', label:'辨識文字', ic:'ocr', run:() => readPictureText(ob)});
+  } else if (def) {
+    const k = def.kind;
+    rows.push({t:'col', label:k === 'line' ? '線條顏色' : (k === 'box' || k === 'poly') ? '框線顏色' : '顏色', cur:st.color, list:k === 'text' ? FM_HL : FM_LINE, title:'顏色', set:set('color')});
+    if (k === 'box' || (k === 'poly' && def.closed)) rows.push({t:'col', label:'填色', cur:st.fill, list:FM_FILL, none:true, title:'填色顏色', set:set('fill')});
+    if (['line', 'box', 'poly', 'pen'].includes(k)) rows.push({t:'num', label:'粗細', unit:'pt', cur:st.width || 1, min:.1, max:50, chips:FM_WIDTHS, set:set('width')});
+    if (['line', 'box', 'poly'].includes(k)) rows.push({t:'chips', label:'線條', items:[{label:'實線', on:!st.dash, run:() => set('dash')(false)}, {label:'虛線', on:!!st.dash, run:() => set('dash')(true)}]});
+    const head = $('#hint select[data-s="head"]');
+    if (head) rows.push({t:'chips', label:'箭頭', items:[...head.options].map(o => ({label:o.textContent.trim(), on:o.selected, run:() => set('head')(o.value)}))});
+  }
+  if (ob && kind !== 'textbox') { const op = st.opacity == null ? 1 : +st.opacity, L = FM_OPS.slice(); if (!L.some(o => Math.abs(o - op) < .005)) { L.push(op); L.sort((x, y) => y - x); }
+    rows.push({t:'chips', label:'透明度', items:L.map(o => ({label:Math.round(o * 100) + '%', on:Math.abs(o - op) < .005, run:() => set('opacity')(o)}))}); }
+  if (AS.bar.querySelector('[data-x^="z-"]')) rows.push({t:'hr'}, {t:'z', i, id:a.id});
+  rows.push({t:'hr'});
+  if (copyableAnn(a)) rows.push({t:'it', label:'複製', ic:'copy', kb:'Ctrl+C', run:() => copyObjects(i, [a])}, {t:'it', label:'剪下', ic:'cut', kb:'Ctrl+X', run:() => copyObjects(i, [a], {cut:true})});
+  rows.push({t:'it', label:'刪除', ic:'trash', kb:'Delete', run:() => deleteSelected()});
+  const name = $('#hint').classList.contains('objbar') && $('#hint .sb-t') ? $('#hint .sb-t').textContent.trim() : '已選取：' + a.label;
+  formatMenu(e, name, rows);
 }
 function showMultiMenu(e){
   if (!MS) return;
@@ -4103,7 +4187,7 @@ async function pasteClip(at){
   }, {scrollToCurrent:true, highlight:{from:at, count:clip.count, label:'貼上的頁面'}});
 }
 const ctx = $('#ctx');
-function hideCtx(){ ctx.style.display = 'none'; ctx.onpointerdown = null; delete ctx.dataset.for; }
+function hideCtx(){ ctx.style.display = 'none'; ctx.onpointerdown = null; ctx.onkeydown = null; ctx.classList.remove('fmx'); delete ctx.dataset.for; }
 document.addEventListener('pointerdown', e => { if (!ctx.contains(e.target) && !(ctx.dataset.for === 'nau' && e.target.closest && e.target.closest('.nau'))) hideCtx(); }, true);   // (the author button closes its own list on its click)
 let ctxShownAt = 0;
 viewer.addEventListener('scroll', () => { if (performance.now() - ctxShownAt > 600) hideCtx(); });   // ignore the scroll a right-click itself causes
@@ -4730,28 +4814,14 @@ function showTextColorMenu(btn, key, at){
   openColorPicker({anchor:btn, at, value:st[key], none:key !== 'color', title:{color:'文字顏色', bg:'文字底色', boxBg:'方塊背景'}[key], onPick:v => applyTextFormat(key, v)});
 }
 function showTextMenu(e){
-  ctx.innerHTML = `<div class="hd">文字格式（套用到反白的文字）</div>
-    <div class="tm-sizes">${[10, 12, 14, 18, 24, 32, 48].map(v => `<button data-sz="${v}">${v}</button>`).join('')}</div>
-    <div class="tm-cols">${['#1f2328', '#e03131', '#1c64d9', '#2b8a3e', '#f76707', '#7048e8'].map(c => `<button data-col="${c}" style="background:${c}" title="文字顏色"></button>`).join('')}</div>
-    <div class="tm-cols">${['#ffd43b', '#b2f2bb', '#a5d8ff', '#fcc2d7', ''].map(c => `<button data-hl="${c}" style="background:${c || '#fff'}" title="${c ? '文字底色' : '清除底色'}">${c ? '' : '∅'}</button>`).join('')}</div>
-    <button data-more="color">🎨　更多文字顏色…</button><button data-more="bg">🎨　更多文字底色…</button>
-    <button data-font="1">Aa　字型…</button>
-    <hr><button data-f="bold"><b>B</b>　粗體</button><button data-f="italic"><i>I</i>　斜體</button><button data-f="underline"><u>U</u>　底線</button>
-    <hr><button data-f="done">完成編輯</button>`;
-  ctx.style.display = 'block'; ctxShownAt = performance.now();
-  ctx.style.left = Math.min(e.clientX, innerWidth - ctx.offsetWidth - 8) + 'px'; ctx.style.top = Math.min(e.clientY, innerHeight - ctx.offsetHeight - 8) + 'px';
-  ctx.onpointerdown = ev => ev.preventDefault();
-  ctx.onclick = ev => {
-    const b = ev.target.closest('button'); if (!b) return;
-    if (b.dataset.more) { hideCtx(); showTextColorMenu(null, b.dataset.more, {left:ev.clientX, top:ev.clientY, bottom:ev.clientY}); return; }
-    if (b.dataset.font) { hideCtx(); openFontMenu(null, {left:ev.clientX, top:ev.clientY, bottom:ev.clientY}); return; }
-    if (b.dataset.sz) applyTextFormat('size', +b.dataset.sz);
-    else if (b.dataset.col) applyTextFormat('color', b.dataset.col);
-    else if (b.dataset.hl != null) applyTextFormat('bg', b.dataset.hl);
-    else if (b.dataset.f === 'done') { hideCtx(); commitTextEditor(); return; }
-    else if (b.dataset.f) applyTextFormat(b.dataset.f, !currentTBStyle()[b.dataset.f]);
-    hideCtx();
-  };
+  // (the highlighted text was kept by the caller: saveTBRange) — applyTextFormat restores it before each change
+  const st = currentTBStyle(), box = TBE ? {boxBg:TBE.el.dataset.boxbg || '', border:!!TBE.el.dataset.border} : {boxBg:st.boxBg, border:st.border};
+  const apply = (k, v) => applyTextFormat(k, v);
+  const edit = cmd => { restoreTBRange(); if (TBE) TBE.el.focus(); try { document.execCommand(cmd); } catch (_) {} };
+  formatMenu(e, '文字格式（套用到反白的文字）', [
+    ...textFormatRows({...st, ...box}, apply, k => applyTextFormat(k, !currentTBStyle()[k]), at => openFontMenu(null, at), true),
+    {t:'hr'}, {t:'it', label:'剪下', ic:'cut', kb:'Ctrl+X', run:() => edit('cut')}, {t:'it', label:'複製', ic:'copy', kb:'Ctrl+C', run:() => edit('copy')}, {t:'it', label:'貼上', ic:'paste', kb:'Ctrl+V', run:() => edit('paste')},
+    {t:'hr'}, {t:'it', label:'完成編輯', ic:'select', kb:'Esc', run:() => commitTextEditor()}], {keepSel:true});
 }
 /* the font menu: search box, then 預設 / 最近用過 / 中文字型 / 其他字型; each name is shown in its own font */
 const FONT_RECENT_KEY = 'pdfeditor.fonts.recent.v1';
@@ -7931,8 +8001,13 @@ function tbObjStyle(rt){
     bold:all('bold'), italic:all('italic'), underline:all('underline'), boxBg:rt.box && rt.box.boxBg || '', border:!!(rt.box && rt.box.border)};
 }
 let OBJBAR = null;   // the object the bar shows: {i, id, kind, doc, st (a text box's tbObjStyle)}
+let OBJBAR_FOR = null;   // the selected object whose bar is settled (shown, or none for it): the right-click menu waits for it
 async function paintObjBar(){
   markLayerSel();
+  OBJBAR_FOR = null;
+  try { await paintObjBar_(); } finally { OBJBAR_FOR = AS ? AS.a.id : null; }
+}
+async function paintObjBar_(){
   const h = $('#hint');
   const drop = () => { OBJBAR = null; if (h.classList.contains('objbar')) { h.classList.remove('objbar', 'show', 'styl', 'multi'); h.innerHTML = ''; } };
   if (S.tool === 'select' && MS) {
@@ -7953,7 +8028,7 @@ async function paintObjBar(){
   const o = objBarHTML(kind, dict, doc);
   h.innerHTML = `<b class="sb-t">${icon(o.ic)}已選取：${esc(o.name)}</b><span class="sb-row">${o.html}</span>`;
   h.classList.add('show', 'styl', 'objbar');
-  OBJBAR = {i, id:a.id, kind, doc:activeDoc(), st:o.st};
+  OBJBAR = {i, id:a.id, kind, doc:activeDoc(), st:o.st, style:o.style || (kind === 'stamp' || kind === 'image' ? {...readObjStyle(dict), ...(o.st || {})} : o.st)};
 }
 // the bar of several selected objects: align (to the selection or the page), distribute (3 or more), delete
 let ALIGN_TO = 'sel';
@@ -7998,7 +8073,7 @@ function objBarHTML(kind, dict, doc = null){
   if (kind === 'image') return {name:'圖片', ic:'insImg', st:null, html:`<button class="pchip" data-o="image">更換圖片…</button><button class="pchip" data-o="ocr" title="用影像辨識讀出這張圖片裡的文字（在文字辨識視窗，可以複製）">${icon('ocr')}辨識文字</button>${opacitySel(readAnnStyle(dict).opacity)}`};
   const def = DRAW_TOOLS[kind], st = readObjStyle(dict);
   if (kind === 'fill' && subOf(dict) === 'Stamp' && !dict.get(N_('CA')) && doc) st.opacity = fillAlpha(doc, dict);   // (made before v1.0.34: the opacity is in its picture only)
-  return {name:subjOf(dict) === '區域螢光筆' ? '區域螢光筆' : def.label.replace('工具', ''), ic:def.ic, html:styleBar(kind, st, true), st:null};
+  return {name:subjOf(dict) === '區域螢光筆' ? '區域螢光筆' : def.label.replace('工具', ''), ic:def.ic, html:styleBar(kind, st, true), st:null, style:st};
 }
 // an area fill's opacity read from its picture (the most opaque pixel of its mask)
 function fillAlpha(doc, dict){
@@ -12794,7 +12869,7 @@ window.__pdfapp = {
   fontBytesInfo:async (family, bold) => { const r = await realFontInfo(family, bold); return {bytes:r.bytes.length, synthetic:r.synthetic}; },
   failEmbed:family => { EMBED_FAIL.add(family); },
   fontkitPatch:on => { fkPatchOn = !!on; },
-  oldLayout:on => { TB_OLD_SPLIT = !!on; }, objClip:() => OBJ_CLIP && {n:OBJ_CLIP.n, from:OBJ_CLIP.from, i:OBJ_CLIP.src.i, subs:OBJ_CLIP.items.map(t => t.sub), shared:OBJ_CLIP.shared},
+  oldLayout:on => { TB_OLD_SPLIT = !!on; }, pendImage:async f => { PENDING_IMG = await loadImageFile(f); setTool('image'); }, objClip:() => OBJ_CLIP && {n:OBJ_CLIP.n, from:OBJ_CLIP.from, i:OBJ_CLIP.src.i, subs:OBJ_CLIP.items.map(t => t.sub), shared:OBJ_CLIP.shared},
   writeSettingsNow:() => { saveView_(); saveTB(); saveStyles(); },
   settleEdits, nudgeState:() => ({pending:!!NUDGE, running:!!NUDGE_RUN}), pageClipBytes:() => PAGE_CLIP ? PAGE_CLIP.bytes : null,
   faceChoice:(styles, bold) => { const r = chooseFace(styles.map(style => ({style})), bold); return {style:r.face.style, synthetic:r.synthetic}; },

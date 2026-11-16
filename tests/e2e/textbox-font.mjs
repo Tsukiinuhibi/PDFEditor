@@ -163,8 +163,8 @@ check('missing font kept', same(runs(await rtOf('Missing')), [['Missing', 'No Su
 await clickAt(440, 660); await win.keyboard.type('ctx'); await win.waitForTimeout(150);
 const tb = await win.locator('.tbed').boundingBox();
 await win.mouse.click(tb.x + tb.width / 2, tb.y + tb.height / 2, {button:'right'}); await win.waitForTimeout(250);
-check('right-click menu has 字型…', await A(() => [...document.querySelectorAll('#ctx button')].some(b => b.textContent.trim().endsWith('字型…'))));
-await win.click('#ctx button[data-font]'); await win.waitForTimeout(300);
+check('right-click menu has 字型 (v4.7.0: the font row)', await A(() => !!document.querySelector('#ctx .fb')));
+await win.click('#ctx .fb'); await win.waitForTimeout(300);
 check('字型… opens the font menu', !!(await menu()));
 await win.keyboard.press('Escape'); await win.waitForTimeout(150); await commit();
 // the PDF's own text: no font control
@@ -172,7 +172,7 @@ p = await at('A test document'); await win.waitForTimeout(250); await win.mouse.
 check('page text: has the font button (v1.0.27)', await A(() => !!document.querySelector('.tbed.real')) && await fontBtn() !== null);
 const tr = await win.locator('.tbed').boundingBox();
 await win.mouse.click(tr.x + 10, tr.y + tr.height / 2, {button:'right'}); await win.waitForTimeout(250);
-check('page text: 字型… in the right-click menu (v1.0.27)', await A(() => [...document.querySelectorAll('#ctx button')].some(b => b.textContent.trim().endsWith('字型…'))));
+check('page text: 字型 in the right-click menu (v1.0.27)', await A(() => !!document.querySelector('#ctx .fb')));
 await win.keyboard.press('Escape'); await win.waitForTimeout(150); await win.keyboard.press('Escape'); await win.waitForTimeout(2000);
 // 600 families: opening and searching stay quick
 await A(() => window.__pdfapp.fontCatFake(600));

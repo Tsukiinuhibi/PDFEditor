@@ -18,6 +18,7 @@ const see = async (i, x, y) => {
 const anns = (i, sub) => A(async ([i, sub]) => (await window.__pdfapp.getAnns(i)).filter(a => !sub || a.subtype === sub).map(a => ({id:a.id, sub:a.subtype, contents:a.contents, x:a.x, y:a.y, w:a.w, h:a.h})), [i, sub]);
 const tool = async t => { await A(t => window.__pdfapp.setTool(t), t); await win.waitForTimeout(250); if (await A(() => document.querySelector('#mask').classList.contains('show'))) { await win.keyboard.press('Escape'); await win.waitForTimeout(250); } };
 const curTool = () => A(() => window.__pdfapp.S.tool);
+const objMenu = () => A(() => { const c = document.querySelector('#ctx'); return c.style.display === 'block' && c.classList.contains('fmx'); });
 const menu = () => A(() => { const c = document.querySelector('#ctx'); return c.style.display === 'block' ? [...c.querySelectorAll('button[data-c]')].map(b => b.dataset.c) : null; });
 const rclick = async xy => { await win.mouse.click(...xy, {button:'right'}); await win.waitForTimeout(700); };
 const click = async xy => { await win.mouse.click(...xy); await win.waitForTimeout(300); };
@@ -91,7 +92,7 @@ await win.keyboard.press('Escape'); await win.waitForTimeout(200);
 const sq = (await anns(0, 'Square'))[0], onSq = () => see(0, sq.x + 4, sq.y + sq.h / 2);
 await tool('pen'); await rclick(await onSq());
 const s1 = await A(() => window.__pdfapp.sel());
-check('畫筆: a right-click on a rectangle goes back to 選取 and selects it', (await curTool()) === 'select' && s1?.id === sq.id && (await menu()) === null, {tool:await curTool(), s1});
+check('畫筆: a right-click on a rectangle goes back to 選取, selects it and opens its menu (v4.7.0)', (await curTool()) === 'select' && s1?.id === sq.id && await objMenu(), {tool:await curTool(), s1});
 const poly = (await anns(0, 'Polygon'))[0];
 await click(await see(0, poly.x + poly.w / 2, poly.y + poly.h * 0.6));
 const s2a = await A(() => window.__pdfapp.sel());
@@ -147,7 +148,7 @@ check('多邊形 finished by a right-click inside it: drawn, back to 選取, not
 // a right-click on the selected object itself: still selected
 await tool('select'); await click(await onSq());
 await rclick(await onSq());
-check('a right-click on the selected object itself: it stays selected, no menu', (await selNow())?.id === sq.id && (await menu()) === null, {sel:await selNow()});
+check('a right-click on the selected object itself: it stays selected, its menu opens (v4.7.0)', (await selNow())?.id === sq.id && await objMenu(), {sel:await selNow()});
 // a right-click while a selected object is being dragged (left button held): the drag ends, nothing moves, no error
 const sqB = (await anns(0, 'Square')).find(a => a.id === sq.id), e0 = errs.length;
 const o0 = await onSq();

@@ -29,7 +29,7 @@ const pic = (await Ev(async () => (await window.__pdfapp.getAnns(0)).filter(a =>
 check('(a picture of text inserted)', !!pic, pic);
 { const p = await at(pic.x + pic.w / 2, pic.y + pic.h / 2); await win.mouse.click(p.x, p.y); await win.waitForTimeout(1200); }
 const btn = await Ev(() => !!document.querySelector('#hint.objbar [data-o="ocr"]'));
-check('the bar of a selected picture has 〔辨識文字〕', btn);
+check('the bar of a selected picture has 〔辨識整張〕', btn);
 if (btn) await win.click('#hint.objbar [data-o="ocr"]');
 let r = null;
 for (let k = 0; k < 120; k++) {
@@ -38,6 +38,27 @@ for (let k = 0; k < 120; k++) {
   if (r && !r.busy && r.text) break;
 }
 check('〔辨識文字〕: the 文字辨識 window reads the picture\'s text (HELLO 2026)', !!r && /HELLO/.test(r.text) && /2026/.test(r.text) && /影像辨識/.test(r.src), r);
+
+// ---- 框選辨識: only the part of the picture a box is dragged over (HELLO, not 2026) ------------------------------------------
+await win.keyboard.press('Escape'); await win.waitForTimeout(400);
+await Ev(() => window.__pdfapp.setTool('select')); await win.waitForTimeout(300);
+{ const p = await at(pic.x + pic.w / 2, pic.y + pic.h / 2); await win.mouse.click(p.x, p.y); await win.waitForTimeout(1200); }
+const boxBtn = await Ev(() => !!document.querySelector('#hint.objbar [data-o="ocrbox"]'));
+check('the bar of a selected picture has 〔框選辨識〕', boxBtn);
+if (boxBtn) await win.click('#hint.objbar [data-o="ocrbox"]');
+await win.waitForTimeout(500);
+check('〔框選辨識〕: the 文字辨識 tool, the picture outlined', await Ev(() => window.__pdfapp.S.tool === 'ocr' && !!document.querySelector('.picocr')));
+// the box from left of the picture (outside it) over HELLO only
+{ const p = await at(pic.x - 30, pic.y + 5), q = await at(pic.x + pic.w * 0.43, pic.y + pic.h - 5); await win.mouse.move(p.x, p.y); await win.mouse.down(); await win.mouse.move(q.x, q.y, {steps:6}); await win.mouse.up(); }
+let r2 = null;
+for (let k = 0; k < 120; k++) {
+  await win.waitForTimeout(500);
+  r2 = await Ev(() => { const p = document.querySelector('#ocrPanel'); return p ? {text:p.querySelector('.ocr-tx').value, src:p.querySelector('.ocr-src').textContent, busy:p.querySelector('[data-o="copy"]').disabled} : null; });
+  if (r2 && !r2.busy && r2.text) break;
+}
+check('a box over part of the picture: only that part read (HELLO, not 2026), as an image', !!r2 && /HELLO/.test(r2.text) && !/2026/.test(r2.text) && /影像辨識/.test(r2.src), r2);
+await Ev(() => window.__pdfapp.setTool('select')); await win.waitForTimeout(300);
+check('another tool: the outline goes', await Ev(() => !document.querySelector('.picocr')));
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 server.close();
