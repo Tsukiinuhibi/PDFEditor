@@ -8871,7 +8871,7 @@ function noteIconDown(ev, i, a){
 }
 // arrow keys nudge the selection (Shift = 10 pt); written once you stop pressing, whatever is selected by then — and
 // first, before any other change, 復原／重做, saving or another tab (a nudge is never lost, nor written over another change)
-let nudgeTimer = 0, NUDGE = null, NUDGE_RUN = null;   // NUDGE: {doc, i, id, ob (where it was), nb (where it goes)}; NUDGE_RUN: the one being written
+let nudgeTimer = 0, NUDGE = null, NUDGE_RUN = null, NUDGE_DELAY = 0;   // NUDGE_DELAY: (tests) ms a write waits before it starts   // NUDGE: {doc, i, id, ob (where it was), nb (where it goes)}; NUDGE_RUN: the one being written
 function nudgeSelected(dx, dy){
   if (!AS || !AS.movable) return;
   if (NUDGE && (NUDGE.i !== AS.i || NUDGE.id !== AS.a.id)) flushNudge();
@@ -8906,6 +8906,7 @@ async function flushNudge(){
   const n = NUDGE; NUDGE = null;
   if (!n || n.doc !== activeDoc()) return;
   const run = (async () => {
+    if (NUDGE_DELAY) await new Promise(r => setTimeout(r, NUDGE_DELAY));
     if (AS && AS.i === n.i && AS.a.id === n.id) return commitAnnotBox(n.i, AS.a, n.ob, n.nb, {nudge:true});   // still selected: it stays selected where it went
     let was = null;   // (let go meanwhile: what is selected now stays selected)
     const ok = await mutate('已移動', doc => { was = pageSel(); if (!moveAnnotInDoc(doc, n.i, n.id, n.ob, n.nb)) { toast('找不到此註解', 'err'); return false; } }, {nudge:true});
@@ -13062,7 +13063,7 @@ window.__pdfapp = {
   fontBytesInfo:async (family, bold) => { const r = await realFontInfo(family, bold); return {bytes:r.bytes.length, synthetic:r.synthetic}; },
   failEmbed:family => { EMBED_FAIL.add(family); },
   fontkitPatch:on => { fkPatchOn = !!on; },
-  oldLayout:on => { TB_OLD_SPLIT = !!on; }, pendImage:async f => { PENDING_IMG = await loadImageFile(f); setTool('image'); }, objClip:() => OBJ_CLIP && {n:OBJ_CLIP.n, from:OBJ_CLIP.from, i:OBJ_CLIP.src.i, subs:OBJ_CLIP.items.map(t => t.sub), shared:OBJ_CLIP.shared},
+  oldLayout:on => { TB_OLD_SPLIT = !!on; }, nudgeDelay:ms => { NUDGE_DELAY = ms; }, cutPages:() => copySelected(true), pendImage:async f => { PENDING_IMG = await loadImageFile(f); setTool('image'); }, objClip:() => OBJ_CLIP && {n:OBJ_CLIP.n, from:OBJ_CLIP.from, i:OBJ_CLIP.src.i, subs:OBJ_CLIP.items.map(t => t.sub), shared:OBJ_CLIP.shared},
   writeSettingsNow:() => { saveView_(); saveTB(); saveStyles(); },
   settleEdits, nudgeState:() => ({pending:!!NUDGE, running:!!NUDGE_RUN}), pageClipBytes:() => PAGE_CLIP ? PAGE_CLIP.bytes : null,
   faceChoice:(styles, bold) => { const r = chooseFace(styles.map(style => ({style})), bold); return {style:r.face.style, synthetic:r.synthetic}; },

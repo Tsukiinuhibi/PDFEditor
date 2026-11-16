@@ -391,10 +391,12 @@ await win.keyboard.press('Escape'); await win.waitForTimeout(300);
 await see(0, 300, 560);
 const fw0 = (await anns(0)).find(x => x.id === row4[1].id);
 await win.mouse.click(...await P(0, fw0.x + 6, fw0.y + fw0.h / 2)); await win.waitForTimeout(600);
+await A(() => window.__pdfapp.nudgeDelay(400));   // (the write held back a moment: it is caught under way every time)
 await win.keyboard.press('ArrowRight'); await win.keyboard.press('ArrowRight');
 const fw = await A(async id => { const app = window.__pdfapp, t0 = performance.now();
   while (!(app.nudgeState().running && !app.nudgeState().pending) && performance.now() - t0 < 3000) await new Promise(r => setTimeout(r, 1));
   const caught = app.nudgeState().running; await app.settleEdits(); const a = (await app.getAnns(0)).find(x => x.id === id); return {caught, x:a && a.x}; }, row4[1].id);
+await A(() => window.__pdfapp.nudgeDelay(0));
 check('a nudge being written when 列印 / 轉存 starts: waited for, the document read has it', fw.caught && near(fw.x, fw0.x + 2, .3), {fw, x0:fw0.x});
 await win.keyboard.press('Escape'); await win.waitForTimeout(300);
 // (v1.0.53, v1.0.56) a nudge, then Ctrl+C at once (with an object selected it copies the object): the copy has the nudge
@@ -407,6 +409,37 @@ const cps = (await anns(0)).filter(x => x.sub === 'Square' && Math.abs(x.y - cp0
 check('a nudge, then Ctrl+C (copy the object) at once: the copy has the nudge', cps.some(x => near(x, cp0.x + 3 + 12, .6)), {cps, x0:cp0.x});
 await win.click('#bUndo'); await win.waitForTimeout(1800);
 await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// (v1.0.54) a sticky note open and changed while a nudge waits, then 列印 / 轉存 / 存檔: both are written, nothing hangs (the
+// nudge's write closed the note, and the note's write waited for the nudge's: each waited for the other, for good)
+await see(0, 300, 560);
+await A(() => window.__pdfapp.setTool('note')); await win.waitForTimeout(200);
+await win.mouse.click(...await P(0, 520, 470)); await win.waitForTimeout(500);
+await win.keyboard.type('note one'); await win.keyboard.press('Escape'); await win.waitForTimeout(1500);
+const q54nt0 = (await A(async () => (await window.__pdfapp.getAnns(0)).filter(a => a.subtype === 'Text').map(a => ({id:a.id, x:a.x, y:a.y, w:a.w, h:a.h}))))[0];
+await A(() => window.__pdfapp.setTool('select')); await win.waitForTimeout(200);
+const q54dn0 = (await anns(0)).find(x => x.id === row4[1].id);
+await win.mouse.click(...await P(0, q54dn0.x + 6, q54dn0.y + q54dn0.h / 2)); await win.waitForTimeout(600);
+await win.keyboard.press('ArrowRight'); await win.keyboard.press('ArrowRight');
+await win.mouse.click(...await P(0, q54nt0.x + q54nt0.w / 2, q54nt0.y + q54nt0.h / 2)); await win.waitForTimeout(700);   // (the note opens; the nudge waits)
+const q54noteOpen = await A(() => !!document.querySelector('.npop'));
+await win.keyboard.press('End'); await win.keyboard.type(' two');
+await A(() => window.__pdfapp.nudgeDelay(300));   // (any wait before the nudge's write: the note's write must not wait for it while it waits for the note)
+const q54hang = await A(() => Promise.race([window.__pdfapp.settleEdits().then(() => 'done'), new Promise(r => setTimeout(() => r('q54hang'), 8000))]));
+await win.waitForTimeout(800); await A(() => window.__pdfapp.nudgeDelay(0));
+const q54dn1 = (await anns(0)).find(x => x.id === row4[1].id), q54ntx = await A(async id => ((await window.__pdfapp.getAnns(0)).find(a => a.id === id) || {}).contents || '', q54nt0.id);
+check('a note open and changed while a nudge waits, then 列印 / 轉存: nothing hangs; the nudge and the note both written', q54noteOpen && q54hang === 'done'
+  && !(await A(() => window.__pdfapp.nudgeState().running)) && near(q54dn1.x, q54dn0.x + 2, .3) && q54ntx === 'note one two', {q54noteOpen, q54hang, x0:q54dn0.x, x1:q54dn1.x, q54ntx});
+// (v1.0.54) 剪下 pressed twice while a nudge waits: one page cut, not two (three pages: the copied one pasted first)
+await win.mouse.click(...await P(0, 560, 40)); await win.waitForTimeout(300);
+await win.keyboard.press('Control+v'); await win.waitForTimeout(2000);
+await see(0, 300, 560);
+const q54np0 = await A(() => window.__pdfapp.S.pages.length);
+await win.mouse.click(...await P(0, q54dn1.x + 6, q54dn1.y + q54dn1.h / 2)); await win.waitForTimeout(600);
+await win.keyboard.press('ArrowRight');
+await A(() => Promise.all([window.__pdfapp.cutPages(), window.__pdfapp.cutPages()])); await win.waitForTimeout(1500);
+const q54np1 = await A(() => window.__pdfapp.S.pages.length);
+check('剪下 twice while a nudge waits: one page cut', q54np0 >= 3 && q54np1 === q54np0 - 1, {q54np0, q54np1});
+for (let k = 0; k < 6 && (await A(() => window.__pdfapp.S.pages.length)) !== 2; k++) { await win.click('#bUndo'); await win.waitForTimeout(1500); }   // (back to the two pages)
 // closing the last tab with a group selected: the group is let go, the bar loses its object look
 await marq4();
 const hadBar = await barTitle(), hadMulti = await multi();
