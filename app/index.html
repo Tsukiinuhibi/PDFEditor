@@ -2629,12 +2629,75 @@ viewer.addEventListener('contextmenu', async e => {
   const pt = pel ? pagePointXY(i, e.clientX, e.clientY) : null;   // now: leaving a tool closes its bar above, and the pages move up
   if (pel) { const note = await noteAt(i, e.clientX, e.clientY);
     if (note) { if (TBE) await commitTextEditor(); if (NP && NP.note.id !== note.id) await closeNote(true); showNoteMenu(e, i, note); return; } }   // (another note open: written and closed first)
+  // on one of the selected group: the group's menu (the group stays selected)
+  if (pt && MS && MS.i === i && S.tool === 'select' && MS.items.some(a => pt.x >= a.x && pt.x <= a.x + a.w && pt.y >= a.y && pt.y <= a.y + a.h)) { showMultiMenu(e); return; }
   const drew = await backToSelect();   // (a drawing this right-click finished: the new shape is not selected)
-  if (pt && !drew && S.tool === 'select' && S.els[i]) {   // on an object: select it
+  if (pt && !drew && S.tool === 'select' && S.els[i]) {   // on an object: select it, and its menu
     const d0 = activeDoc(), a = await annAt(i, pt);
-    if (a && activeDoc() === d0 && S.els[i] && S.tool === 'select') selectAnnot(i, a);
+    if (a && activeDoc() === d0 && S.els[i] && S.tool === 'select') { selectAnnot(i, a); showObjMenu(e, i, a); }
   }
 });
+/* 右鍵編輯物件: the menu of a right-clicked object lists what its bar above the pages can change (colours, line width,
+   opacity, arrow heads, the text box's font, size and look, the stamp or the picture), then 編輯文字, the order, copy, cut
+   and delete. Each choice works the bar's own control (a list opens as a second page of the menu), so the menu always
+   offers what the bar does. */
+function ctxAt(e, html, onclick){
+  ctx.innerHTML = html; ctx.style.display = 'block'; ctxShownAt = performance.now();
+  const w = ctx.offsetWidth, h = ctx.offsetHeight;
+  ctx.style.left = Math.min(e.clientX, innerWidth - w - 8) + 'px'; ctx.style.top = Math.min(e.clientY, innerHeight - h - 8) + 'px';
+  ctx.onclick = onclick;
+}
+// the controls of the bar shown now (#hint), as menu entries [{label, run, sub?:[{label, on, run}], on?}]
+function barEntries(){
+  const bar = $('#hint'), out = [];
+  const labelOf = el => { let p = el.previousElementSibling; while (p && !p.classList.contains('sb-h') && (p.classList.contains('cpick') || p.tagName === 'BUTTON')) p = p.previousElementSibling; return p && p.classList.contains('sb-h') ? p.textContent.trim() : ''; };
+  const TBC = {color:'文字顏色', bg:'文字底色', boxBg:'方塊背景'};
+  bar.querySelectorAll('button, select, input[type="checkbox"]').forEach(el => {
+    if (el.closest('.sb-g') || el.disabled) return;   // (the presets)
+    if (el.matches('[data-tbfont]')) out.push({label:'字型…', run:() => el.click()});
+    else if (el.matches('[data-szm]')) out.push({label:'字級…', run:() => el.click()});
+    else if (el.matches('.cpick[data-tbc]')) out.push({label:(TBC[el.dataset.tbc] || '顏色') + '…', run:() => el.click()});
+    else if (el.matches('.cpick[data-cp]')) { const l = el.dataset.cp === 'fill' ? '填色' : labelOf(el); out.push({label:(!l ? '顏色' : /色$/.test(l) ? l : l + '顏色') + '…', run:() => el.click()}); }
+    else if (el.matches('button.tfmt')) out.push({label:(el.title || '').replace(/\s*\(.*$/, ''), on:el.classList.contains('on'), run:() => el.click()});
+    else if (el.matches('button.pchip[data-o]')) out.push({label:el.textContent.trim(), run:() => el.click()});
+    else if (el.tagName === 'SELECT') {
+      const lab = el.closest('label'), l = lab ? [...lab.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('').trim() : '';
+      out.push({label:l || '選項', sub:[...el.options].map(o => ({label:o.textContent.trim(), on:o.selected, run:() => { el.value = o.value; el.dispatchEvent(new Event('change', {bubbles:true})); }}))});
+    } else if (el.type === 'checkbox') { const lab = el.closest('label'); out.push({label:lab ? lab.textContent.trim() : '', on:el.checked, run:() => { el.checked = !el.checked; el.dispatchEvent(new Event('change', {bubbles:true})); }}); }
+  });
+  return out;
+}
+const ctxBtn = (k, label, on, ic, more = '') => `<button data-k="${k}">${ic ? icon(ic) : ''}${esc(label)}${on ? ' ✓' : ''}${more}</button>`;
+function showEntries(e, head, groups){   // groups: [[entry]] with hr between; an entry with sub opens its list
+  const flat = [];
+  const html = `<div class="hd">${esc(head)}</div>` + groups.filter(g => g.length).map(g => g.map(en => { flat.push(en); return ctxBtn(flat.length - 1, en.label, en.on, en.ic, en.sub ? ' ▸' : en.kb ? `<kbd>${en.kb}</kbd>` : ''); }).join('')).join('<hr>');
+  ctxAt(e, html, ev => {
+    const b = ev.target.closest('button[data-k]'); if (!b) return;
+    const en = flat[+b.dataset.k]; if (!en) return;
+    if (en.sub) { showEntries(e, en.label, [[{label:'‹ 返回', run:() => showEntries(e, head, groups)}], en.sub]); return; }
+    if (en.label !== '‹ 返回') hideCtx();
+    en.run();
+  });
+}
+async function showObjMenu(e, i, a){
+  for (let k = 0; k < 40 && !(OBJBAR && !OBJBAR.multi && OBJBAR.id === a.id && $('#hint').classList.contains('objbar')); k++) await new Promise(r => setTimeout(r, 25));   // (its bar is drawn)
+  if (!AS || AS.a.id !== a.id) return;
+  const style = OBJBAR && OBJBAR.id === a.id ? barEntries() : [];
+  const edit = [];
+  if (AS.bar.querySelector('[data-x="edit"]')) edit.push({label:'編輯文字', ic:'text', run:() => { deselectAnnot(); editTextBox(i, a); }});
+  const order = Z_BTNS.filter(z => AS.bar.querySelector(`[data-x="${z[0]}"]`)).map(([k, t, ic, kb]) => ({label:t, ic, kb, run:() => stackObj(i, a.id, Z_HOW[k])}));
+  const tail = [];
+  if (copyableAnn(a)) { tail.push({label:'複製', ic:'copy', kb:'Ctrl+C', run:() => copyObjects(i, [a])}); tail.push({label:'剪下', ic:'cut', kb:'Ctrl+X', run:() => copyObjects(i, [a], {cut:true})}); }
+  tail.push({label:'刪除', ic:'trash', kb:'Delete', run:() => deleteSelected()});
+  showEntries(e, (OBJBAR && OBJBAR.id === a.id && $('#hint .sb-t') ? $('#hint .sb-t').textContent.trim() : a.label) || a.label, [edit, style, order, tail]);
+}
+function showMultiMenu(e){
+  if (!MS) return;
+  const bar = $('#hint'), n = MS.items.length;
+  const btns = sel => [...bar.querySelectorAll(sel)].map(b => ({label:b.title || b.textContent.trim(), run:() => b.click()}));
+  showEntries(e, `已選取 ${n} 個物件`, [btns('[data-al]'), btns('[data-dist]'),
+    [{label:'複製', ic:'copy', kb:'Ctrl+C', run:() => MS && copyObjects(MS.i, MS.items)}, {label:'剪下', ic:'cut', kb:'Ctrl+X', run:() => MS && copyObjects(MS.i, MS.items, {cut:true})}, {label:'刪除', ic:'trash', kb:'Delete', run:() => deleteMulti()}]]);
+}
 // the object under a point {x, y} of page i, the topmost one (a sticky note has its own menu; a signature field is not
 // selected)
 async function annAt(i, p){
