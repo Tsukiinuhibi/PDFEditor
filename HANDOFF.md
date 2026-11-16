@@ -438,6 +438,11 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 貼上的物件保有 `PDFE`、`PDFE_RT`、外觀，所以樣式列、雙擊編輯文字方塊、換圖等都照常可以用。
 - 測試：`object-copy.mjs`（跨頁、群組、文字方塊再編輯、另一個檔案、剪下、復原、圖層、螢光筆、轉 90° 的頁、同一張圖貼三次檔案不變大）；`align.mjs` 的微調後 Ctrl+C 改成複製物件。
 
+### 3.9.22 插入的圖片做文字辨識（v4.6.0）
+- 選到插入的圖片（物件列 `kind === 'image'`）時多一個〔辨識文字〕（`data-o="ocr"`）→ `readPictureText(ob)`：用圖片目前的框（夾在頁面內）呼叫 `readRegion(i, box, {image:true})`，直接走影像辨識（不先找 PDF 文字），結果在原本的文字辨識視窗，可以複製、看字型。
+- 辨識的是頁面上那一塊畫出來的樣子（`ocrImage` → `renderRegion`，約 300 dpi），所以蓋在圖片上的東西也會一起讀；轉過角度的圖片用的是外框。
+- 測試：`image-ocr.mjs`（本機伺服器提供一張寫著 HELLO 2026 的圖，從網址插入、選取、〔辨識文字〕）。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。

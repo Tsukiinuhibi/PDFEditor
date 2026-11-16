@@ -7909,7 +7909,7 @@ function objBarHTML(kind, dict, doc = null){
     const spec = stampSpec(dict), op = readAnnStyle(dict).opacity;
     return {name:'戳記', ic:'stamp', st:{spec}, html:`<button class="pchip" data-o="stamp">更換戳記…</button>${spec ? `<span class="sb-h">顏色</span><button class="cpick" data-cp="color" title="選擇顏色" style="--c:${STAMP_COLORS[spec.c] || spec.c}"><i></i>▾</button>` : ''}${opacitySel(op)}${spec ? '' : '<span class="sb-tip">舊版蓋的戳記無法改顏色，可以更換戳記</span>'}`};
   }
-  if (kind === 'image') return {name:'圖片', ic:'insImg', st:null, html:`<button class="pchip" data-o="image">更換圖片…</button>${opacitySel(readAnnStyle(dict).opacity)}`};
+  if (kind === 'image') return {name:'圖片', ic:'insImg', st:null, html:`<button class="pchip" data-o="image">更換圖片…</button><button class="pchip" data-o="ocr" title="用影像辨識讀出這張圖片裡的文字（在文字辨識視窗，可以複製）">${icon('ocr')}辨識文字</button>${opacitySel(readAnnStyle(dict).opacity)}`};
   const def = DRAW_TOOLS[kind], st = readObjStyle(dict);
   if (kind === 'fill' && subOf(dict) === 'Stamp' && !dict.get(N_('CA')) && doc) st.opacity = fillAlpha(doc, dict);   // (made before v1.0.34: the opacity is in its picture only)
   return {name:subjOf(dict) === '區域螢光筆' ? '區域螢光筆' : def.label.replace('工具', ''), ic:def.ic, html:styleBar(kind, st, true), st:null};
@@ -8175,6 +8175,12 @@ async function changeStampOf(ob){
   const spec = await openStampPicker({spec:ob.st && ob.st.spec || STAMP_SEL, pickOnly:true});
   if (spec) objChange(ob, (i, id) => replaceStamp(i, id, spec));
 }
+// 插入的圖片做文字辨識: the area of the selected picture read with the 文字辨識 window, as an image (its text is pixels)
+async function readPictureText(ob){
+  const a = (await getAnns(ob.i)).find(x => x.id === ob.id); if (!a) { toast('找不到這張圖片', 'err'); return; }
+  const pg = S.pages[ob.i], x0 = clamp(a.x, 0, pg.w), y0 = clamp(a.y, 0, pg.h);
+  readRegion(ob.i, {x:x0, y:y0, w:clamp(a.x + a.w, 0, pg.w) - x0, h:clamp(a.y + a.h, 0, pg.h) - y0}, {image:true});
+}
 async function changeImageOf(ob){
   const img = await pickImage();
   if (img) objChange(ob, (i, id) => replaceImage(i, id, img));
@@ -8201,6 +8207,7 @@ $('#hint').addEventListener('click', e => {
   }
   if (e.target.closest('[data-o="stamp"]')) { changeStampOf(ob); return; }
   if (e.target.closest('[data-o="image"]')) { changeImageOf(ob); return; }
+  if (e.target.closest('[data-o="ocr"]')) { readPictureText(ob); return; }
   const cp = e.target.closest('.cpick');
   if (cp) { const key = cp.dataset.cp; openColorPicker({anchor:cp, value:cp.style.getPropertyValue('--c').trim(), none:!!cp.dataset.none, title:key === 'fill' ? '填色顏色' : '顏色', onPick:v => restyleSelected({[key]:v}, ob)}); return; }
   const p = e.target.closest('[data-p]');
