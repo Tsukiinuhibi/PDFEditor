@@ -101,6 +101,13 @@ if (hs.length === 4) {
   check('the bar of the selected box: its size in the box', (await sizeBox() || {}).value === String(s1[0]), [await sizeBox(), s1]);
   if ((await sizeBox() || {}).tag === 'INPUT') { await setSize('10.5'); await win.waitForTimeout(2000); }
   check('a size typed for the whole box: 10.5', JSON.stringify(await sizes()) === '[10.5]', await sizes());
+  // (leftovers) a box already at the smallest size pulled in further: nothing changes, no undo step
+  if ((await sizeBox() || {}).tag === 'INPUT') { await setSize('4'); await win.waitForTimeout(2000); }
+  await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+  { const b4 = await box(); const p = await at(b4.x + b4.w / 2, b4.y + b4.h / 2); await win.mouse.click(p.x, p.y); await win.waitForTimeout(800);
+    const u0 = await A(() => window.__pdfapp.S.undo.length);
+    await drag(await at(b4.x + b4.w, b4.y + b4.h), await at(b4.x + b4.w * .6, b4.y + b4.h * .6));
+    check('a box at 4 pt pulled smaller: nothing changes, no undo step, still selected', JSON.stringify(await sizes()) === '[4]' && await A(() => window.__pdfapp.S.undo.length) === u0 && await A(() => !!window.__pdfapp.sel()), {sizes:await sizes(), u0, u1:await A(() => window.__pdfapp.S.undo.length)}); }
 }
 
 // ---- part 3: a text box another program made: no corner handles (it cannot be redrawn here) ---------------------------------

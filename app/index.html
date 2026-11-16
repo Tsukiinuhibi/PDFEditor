@@ -2218,6 +2218,7 @@ window.addEventListener('keydown', e => {
   const objSel = !inSide && (MS ? {i:MS.i, list:MS.items} : AS && copyableAnn(AS.a) ? {i:AS.i, list:[AS.a]} : null);
   if (mod && !e.shiftKey && e.key.toLowerCase() === 'c' && !String(window.getSelection())) { e.preventDefault(); if (noteSel && !MS) copyNote(AS.i, AS.a); else if (objSel) copyObjects(objSel.i, objSel.list); else copySelected(false); return; }
   if (mod && !e.shiftKey && e.key.toLowerCase() === 'x') { e.preventDefault(); if (noteSel && !MS) cutNote(AS.i, AS.a); else if (objSel) copyObjects(objSel.i, objSel.list, {cut:true}); else copySelected(true); return; }
+  if (mod && e.shiftKey && e.key.toLowerCase() === 'v' && LAST_CLIP === 'objs' && OBJ_CLIP) { e.preventDefault(); pasteObjects({inPlace:true}); return; }   // 貼在原位置
   if (mod && !e.shiftKey && e.key.toLowerCase() === 'v') { e.preventDefault(); if (LAST_CLIP === 'note' && NOTE_CLIP) pasteNote(); else if (LAST_CLIP === 'objs' && OBJ_CLIP) pasteObjects(); else pasteClip(); return; }
   if (mod && e.key.toLowerCase() === 'a' && document.activeElement && document.activeElement.closest && document.activeElement.closest('#side')) { e.preventDefault(); S.thumbSel = new Set(S.pages.map((_, i) => i)); paintThumbSel(); return; }
   if (e.key === 'Delete' && document.activeElement && document.activeElement.closest && document.activeElement.closest('#side')) { e.preventDefault(); actions.delPage(); return; }
@@ -4139,6 +4140,7 @@ async function copyObjects(i, list, {cut = false} = {}){
   try { await flushNudge(); } catch (_) {}
   try {
     const src = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false}), out = await PDFDocument.create();
+    if (src.isEncrypted) { toast('這份文件仍有加密，物件無法複製', 'err'); return; }
     const copier = PDFLib.PDFObjectCopier.for(src.context, out.context), items = [], fresh = await getAnns(i);
     for (const a0 of list) {
       const a = fresh.find(x => x.id === a0.id) || a0, ref = findAnnotRef(src, i, a.id); if (!ref) continue;
@@ -4154,22 +4156,24 @@ async function copyObjects(i, list, {cut = false} = {}){
       shared[v.objectNumber] = bytesHash(rawBytes(o)); here.set(v.objectNumber, k.objectNumber);
     }
     if (!items.length) { toast('找不到要複製的物件', 'err'); return; }
-    OBJ_CLIP = {bytes:await out.save({useObjectStreams:false}), items, n:items.length, from:S.name, src:{doc:activeDoc(), i}, step:0, shared, placed:new WeakMap([[activeDoc(), here]])}; LAST_CLIP = 'objs';
+    OBJ_CLIP = {bytes:await out.save({useObjectStreams:false}), items, n:items.length, from:S.name, src:{docId:(activeDoc() || {}).id, i}, step:0, shared, placed:new WeakMap([[activeDoc(), here]])}; LAST_CLIP = 'objs';   // (the tab by its id: a closed tab is not kept)
   } catch (e) { console.error(e); toast('複製失敗：' + (e.message || e), 'err'); return; }
   updateClipUI();
   const n = OBJ_CLIP.n, what = n > 1 ? `${n} 個物件` : '物件';
   if (!cut) { toast(`已複製${what}：到任何頁面或其他分頁，按 Ctrl+V 貼到滑鼠所在的位置`); return; }
-  if (MS) { await deleteMulti(); } else if (AS) { const {i: k, a} = AS; deselectAnnot(); await deleteAnnot(k, a.id, `已剪下${what}，按 Ctrl+V 貼上`); }
+  const ids = list.map(a => a.id);   // (what was copied is taken away, whatever is selected by now)
+  if (MS && MS.i === i) clearMulti(); if (AS && AS.i === i && ids.includes(AS.a.id)) deselectAnnot();
+  await mutate(`已剪下${what}，按 Ctrl+V 貼上`, doc => { for (const id of ids) { const ref = findAnnotRef(doc, i, id); if (ref) removeAnnotRefs(doc, i, ref); } });
 }
 // on the page under the mouse, centred on it; with the mouse elsewhere, on the current page where they were (a step
 // further when that is the page they came from). One undo step; what was pasted is selected
-async function pasteObjects(){
+async function pasteObjects({inPlace = false} = {}){   // inPlace (Ctrl+Shift+V): where they were on their page, on the page under the mouse or the current one
   const clip = OBJ_CLIP; if (!clip || !S.pdf) return;
   let i, at = null;
   const over = PTR && document.elementFromPoint(PTR.x, PTR.y), pel = over && over.closest && over.closest('.page');
-  if (pel && pagesEl.contains(pel)) { i = +pel.dataset.i; at = pagePointXY(i, PTR.x, PTR.y); } else i = S.current;
+  if (pel && pagesEl.contains(pel)) { i = +pel.dataset.i; if (!inPlace) at = pagePointXY(i, PTR.x, PTR.y); } else i = S.current;
   const pg = S.pages[i]; if (!pg) return;
-  const same = !at && clip.src.doc === activeDoc() && clip.src.i === i; if (same) clip.step++;
+  const same = !at && !inPlace && clip.src.docId === (activeDoc() || {}).id && clip.src.i === i, step = same ? clip.step + 1 : 0;   // (a step further each time it goes back on its own page)
   const ids = []; let lost = 0;
   const ok = await mutate(clip.n > 1 ? `已貼上 ${clip.n} 個物件` : '已貼上物件', async doc => {
     const src = await PDFDocument.load(clip.bytes, {updateMetadata:false}), copier = PDFLib.PDFObjectCopier.for(src.context, doc.context), got = [];
@@ -4188,7 +4192,7 @@ async function pasteObjects(){
       got.forEach(({d}) => { const g = grpOfDict(d); if (g && cnt.get(g) < 2) d.delete(N_('PDFE_Grp')); }); }   // (one of a group pasted alone: not a group)
     const x0 = Math.min(...got.map(g => g.ob.x)), y0 = Math.min(...got.map(g => g.ob.y)), x1 = Math.max(...got.map(g => g.ob.x + g.ob.w)), y1 = Math.max(...got.map(g => g.ob.y + g.ob.h));
     let dx = 0, dy = 0;
-    if (at) { dx = at.x - (x0 + x1) / 2; dy = at.y - (y0 + y1) / 2; } else if (same) dx = dy = 12 * clip.step;
+    if (at) { dx = at.x - (x0 + x1) / 2; dy = at.y - (y0 + y1) / 2; } else if (same) dx = dy = 12 * step;
     dx = x1 - x0 <= pg.w ? clamp(dx, -x0, pg.w - x1) : -x0; dy = y1 - y0 <= pg.h ? clamp(dy, -y0, pg.h - y1) : -y0;   // (kept on the page)
     for (const {it, d, ob} of got) {
       const ref = addAnnotDict(doc, i, d), id = ref.objectNumber + 'R', nb = {...ob, x:ob.x + dx, y:ob.y + dy};
@@ -4199,6 +4203,7 @@ async function pasteObjects(){
     if (clip.shared) { const m = new Map(); for (const n of Object.keys(clip.shared)) { const r = copier.traversedObjects.get(PDFRef.of(+n)); if (r instanceof PDFRef) m.set(+n, r.objectNumber); } clip.placed.set(dk, m); }
   });
   if (!ok) return;
+  if (same) clip.step = step;   // (counted once pasted)
   if (lost) toast(`有 ${lost} 個連結連到這份文件沒有的頁面，沒有貼上`, 'err');
   if (S.tool !== 'select') setTool('select');
   if (S.hasGroups === false) S.hasGroups = null;   // (a group may have come with it)
@@ -4257,7 +4262,7 @@ function showPageMenu(e, i){
     <button data-c="copy">${icon('copy')}複製 ${lbl}<kbd>Ctrl+C</kbd></button>
     <button data-c="cut"${k >= S.pages.length ? ' disabled' : ''}>${icon('cut')}剪下 ${lbl}<kbd>Ctrl+X</kbd></button>
     <button data-c="pasteBefore"${clip ? '' : ' disabled'}>${icon('paste')}貼上${clip ? ' ' + clip : ''}到第 ${i + 1} 頁之前</button>
-    <button data-c="pasteAfter"${clip ? '' : ' disabled'}>${icon('paste')}貼上${clip ? ' ' + clip : ''}到第 ${i + 1} 頁之後${LAST_CLIP === 'note' ? '' : '<kbd>Ctrl+V</kbd>'}</button>
+    <button data-c="pasteAfter"${clip ? '' : ' disabled'}>${icon('paste')}貼上${clip ? ' ' + clip : ''}到第 ${i + 1} 頁之後${LAST_CLIP === 'note' || LAST_CLIP === 'objs' ? '' : '<kbd>Ctrl+V</kbd>'}</button>
     <hr>
     <button data-c="add">${icon('pageAdd')}在第 ${i + 1} 頁之後加入空白頁…</button>
     <button data-c="rotL">${icon('rotL')}${lbl}向左轉</button>
@@ -8631,19 +8636,24 @@ async function commitAnnotBox(i, a, ob, nb, opts = {}){
 // a text box made here, resized from a corner: its text scales with it (each size to 0.1 pt, 4–400) and the picture is
 // drawn again; the opposite corner stays where it was
 async function scaleTextBox(i, a, ob, nb, opts = {}){
-  const id = a.id, f = nb.w / ob.w;
+  const id = a.id;
+  let f = nb.w / ob.w;
   holdSelection();
+  let same = false;
   const ok = await mutate('已調整文字大小', async doc => {
     const ref = findAnnotRef(doc, i, id), dict = ref && doc.context.lookup(ref, PDFDict), rt = dict && readRT(dict);
     if (!rt) { toast(dict ? '這個文字方塊不是用 PDF 工作台做的，不能調整大小' : '找不到此註解', 'err'); return false; }
+    // the sizes kept in proportion: the factor stops where the smallest reaches 4 or the largest 400 (not each one clamped)
+    const s0 = rt.lines.flat().map(r => +r.size || TB_STYLE.size); if (s0.length) f = clamp(f, 4 / Math.min(...s0), 400 / Math.max(...s0));
     const lines = rt.lines.map(l => l.map(r => ({...r, size:clamp(Math.round((+r.size || TB_STYLE.size) * f * 10) / 10, 4, 400)})));
+    if (lines.flat().every((r, k) => Math.abs(r.size - s0[k]) < .05)) { same = true; return false; }   // (no size changes: nothing written)
     const box = {boxBg:'', border:false, ...rt.box}, sz = lines.flat().map(r => +r.size).filter(v => v > 0);
     const r = await renderTextBox(lines, box, {size:sz.length ? Math.min(...sz) : TB_STYLE.size, font:'', bold:false});   // (as when it is opened again)
     const x = Math.abs(nb.x - ob.x) < .01 ? nb.x : nb.x + nb.w - r.w, y = Math.abs(nb.y - ob.y) < .01 ? nb.y : nb.y + nb.h - r.h;
     Object.entries(await textBoxFields(doc, i, lines, box, r, {x, y, w:r.w, h:r.h})).forEach(([k, v]) => dict.set(N_(k), doc.context.obj(v)));
   }, opts);
   if (!ok) clearHolds(i);
-  if (ok && S.tool === 'select') {   // kept selected at its new size
+  if ((ok || same) && S.tool === 'select') {   // kept selected at its new size (or as it was)
     const a2 = (await getAnns(i)).find(x => x.id === id);
     if (a2 && S.els[i]) selectAnnot(i, a2);
   }

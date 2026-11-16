@@ -169,5 +169,24 @@ const size1 = await A(() => window.__pdfapp.S.bytes.length);
 check('a picture pasted three times in the same file: the file does not grow by the picture each time', size1 - size0 < pngN * .5, {pngN, grew:size1 - size0});
 check('…the three copies are there', (await anns(1, 'Stamp')).length === 1 && (await anns(2, 'Stamp')).length === 1 && (await anns(0, 'Stamp')).length === 2);
 
+// ---- (leftovers) Ctrl+Shift+V: pasted where it was, even with the mouse over a page ----------------------------------------------
+await win.keyboard.press('Escape'); await win.waitForTimeout(300); await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+await show(0);
+{ const sqs = await anns(0, 'Square'); const s0 = sqs[0];
+  { const p = await at(0, s0.x + 3, s0.y + s0.h / 2); await win.mouse.click(p.x, p.y); await win.waitForTimeout(600); }
+  await win.keyboard.press('Control+c'); await win.waitForTimeout(800);
+  await show(1); { const p = await at(1, 400, 400); await win.mouse.move(p.x, p.y); }
+  const before = (await anns(1, 'Square')).length;
+  await win.keyboard.press('Control+Shift+V'); await win.waitForTimeout(2000);
+  const after = await anns(1, 'Square');
+  check('Ctrl+Shift+V over page 2: pasted at the place it had on its page (not at the mouse)', after.length === before + 1 && after.some(r => Math.abs(r.x - s0.x) < 1 && Math.abs(r.y - s0.y) < 1), {s0, after});
+  // cut takes away what was copied
+  await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+  await show(0); const n0 = (await anns(0, 'Square')).length;
+  { const p = await at(0, s0.x + 3, s0.y + s0.h / 2); await win.mouse.click(p.x, p.y); await win.waitForTimeout(600); }
+  await win.keyboard.press('Control+x'); await win.waitForTimeout(1800);
+  check('Ctrl+X: that object taken away, one undo step', (await anns(0, 'Square')).length === n0 - 1, {n0, now:(await anns(0, 'Square')).length});
+  await win.click('#bUndo'); await win.waitForTimeout(1800); }
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
