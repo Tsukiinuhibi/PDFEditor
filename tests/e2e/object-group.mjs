@@ -98,5 +98,19 @@ await win.keyboard.press('Escape'); await win.waitForTimeout(300);
 check('…and a right-click on it opens its menu', await A(() => document.querySelector('#ctx').style.display === 'block'));
 await win.keyboard.press('Escape'); await win.waitForTimeout(300);
 
+// ---- (minors) a text box in a group: a double-click on it opens it for writing ------------------------------------------------
+await A(() => window.__pdfapp.setTool('textbox')); await win.waitForTimeout(200);
+{ const p = await at(100, 250); await win.mouse.click(p.x, p.y); await win.waitForTimeout(500); }   // (high enough: the messages at the bottom do not cover it)
+await win.keyboard.type('In a group'); await win.keyboard.press('Escape'); await win.waitForTimeout(2500);
+await A(() => window.__pdfapp.setTool('select')); await win.waitForTimeout(300);
+{ const tb = (await A(async () => (await window.__pdfapp.getAnns(0)).filter(a => a.subtype === 'FreeText').map(a => ({x:a.x, y:a.y, w:a.w, h:a.h}))))[0], sq0 = (await sq())[0];
+  await click(sq0); await win.keyboard.down('Shift'); { const p = await at(tb.x + tb.w / 2, tb.y + tb.h / 2); await win.mouse.click(p.x, p.y); await win.waitForTimeout(700); } await win.keyboard.up('Shift');
+  await win.keyboard.press('Control+g'); await win.waitForTimeout(1800);
+  await win.keyboard.press('Escape'); await win.waitForTimeout(300); await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+  await click({x:tb.x + tb.w / 2 - 3, y:tb.y, w:0, h:tb.h});   // (the group selected: the bar above the pages appears and moves them)
+  const p = await at(tb.x + tb.w / 2, tb.y + tb.h / 2); await win.mouse.dblclick(p.x, p.y); await win.waitForTimeout(1200);
+  check('a text box of a selected group: a double-click opens it for writing', ((await A(() => (window.__pdfapp.TBE() || {}).html || ''))).includes('In a group'), await A(() => (window.__pdfapp.TBE() || {}).html || ''));
+  await win.keyboard.press('Escape'); await win.waitForTimeout(2000); await A(() => window.__pdfapp.setTool('select')); }
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

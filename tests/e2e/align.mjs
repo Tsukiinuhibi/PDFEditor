@@ -430,7 +430,7 @@ const q54dn1 = (await anns(0)).find(x => x.id === row4[1].id), q54ntx = await A(
 check('a note open and changed while a nudge waits, then 列印 / 轉存: nothing hangs; the nudge and the note both written', q54noteOpen && q54hang === 'done'
   && !(await A(() => window.__pdfapp.nudgeState().running)) && near(q54dn1.x, q54dn0.x + 2, .3) && q54ntx === 'note one two', {q54noteOpen, q54hang, x0:q54dn0.x, x1:q54dn1.x, q54ntx});
 // (v1.0.54) 剪下 pressed twice while a nudge waits: one page cut, not two (three pages: the copied one pasted first)
-await win.mouse.click(...await P(0, 560, 40)); await win.waitForTimeout(300);
+await A(() => window.__pdfapp.copyPages()); await win.waitForTimeout(800);   // (a page copied: Ctrl+V pastes it; the objects copied above are another clipboard)
 await win.keyboard.press('Control+v'); await win.waitForTimeout(2000);
 await see(0, 300, 560);
 const q54np0 = await A(() => window.__pdfapp.S.pages.length);

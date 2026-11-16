@@ -44,6 +44,13 @@ if (sb0 && sb0.tag === 'INPUT') {
   const menu = await A(() => { const c = document.querySelector('#ctx'); return c.style.display === 'block' ? [...c.querySelectorAll('[data-sz]')].map(b => b.dataset.sz) : null; });
   check('〔▾〕 lists the usual sizes', !!menu && menu.includes('12') && menu.includes('24') && menu.includes('72'), menu);
   if (menu) { await win.click('#ctx [data-sz="24"]'); await win.waitForTimeout(400); }
+  // (minors) a second click on 〔▾〕 closes the list; Esc closes it too
+  await win.click('#hint [data-szm]'); await win.waitForTimeout(300);
+  await win.click('#hint [data-szm]'); await win.waitForTimeout(300);
+  const shut = await A(() => document.querySelector('#ctx').style.display !== 'block');
+  await win.click('#hint [data-szm]'); await win.waitForTimeout(300); await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+  const shut2 = await A(() => document.querySelector('#ctx').style.display !== 'block');
+  check('〔▾〕 clicked again: the list closes; Esc closes it too', shut && shut2, {shut, shut2});
   check('a size picked from the list: 24', /font-size:\s*24px/.test(await A(() => (window.__pdfapp.TBE() || {}).html || '')) && (await sizeBox()).value === '24', await sizeBox());
   await setSize('13.5');
   // (final review) mixed sizes highlighted, the size shown typed again and Enter: all of it takes that size; the

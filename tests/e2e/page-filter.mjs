@@ -56,5 +56,10 @@ check('another file opened in its own tab: all its pages, 全部', (await laidOu
 await A(() => document.querySelectorAll('.dtab')[0].click()); await win.waitForTimeout(1500);
 check('back to the first tab: still 單數頁 there', await A(() => document.querySelector('#pageFilter').value) === 'odd' && JSON.stringify(await laidOut()) === JSON.stringify([...Array(n).keys()].filter(i => i % 2 === 0)), await laidOut());
 
+// ---- (minors) a document of one page: 雙數頁 cannot be chosen ------------------------------------------------------------------
+await A(() => window.__pdfapp.mutate('test', doc => { while (doc.getPageCount() > 1) doc.removePage(doc.getPageCount() - 1); }));
+await win.waitForTimeout(1500);
+check('one page: 雙數頁 cannot be chosen (there is none)', await A(() => { const o = document.querySelector('#pageFilter option[value="even"]'); return !!o && o.disabled; }));
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

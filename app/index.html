@@ -1843,7 +1843,9 @@ async function ensureOverlay(i){
       if (ev.shiftKey && movableAnn(a)) { toggleMulti(i, a); return; }
       const g = movableAnn(a) && grpOf(i, a.id);
       const mem = g ? anns.filter(x => grpOf(i, x.id) === g && movableAnn(x)) : [];
-      if (mem.length > 1) { setMulti(i, mem); if (MS) dragMulti(ev); return; }   // (one of a group: the whole group)
+      if (mem.length > 1) { const all = groupsNow(i), n = all ? [...all.values()].filter(x => x === g).length : 0;
+        if (n > mem.length && !HIDDEN_TOLD.has(g)) { HIDDEN_TOLD.add(g); toast(`這個群組有 ${n - mem.length} 個物件在隱藏或鎖定的圖層上，不會一起移動或刪除`); }
+        setMulti(i, mem); if (MS) dragMulti(ev); return; }   // (one of a group: the whole group)
       selectAnnot(i, a);
       if (AS && AS.movable) dragAnnot(ev, 'move');
     });
@@ -2044,7 +2046,7 @@ function updateUI(){
   $$('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === S.tool));
   $('#bUndo').disabled = !S.undo.length; $('#bRedo').disabled = !S.redo.length;
   $('#coverChk').checked = S.cover; $('#coverChk').disabled = !isTwo();
-  { const pf = $('#pageFilter'); if (pf) { pf.value = S.pageFilter || 'all'; pf.disabled = !S.pdf; } }
+  { const pf = $('#pageFilter'); if (pf) { pf.value = S.pageFilter || 'all'; pf.disabled = !S.pdf; const ev = pf.querySelector('option[value="even"]'); if (ev) ev.disabled = S.pages.length < 2; } }
   $('#stFile').innerHTML = S.pdf ? `<span class="dot${S.dirty ? ' dirty' : ''}"></span>${esc(S.name)}${S.dirty ? '（已修改）' : ''}` : '尚未開啟檔案';
   $('#stSig').innerHTML = S.signed ? '<span class="sig">✓ 已數位簽署</span>' : '';
   const sw = $('#stWrite');
@@ -4204,8 +4206,13 @@ async function pasteObjects(){
   const list = (await getAnns(i)).filter(a => ids.includes(a.id));
   if (list.length === 1) selectAnnot(i, list[0]); else if (list.length > 1) setMulti(i, list);
 }
+let COPYING = false;   // (a second Ctrl+C / Ctrl+X while the first is under way: not done twice)
 async function copySelected(cut){
-  if (!S.pdf) return;
+  if (!S.pdf || COPYING) return;
+  COPYING = true;
+  try { await copySelected_(cut); } finally { COPYING = false; }
+}
+async function copySelected_(cut){
   try { await flushNudge(); } catch (_) {}   // (an arrow-key nudge not written yet goes into the copy)
   const sel = selectedPages(), n = S.pages.length;
   if (cut && sel.length >= n) { toast('不能剪下全部頁面，文件至少要保留一頁', 'err'); return; }
@@ -4238,7 +4245,7 @@ async function pasteClip(at){
 }
 const ctx = $('#ctx');
 function hideCtx(){ ctx.style.display = 'none'; ctx.onpointerdown = null; ctx.onkeydown = null; ctx.classList.remove('fmx'); delete ctx.dataset.for; }
-document.addEventListener('pointerdown', e => { if (!ctx.contains(e.target) && !(ctx.dataset.for === 'nau' && e.target.closest && e.target.closest('.nau'))) hideCtx(); }, true);   // (the author button closes its own list on its click)
+document.addEventListener('pointerdown', e => { if (!ctx.contains(e.target) && !(ctx.dataset.for === 'nau' && e.target.closest && e.target.closest('.nau')) && !(ctx.dataset.for === 'sz' && e.target.closest && e.target.closest('[data-szm]'))) hideCtx(); }, true);   // (the author button closes its own list on its click)
 let ctxShownAt = 0;
 viewer.addEventListener('scroll', () => { if (performance.now() - ctxShownAt > 600) hideCtx(); });   // ignore the scroll a right-click itself causes
 function showPageMenu(e, i){
@@ -4817,6 +4824,7 @@ $('#hint').addEventListener('keydown', e => {
 });
 // the list of usual sizes under the size box's 〔▾〕
 function showSizeMenu(btn, onPick){
+  if (ctx.style.display === 'block' && ctx.dataset.for === 'sz') { hideCtx(); return; }   // (〔▾〕 again: closed)
   const r = btn.getBoundingClientRect();
   ctx.classList.remove('fmx'); ctx.onkeydown = null;
   ctx.innerHTML = `<div class="hd">字級</div><div class="tm-sizes">${TB_SIZES.map(v => `<button data-sz="${v}">${v}</button>`).join('')}</div>`;
@@ -4824,6 +4832,7 @@ function showSizeMenu(btn, onPick){
   ctx.style.left = Math.max(4, Math.min(r.left, innerWidth - ctx.offsetWidth - 8)) + 'px'; ctx.style.top = Math.min(r.bottom + 4, innerHeight - ctx.offsetHeight - 8) + 'px';
   ctx.onpointerdown = ev => ev.preventDefault();   // (the highlighted text stays highlighted)
   ctx.onclick = ev => { const b = ev.target.closest('[data-sz]'); if (!b) return; hideCtx(); onPick(+b.dataset.sz); };
+  ctx.dataset.for = 'sz';
 }
 // the font button's text: the font's name, or that this computer does not have it
 function fontButtonLabel(f){
@@ -7881,6 +7890,7 @@ function cleanMove(i, ids, items){   // items: [{b (box where it was), el, veil}
 /* 物件群組: objects of one group carry the same PDFE_Grp (a string) in their dictionaries. GROUPS keeps, per document
    version and page, which object is in which group (read with pdf-lib, which sees our own keys); a document that has none
    (S.hasGroups false, found once when it is opened) is not read again until a group is made or pasted. */
+const HIDDEN_TOLD = new Set();   // (groups whose hidden members were pointed out once)
 const GROUPS = new Map();   // `${version}:${page}` → Map(object id → group id)
 const annId = r => r.objectNumber + 'R' + (r.generationNumber ? r.generationNumber : '');
 const grpOfDict = d => { const g = d && d.lookupMaybe && d.lookupMaybe(N_('PDFE_Grp'), PDFString, PDFHexString); return g ? g.decodeText() : null; };
@@ -7969,7 +7979,8 @@ function setMulti(i, items){
   const els = items.map(a => {
     const el = document.createElement('div'); el.className = 'asel multi';
     Object.assign(el.style, {left:a.x / pg.w * 100 + '%', top:a.y / pg.h * 100 + '%', width:a.w / pg.w * 100 + '%', height:a.h / pg.h * 100 + '%'});
-    el.addEventListener('pointerdown', e => { if (e.button !== 0 || S.spaceDown) return; e.preventDefault(); e.stopPropagation(); if (e.shiftKey) toggleMulti(i, pickUnder(e, a)); else dragMulti(e, {onClick:() => { if (selectedGroup()) selectAnnot(i, pickUnder(e, a)); }}); });   // (a click on one of a selected group: that one, to change it)
+    el.addEventListener('pointerdown', e => { if (e.button !== 0 || S.spaceDown) return; e.preventDefault(); e.stopPropagation();
+      if (e.shiftKey) toggleMulti(i, pickUnder(e, a)); else dragMulti(e, {onClick:() => { if (selectedGroup()) selectAnnot(i, pickUnder(e, a)); }}); });   // (a click on one of a selected group: that one, to change it)
     ovl.appendChild(el); return el;
   });
   S.els[i].style.zIndex = 4;
@@ -8905,6 +8916,7 @@ async function flushNudge(){
   while (NUDGE_RUN) await NUDGE_RUN;   // (one write at a time)
   const n = NUDGE; NUDGE = null;
   if (!n || n.doc !== activeDoc()) return;
+  if (NP) await closeNote(true);   // (an open note written first: written inside the nudge's change, it would wait for that change, and that change for it)
   const run = (async () => {
     if (NUDGE_DELAY) await new Promise(r => setTimeout(r, NUDGE_DELAY));
     if (AS && AS.i === n.i && AS.a.id === n.id) return commitAnnotBox(n.i, AS.a, n.ob, n.nb, {nudge:true});   // still selected: it stays selected where it went
@@ -13063,7 +13075,7 @@ window.__pdfapp = {
   fontBytesInfo:async (family, bold) => { const r = await realFontInfo(family, bold); return {bytes:r.bytes.length, synthetic:r.synthetic}; },
   failEmbed:family => { EMBED_FAIL.add(family); },
   fontkitPatch:on => { fkPatchOn = !!on; },
-  oldLayout:on => { TB_OLD_SPLIT = !!on; }, nudgeDelay:ms => { NUDGE_DELAY = ms; }, cutPages:() => copySelected(true), pendImage:async f => { PENDING_IMG = await loadImageFile(f); setTool('image'); }, objClip:() => OBJ_CLIP && {n:OBJ_CLIP.n, from:OBJ_CLIP.from, i:OBJ_CLIP.src.i, subs:OBJ_CLIP.items.map(t => t.sub), shared:OBJ_CLIP.shared},
+  oldLayout:on => { TB_OLD_SPLIT = !!on; }, nudgeDelay:ms => { NUDGE_DELAY = ms; }, cutPages:() => copySelected(true), copyPages:() => copySelected(false), pendImage:async f => { PENDING_IMG = await loadImageFile(f); setTool('image'); }, objClip:() => OBJ_CLIP && {n:OBJ_CLIP.n, from:OBJ_CLIP.from, i:OBJ_CLIP.src.i, subs:OBJ_CLIP.items.map(t => t.sub), shared:OBJ_CLIP.shared},
   writeSettingsNow:() => { saveView_(); saveTB(); saveStyles(); },
   settleEdits, nudgeState:() => ({pending:!!NUDGE, running:!!NUDGE_RUN}), pageClipBytes:() => PAGE_CLIP ? PAGE_CLIP.bytes : null,
   faceChoice:(styles, bold) => { const r = chooseFace(styles.map(style => ({style})), bold); return {style:r.face.style, synthetic:r.synthetic}; },
