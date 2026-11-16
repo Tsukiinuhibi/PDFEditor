@@ -46,6 +46,23 @@ if (sb0 && sb0.tag === 'INPUT') {
   if (menu) { await win.click('#ctx [data-sz="24"]'); await win.waitForTimeout(400); }
   check('a size picked from the list: 24', /font-size:\s*24px/.test(await A(() => (window.__pdfapp.TBE() || {}).html || '')) && (await sizeBox()).value === '24', await sizeBox());
   await setSize('13.5');
+  // (final review) mixed sizes highlighted, the size shown typed again and Enter: all of it takes that size; the
+  // writing goes on in the text box afterwards
+  await win.keyboard.press('End'); for (let k = 0; k < 2; k++) await win.keyboard.press('Shift+ArrowLeft');
+  await setSize('20'); await win.keyboard.press('Control+a'); await win.waitForTimeout(200);
+  const shown = (await sizeBox()).value;
+  await setSize(shown);
+  await win.keyboard.press('End'); await win.keyboard.type('!'); await win.waitForTimeout(200);
+  const mixed = await A(() => (window.__pdfapp.TBE() || {}).html || '');
+  check('mixed sizes highlighted, the shown size typed again + Enter: all of it takes it; typing goes on in the text', !/font-size:\s*20px/.test(mixed) && /font-size:\s*13\.5px/.test(mixed) && /!/.test(mixed), {shown, mixed:mixed.slice(0, 240)});
+  await win.keyboard.press('Backspace'); await win.keyboard.press('Control+a');
+  // Esc in the size box: the size typed is dropped, the writing goes on
+  await win.click('#hint input[data-tb="size"]', {clickCount:3}); await win.keyboard.type('30'); await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+  check('Esc in the size box: nothing applied, the box shows the size, the text box still open', (await sizeBox()).value === '13.5' && !/font-size:\s*30px/.test(await A(() => (window.__pdfapp.TBE() || {}).html || '')) && !!(await A(() => window.__pdfapp.TBE())), await sizeBox());
+  // full-width digits (a Chinese input method), a trailing point, "pt"
+  await setSize('１４'); const fw = (await sizeBox()).value; await setSize('13.'); const tp = (await sizeBox()).value; await setSize('12pt'); const pt2 = (await sizeBox()).value;
+  check('sizes typed as １４, 13. and 12pt are read as 14, 13 and 12', fw === '14' && tp === '13' && pt2 === '12', {fw, tp, pt2});
+  await setSize('13.5');
 }
 await win.keyboard.press('Escape'); await win.waitForTimeout(2500);
 check('saved with the size 13.5', JSON.stringify(await sizes()) === '[13.5]', await sizes());
@@ -76,6 +93,15 @@ if (hs.length === 4) {
   if ((await sizeBox() || {}).tag === 'INPUT') { await setSize('10.5'); await win.waitForTimeout(2000); }
   check('a size typed for the whole box: 10.5', JSON.stringify(await sizes()) === '[10.5]', await sizes());
 }
+
+// ---- part 3: a text box another program made: no corner handles (it cannot be redrawn here) ---------------------------------
+await A(() => window.__pdfapp.mutate('test', doc => { const P = PDFLib, p = doc.getPage(0);
+  p.node.addAnnot(doc.context.register(doc.context.obj({Type:'Annot', Subtype:'FreeText', Rect:[300, 200, 440, 230], Contents:P.PDFString.of('foreign box'), DA:P.PDFString.of('0 g /Helv 12 Tf')}))); }));
+await win.waitForTimeout(1500);
+const fb = (await A(async () => (await window.__pdfapp.getAnns(0)).filter(a => a.subtype === 'FreeText' && a.contents === 'foreign box').map(a => ({x:a.x, y:a.y, w:a.w, h:a.h}))))[0];
+if (fb) { const p = await at(fb.x + fb.w / 2, fb.y + fb.h / 2); await win.mouse.click(p.x, p.y); await win.waitForTimeout(1200); }
+const fh = await A(() => ({h:document.querySelectorAll('.asel .h').length, hint:(document.querySelector('.abar .hintk') || {}).textContent || ''}));
+check('a text box another program made: no corner handles, only 拖曳移動', !!fb && fh.h === 0 && fh.hint === '拖曳移動', {fb, fh});
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
