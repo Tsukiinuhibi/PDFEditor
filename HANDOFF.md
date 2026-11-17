@@ -506,6 +506,11 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 群組移動（`moveObjects`）也用 `BAR_HOLD`，寫入到選回群組之間設定列不動。分頁列（`#tabbar`）也接上 `wheelSideways`：檔案多開時滾輪左右捲動（測試 `tab-wheel.mjs`）。
 - 測試：`object-menu.mjs`（選單貼上）、`bar-steady.mjs`（拖曳、群組、方向鍵時設定列逐格不變）、`cross-page-move.mjs`。
 
+### 3.9.33 分頁清單、完整檔名、Shift 等比例縮放（v4.10.0）
+- 分頁顯示完整檔名（`.dtab` 不再縮、`.nm` 不截斷），分頁列捲動（滾輪 `wheelSideways`）。兩個以上分頁時，分頁列最右邊有〔N ▾〕（`data-tablist`，sticky）→ `showTabList`：列出所有分頁（完整檔名、未儲存的點），勾選後〔關閉勾選的分頁（N）〕逐一 `closeTab`（有未儲存修改的照舊先問）；〔全選〕〔全不選〕；〔切換〕到那個分頁。
+- 調整大小（`dragAnnot` 的把手）：按著 Shift 時任何物件都等比例（角落與邊上的把手；邊上的把手另一邊以中線為準跟著變），文字方塊一律等比例，戳記與圖片的角落不按 Shift 也等比例（以前 Shift 反而取消）。
+- 測試：`tab-list.mjs`、`resize-shift.mjs`。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。

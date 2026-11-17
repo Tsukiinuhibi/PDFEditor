@@ -8430,12 +8430,17 @@ function dragAnnot(e, d, onDone){
       if (d.includes('e')) { b.w = Math.max(MIN, sx.v - s0.x); hx = sx.hit; }
       if (d.includes('n')) { const y = Math.min(sy.v, s0.y + s0.h - MIN); b.y = y; b.h = s0.y + s0.h - y; hy = sy.hit; }
       if (d.includes('s')) { b.h = Math.max(MIN, sy.v - s0.y); hy = sy.hit; }
-      const keep = AS.a.subtype === 'FreeText' || AS.keep !== shift;   // stamps keep proportions unless Shift; others the other way round; a text box always
+      // the proportions kept: with Shift for every object, on every handle; a text box always; stamps and pictures on their corners
+      const keep = shift || AS.a.subtype === 'FreeText' || (AS.keep && d.length === 2);
       if (keep && d.length === 2) {
         const ar = s0.w / s0.h;
         if (b.w / b.h > ar) b.w = b.h * ar; else b.h = b.w / ar;
         if (d.includes('w')) b.x = s0.x + s0.w - b.w;
         if (d.includes('n')) b.y = s0.y + s0.h - b.h;
+      } else if (keep) {   // a side: the other side follows, about its middle
+        const ar = s0.w / s0.h;
+        if (d === 'e' || d === 'w') { b.h = Math.max(MIN, b.w / ar); b.y = s0.y + (s0.h - b.h) / 2; }
+        else { b.w = Math.max(MIN, b.h * ar); b.x = s0.x + (s0.w - b.w) / 2; }
       }
       if (rot) { const c = turnPt({x:b.x + b.w / 2, y:b.y + b.h / 2}, c0, rot); b.x = c.x - b.w / 2; b.y = c.y - b.h / 2; }   // keep the opposite edge where it is on the page
     }
