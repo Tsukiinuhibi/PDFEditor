@@ -50,15 +50,26 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 /* ---------- view bar ---------- */
 .tabbar{display:flex;align-items:flex-end;gap:2px;background:var(--tabbar);border-bottom:1px solid var(--line2);padding:5px 8px 0;overflow-x:auto;overflow-y:hidden;flex:none;scrollbar-width:thin}
 .tabbar.hide{display:none}
-.dtab{display:flex;align-items:center;gap:7px;max-width:230px;min-width:120px;padding:6px 6px 7px 12px;border-radius:8px 8px 0 0;background:var(--tab);cursor:pointer;font-size:12.5px;color:var(--ink2);border:1px solid transparent;border-bottom:0;position:relative;top:1px;user-select:none}
+.dtab{display:flex;align-items:center;gap:7px;flex:none;min-width:120px;padding:6px 6px 7px 12px;border-radius:8px 8px 0 0;background:var(--tab);cursor:pointer;font-size:12.5px;color:var(--ink2);border:1px solid transparent;border-bottom:0;position:relative;top:1px;user-select:none}
 .dtab:hover{background:var(--tab-h)}
 .dtab.on{background:var(--bar);color:var(--ink);border-color:var(--line2);font-weight:500}
-.dtab .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dtab .nm{flex:none;white-space:nowrap}   /* (the whole name: the bar scrolls) */
 .dtab .dd{width:7px;height:7px;border-radius:50%;background:#e08a00;flex:none}
 .dtab .x{width:20px;height:20px;border:0;border-radius:5px;background:transparent;cursor:pointer;color:var(--ink3);font-size:15px;line-height:1;flex:none;display:grid;place-items:center}
 .dtab .x:hover{background:rgba(0,0,0,.08);color:var(--seal-ink)}
 .dtab-add{border:0;background:transparent;font-size:18px;color:var(--ink2);cursor:pointer;width:30px;height:28px;border-radius:6px;margin-bottom:2px;flex:none}
 .dtab-add:hover{background:rgba(0,0,0,.07)}
+.dtab-list{position:sticky;right:0;margin-left:auto;border:0;background:var(--tabbar);box-shadow:-10px 0 10px var(--tabbar);font-size:13px;color:var(--ink2);cursor:pointer;height:28px;padding:0 9px;border-radius:6px;margin-bottom:2px;flex:none}
+.dtab-list:hover{color:var(--ink);background:var(--tab-h)}
+.ctx .tl-tools{display:flex;gap:6px;padding:2px 8px 6px}
+.ctx .tl-tools button{width:auto;padding:3px 9px;border:1px solid var(--line2)}
+.ctx .tl-list{max-height:min(60vh, 420px);overflow-y:auto}
+.ctx label.tl-row{display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:6px;cursor:pointer}
+.ctx label.tl-row:hover{background:var(--hover)}
+.ctx label.tl-row.on .tl-nm{font-weight:600}
+.ctx .tl-nm{white-space:nowrap;max-width:min(520px, 70vw);overflow:hidden;text-overflow:ellipsis}
+.ctx .tl-go{margin-left:auto;width:auto!important;padding:2px 8px!important;font-size:11.5px;color:var(--ink3)}
+.ctx [data-tlclose]{justify-content:center;font-weight:600}
 .rstack{display:flex;flex-direction:column;justify-content:center;gap:1px;padding-left:2px}
 /* 只顯示圖示: labels hidden (the buttons' titles still name them) */
 .ribbon.icons-only .rb{font-size:0;gap:0;min-width:34px;padding:6px 5px}
@@ -1484,7 +1495,35 @@ function renderTabs(){
   });
   const add = document.createElement('button'); add.className = 'dtab-add'; add.textContent = '+'; add.title = '開啟其他 PDF (Ctrl+O)';
   add.onclick = () => actions.open(); bar.appendChild(add);
+  if (docs.length > 1) {   // 〔▾〕 all the tabs, to close several at once
+    const ls = document.createElement('button'); ls.className = 'dtab-list'; ls.dataset.tablist = '1'; ls.title = '所有分頁：勾選後一次關閉'; ls.textContent = `${docs.length} ▾`;
+    ls.onclick = e => { e.stopPropagation(); if (ctx.style.display === 'block' && ctx.dataset.for === 'tl') { hideCtx(); return; } showTabList(ls); }; bar.appendChild(ls);
+  }
   const on = bar.querySelector('.dtab.on'); if (on) on.scrollIntoView({block:'nearest', inline:'nearest'});
+}
+// the list of open files: tick the ones to close (whole names; a click on 切換 goes to that tab)
+function showTabList(btn){
+  const r = btn.getBoundingClientRect(), picked = new Set();
+  const paint = () => {
+    ctx.innerHTML = `<div class="hd">已開啟 ${docs.length} 個檔案</div>
+      <div class="tl-tools"><button data-tlall>全選</button><button data-tlnone>全不選</button></div>
+      <div class="tl-list">${docs.map((d, i) => `<label class="tl-row${i === active ? ' on' : ''}" title="${esc((docField(d, 'handle') || {}).path || docField(d, 'name'))}"><input type="checkbox" data-k="${i}"${picked.has(d) ? ' checked' : ''}><span class="tl-nm">${esc(docField(d, 'name'))}</span>${docField(d, 'dirty') ? '<span class="dd" title="有未儲存的修改" style="width:7px;height:7px;border-radius:50%;background:#e08a00;flex:none"></span>' : ''}<button class="tl-go" data-tlgo="${i}">${i === active ? '目前' : '切換'}</button></label>`).join('')}</div>
+      <hr><button data-tlclose${picked.size ? '' : ' disabled'}>${icon('trash')}關閉勾選的分頁（${picked.size}）</button>`;
+    ctx.dataset.for = 'tl';
+  };
+  paint();
+  ctx.style.display = 'block'; ctxShownAt = performance.now();
+  ctx.style.left = Math.max(8, Math.min(r.right - ctx.offsetWidth, innerWidth - ctx.offsetWidth - 8)) + 'px'; ctx.style.top = Math.min(r.bottom + 4, innerHeight - ctx.offsetHeight - 8) + 'px';
+  ctx.onchange = e => { const c = e.target.closest('input[data-k]'); if (!c) return; const d = docs[+c.dataset.k]; if (c.checked) picked.add(d); else picked.delete(d);
+    const b = ctx.querySelector('[data-tlclose]'); b.disabled = !picked.size; b.lastChild.textContent = `關閉勾選的分頁（${picked.size}）`; };
+  ctx.onclick = async e => {
+    if (e.target.closest('[data-tlall]')) { docs.forEach(d => picked.add(d)); paint(); return; }
+    if (e.target.closest('[data-tlnone]')) { picked.clear(); paint(); return; }
+    const go = e.target.closest('[data-tlgo]'); if (go) { e.preventDefault(); hideCtx(); const k = +go.dataset.tlgo; if (k !== active) switchTab(k); return; }
+    if (e.target.closest('[data-tlclose]') && picked.size) {   // one at a time (a file with changes not saved asks first)
+      hideCtx(); for (const d of [...picked]) { const k = docs.indexOf(d); if (k >= 0) await closeTab(k); }
+    }
+  };
 }
 
 async function loadDoc(bytes, {name, keepView = false, scrollToCurrent = false} = {}){
@@ -4262,8 +4301,8 @@ async function pasteClip(at){
   }, {scrollToCurrent:true, highlight:{from:at, count:clip.count, label:'貼上的頁面'}});
 }
 const ctx = $('#ctx');
-function hideCtx(){ ctx.style.display = 'none'; ctx.onpointerdown = null; ctx.onkeydown = null; ctx.classList.remove('fmx'); delete ctx.dataset.for; try { if (!FM && window.CSS && CSS.highlights) CSS.highlights.delete('tb-sel'); } catch (_) {} }
-document.addEventListener('pointerdown', e => { if (!ctx.contains(e.target) && !(ctx.dataset.for === 'nau' && e.target.closest && e.target.closest('.nau')) && !(ctx.dataset.for === 'sz' && e.target.closest && e.target.closest('[data-szm]'))) hideCtx(); }, true);   // (the author button closes its own list on its click)
+function hideCtx(){ ctx.style.display = 'none'; ctx.onpointerdown = null; ctx.onkeydown = null; ctx.onchange = null; ctx.classList.remove('fmx'); delete ctx.dataset.for; try { if (!FM && window.CSS && CSS.highlights) CSS.highlights.delete('tb-sel'); } catch (_) {} }
+document.addEventListener('pointerdown', e => { if (!ctx.contains(e.target) && !(ctx.dataset.for === 'nau' && e.target.closest && e.target.closest('.nau')) && !(ctx.dataset.for === 'sz' && e.target.closest && e.target.closest('[data-szm]')) && !(ctx.dataset.for === 'tl' && e.target.closest && e.target.closest('[data-tablist]'))) hideCtx(); }, true);   // (the author button closes its own list on its click)
 let ctxShownAt = 0;
 viewer.addEventListener('scroll', () => { if (performance.now() - ctxShownAt > 600) hideCtx(); });   // ignore the scroll a right-click itself causes
 function showPageMenu(e, i){
