@@ -485,6 +485,9 @@ svg.dsvg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;ov
 .draft.marquee{border-color:#1c64d9;background:rgba(28,100,217,.08)}
 .aveil{position:absolute;background:rgba(255,255,255,.72);pointer-events:none;z-index:3;outline:1px dashed #adb5bd}
 .aveil.clean{background:transparent;outline:none}
+.xghost{position:fixed;z-index:95;pointer-events:none;left:0;top:0}
+.xghost>div{position:absolute;outline:1.5px dashed var(--seal);box-shadow:0 6px 16px rgba(0,0,0,.25)}
+.xghost canvas{position:absolute;inset:0;width:100%;height:100%;opacity:.9}
 .aveil.clean>canvas,.aghost.clean{position:absolute;inset:0;width:100%;height:100%}
 .abar .hintk{color:#9aa2ab;font-size:11px}
 .abar button[data-x=del]{background:var(--seal)}
@@ -7959,6 +7962,41 @@ async function ungroupSelected(){
   if (!ok) return; await loadGroups(i);
   if (S.tool === 'select' && S.els[i]) { const l = (await getAnns(i)).filter(x => ids.includes(x.id)); if (l.length > 1) setMulti(i, l); else if (l.length) selectAnnot(i, l[0]); }
 }
+/* 物件跨頁移動: an object (or a group) dragged over another page and let go there moves to that page, where it was let go
+   (moveAcrossPages: its reference taken off one page's /Annots and put on the other's, P set, turned with the page when the
+   two are turned differently, then placed). While the pointer is over the other page a floating picture follows it. */
+function pageAtPoint(x, y){ const el = document.elementFromPoint(x, y), pe = el && el.closest && el.closest('.page'); return pe && pagesEl.contains(pe) ? +pe.dataset.i : -1; }
+function floatGhost(i, boxes, p0){   // boxes: page-view boxes on page i; p0: the point of page i they keep their place to
+  const f = document.createElement('div'), sc = S.scale; f.className = 'xghost';
+  for (const b of boxes) { const d = document.createElement('div');
+    Object.assign(d.style, {left:(b.x - p0.x) * sc + 'px', top:(b.y - p0.y) * sc + 'px', width:b.w * sc + 'px', height:b.h * sc + 'px'});
+    const c = snapshot(i, b); if (c) d.appendChild(c); f.appendChild(d); }
+  document.body.appendChild(f);
+  return {at:(x, y) => { f.style.transform = `translate(${x}px, ${y}px)`; }, show:on => { f.style.display = on ? '' : 'none'; }, remove:() => f.remove()};
+}
+async function moveAcrossPages(i, j, moves, label){   // moves: [{id, nb (page-view box on page j, its own size kept)}]
+  const ids = moves.map(m => m.id), Vi = S.pages[i].vp1.transform, Vj = S.pages[j].vp1.transform, turned = [0, 1, 2, 3].some(k => Math.abs(Vi[k] - Vj[k]) > 1e-6);
+  const ok = await mutate(label || (moves.length > 1 ? `已將 ${moves.length} 個物件移到第 ${j + 1} 頁` : `已移到第 ${j + 1} 頁`), doc => {
+    const pi = doc.getPage(i), pj = doc.getPage(j), ctx = doc.context;
+    let arrJ = pj.node.lookupMaybe(N_('Annots'), PDFArray); if (!arrJ) { arrJ = ctx.obj([]); pj.node.set(N_('Annots'), arrJ); }
+    const arrI = pi.node.lookupMaybe(N_('Annots'), PDFArray);
+    let n = 0;
+    for (const m of moves) {
+      const ref = findAnnotRef(doc, i, m.id); if (!ref || !arrI) continue;
+      const dict = ctx.lookup(ref, PDFDict), pop = dict.get(N_('Popup'));
+      for (const r of [ref, pop instanceof PDFRef ? pop : null].filter(Boolean)) { const k = arrI.asArray().indexOf(r); if (k >= 0) arrI.remove(k); arrJ.push(r); const d = ctx.lookup(r, PDFDict); if (d) d.set(N_('P'), pj.ref); }
+      if (turned) turnAnnotDict(doc, dict, MUL(Vi, invM(Vj)));   // (the other page turned another way: the same way up on the screen)
+      const ob = vRect(j, numArr(dict.lookup(N_('Rect'), PDFArray))), pgj = S.pages[j];
+      const nb = {x:clamp(m.nb.x, -ob.w / 2, pgj.w - ob.w / 2), y:clamp(m.nb.y, -ob.h / 2, pgj.h - ob.h / 2), w:ob.w, h:ob.h};
+      moveAnnotInDoc(doc, j, m.id, ob, nb); n++;
+    }
+    if (!n) { toast('找不到要移動的物件', 'err'); return false; }
+    if (pj.node.lookupMaybe(N_('Annots'), PDFArray)) restack(doc);
+  });
+  if (!ok) { clearHolds(i); return false; }
+  if (S.tool === 'select' && S.els[j]) { if (S.hasGroups !== false) await loadGroups(j); const l = (await getAnns(j)).filter(a => ids.includes(a.id)); if (l.length > 1) setMulti(j, l); else if (l.length) selectAnnot(j, l[0]); }
+  return true;
+}
 // (a moved or resized object is let go while its change is written and selected again after: its bar above the pages is
 // kept as it is meanwhile — otherwise it goes for a moment and comes back, and the pages jump with it)
 let BAR_HOLD = 0;
@@ -8064,8 +8102,14 @@ function dragMulti(e, {onClick = null} = {}){
   const xr = [Math.max(...items.map(a => -a.x - a.w / 2)), Math.min(...items.map(a => pg.w - a.w / 2 - a.x))];
   const yr = [Math.max(...items.map(a => -a.y - a.h / 2)), Math.min(...items.map(a => pg.h - a.h / 2 - a.y))];
   let dx = 0, dy = 0, moved = false;
+  let xj = -1, xf = null, last = {x:e.clientX, y:e.clientY};   // (over another page: which, and the floating picture)
   const move = ev => {
     if (MS !== MS0) { cancel(); return; }
+    last = {x:ev.clientX, y:ev.clientY};
+    if (moved) { const j = pageAtPoint(ev.clientX, ev.clientY); xj = j >= 0 && j !== i ? j : -1;
+      if (xj >= 0 && !xf) xf = floatGhost(i, items.map(a => ({x:a.x, y:a.y, w:a.w, h:a.h})), p0);
+      if (xf) { xf.show(xj >= 0); xf.at(ev.clientX, ev.clientY); }
+      els.forEach(el => { el.style.visibility = xj >= 0 ? 'hidden' : ''; }); }
     const p = pagePointXY(i, ev.clientX, ev.clientY); dx = clamp(p.x - p0.x, xr[0], xr[1]); dy = clamp(p.y - p0.y, yr[0], yr[1]);
     if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return;
     if (!moved) begin();
@@ -8097,11 +8141,17 @@ function dragMulti(e, {onClick = null} = {}){
   };
   const end = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('keydown', esc, true);
     window.removeEventListener('pointercancel', cancel); window.removeEventListener('blur', cancel); };
-  const cancel = () => { end(); unghost(); els.forEach(el => { el.style.transform = ''; }); };   // back where they were, still selected, nothing written
+  const cancel = () => { end(); unghost(); if (xf) xf.remove(); els.forEach(el => { el.style.transform = ''; el.style.visibility = ''; }); };   // back where they were, still selected, nothing written
   const esc = ev => { if (ev.key !== 'Escape') return; ev.preventDefault(); ev.stopImmediatePropagation(); cancel(); };   // (also when the window loses the focus mid-drag)
   const up = () => {
     end();
+    if (xf) xf.remove();
     if (!moved || MS !== MS0) { unghost(); els.forEach(el => { el.style.transform = ''; }); if (!moved && MS === MS0 && onClick) onClick(); return; }
+    if (xj >= 0) {   // let go over another page: the group moved there, as they were to each other
+      const pj = pagePointXY(xj, last.x, last.y), mv = items.map(a => ({id:a.id, nb:{x:pj.x + (a.x - p0.x), y:pj.y + (a.y - p0.y), w:a.w, h:a.h}}));
+      unghost(); clearMulti();
+      moveAcrossPages(i, xj, mv); return;
+    }
     const n = items.length;
     hold();
     moveObjects(i, items.map(a => ({a, ob:{x:a.x, y:a.y, w:a.w, h:a.h}, nb:{x:a.x + dx, y:a.y + dy, w:a.w, h:a.h}})), `已移動 ${n} 個物件`).then(ok => { if (!ok) clearHolds(i); });
@@ -8348,15 +8398,30 @@ function dragAnnot(e, d, onDone){
     if (!rot) cleanMove(i, [AS.a.id], [{b:s0, el:AS.el, veil:v}]);
   };
   let stop = () => {};
+  let xj = -1, xf = null;   // (over another page: which, and the floating picture)
+  const xover = () => {
+    if (d !== 'move' || !AS) return;
+    const j = pageAtPoint(ptr.x, ptr.y); xj = j >= 0 && j !== i ? j : -1;
+    if (xj >= 0 && !xf) xf = floatGhost(i, [turnedFrame(s0, rot)], p0);
+    if (xf) { xf.show(xj >= 0); xf.at(ptr.x, ptr.y); }
+    AS.el.style.visibility = xj >= 0 ? 'hidden' : '';
+  };
   const move = ev => {
-    if (AS !== AS0) { stop(); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); clearSnapMarks(); onDone && onDone(false); return; }
+    if (AS !== AS0) { stop(); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); clearSnapMarks(); if (xf) xf.remove(); onDone && onDone(false); return; }
     ptr = {x:ev.clientX, y:ev.clientY}; shift = ev.shiftKey;
     if (!moved) { if (Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return; begin(); stop = dragAssist(() => ptr, upd, {}); }
-    upd();
+    upd(); xover();
   };
   const up = async () => {
     stop(); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); clearSnapMarks();
+    if (xf) xf.remove();
     if (!moved || !AS || AS !== AS0) { onDone && onDone(false); return; }
+    if (xj >= 0 && d === 'move') {   // let go over another page: moved there, where it was let go
+      const {a} = AS, f0 = turnedFrame(s0, rot), pj = pagePointXY(xj, ptr.x, ptr.y);
+      AS.dragging = false; holdSelection();
+      await moveAcrossPages(i, xj, [{id:a.id, nb:{x:pj.x + (f0.x - p0.x), y:pj.y + (f0.y - p0.y), w:f0.w, h:f0.h}}]);
+      onDone && onDone(true); return;
+    }
     const {a, box} = AS; AS.dragging = false;
     if (Math.abs(box.x - s0.x) < .05 && Math.abs(box.y - s0.y) < .05 && Math.abs(box.w - s0.w) < .05 && Math.abs(box.h - s0.h) < .05) { selectAnnot(i, a); return; }
     await commitAnnotBox(i, a, s0, box);
