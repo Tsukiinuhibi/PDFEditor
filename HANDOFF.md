@@ -503,6 +503,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 移動、縮放選取的物件時，`holdSelection` 會先放開選取，寫入後再選回來；以前中間 `paintObjBar` 會把上方的設定列拿掉又放回來（閃一下，頁面也跟著跳）。`BAR_HOLD`：放開到選回來之間設定列保持不動（`selectAnnot`、`deselectAnnot`、`clearHolds` 解除，4 秒保險）。
 - 物件跨頁移動：`dragAnnot`（移動）與 `dragMulti` 在指標移到另一頁上方時顯示跟著滑鼠的圖（`floatGhost`，`.xghost`），原本頁上的選取框隱藏；在那一頁放開時 `moveAcrossPages(i, j, moves)`：把註解（和它的 Popup）從第 i 頁的 `/Annots` 拿掉、放到第 j 頁，設 `P`；兩頁轉向不同時用 `turnAnnotDict` 轉；再用 `moveAnnotInDoc` 放到放開的位置（夾在頁面內）。一個復原步驟，之後在新頁選取。
 - 審查後：自動捲動時也更新指標下的頁（`dragAssist` 的回呼呼叫 `xover`），放開時再算一次；群組跨頁時用同一個位移並夾在頁內、舊位置的遮罩保留到重畫、失敗時群組仍選取；被分開的群組（沒移動的成員在隱藏或鎖定的圖層）移過去的部分換新的群組 id；便利貼的 Popup 也一起轉；拖曳中按 Esc、視窗失焦或指標取消時拿掉浮動圖、什麼都不動；`edit:cmd` 只接受主畫面。單頁檢視或單／雙數頁過濾時，看不到的頁不能拖過去（限制）。
+- 群組移動（`moveObjects`）也用 `BAR_HOLD`，寫入到選回群組之間設定列不動。分頁列（`#tabbar`）也接上 `wheelSideways`：檔案多開時滾輪左右捲動（測試 `tab-wheel.mjs`）。
 - 測試：`object-menu.mjs`（選單貼上）、`bar-steady.mjs`（拖曳、群組、方向鍵時設定列逐格不變）、`cross-page-move.mjs`。
 
 ### 3.10 其他
