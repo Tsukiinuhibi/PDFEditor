@@ -8098,8 +8098,10 @@ async function moveObjects(i, moves, label){
   moves = moves.filter(m => Math.abs(m.nb.x - m.ob.x) > .01 || Math.abs(m.nb.y - m.ob.y) > .01);
   if (!moves.length) return false;
   const ids = MS && MS.i === i ? MS.items.map(a => a.id) : moves.map(m => m.a.id);
+  if (MS) { releaseBar(); BAR_HOLD = setTimeout(() => { BAR_HOLD = 0; paintObjBar(); }, 4000); }   // (the group's bar kept as it is until it is selected again)
   const ok = await mutate(label, doc => { for (const m of moves) if (!moveAnnotInDoc(doc, i, m.a.id, m.ob, m.nb)) { toast('找不到此註解', 'err'); return false; } });
-  if (S.tool === 'select' && S.els[i]) { const list = (await getAnns(i)).filter(x => ids.includes(x.id)); setMulti(i, list); }
+  if (S.tool === 'select' && S.els[i]) { const list = (await getAnns(i)).filter(x => ids.includes(x.id)); releaseBar(); setMulti(i, list); }
+  else if (BAR_HOLD) { releaseBar(); paintObjBar(); }
   return ok;
 }
 // drag one of the selected objects: all of them move by the same amount
