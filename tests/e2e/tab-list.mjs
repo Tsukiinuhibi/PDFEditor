@@ -46,5 +46,11 @@ check('〔全選〕 ticks them all', all);
 await win.keyboard.press('Escape'); await win.waitForTimeout(300);
 check('Esc: the list closes, nothing closed', (await tabs()).length === 2 && await win.evaluate(() => document.querySelector('#ctx').style.display !== 'block'));
 
+// (review) a box ticked (it has the focus), then Esc: the list closes
+await win.click('#tabbar [data-tablist]'); await win.waitForTimeout(400);
+await win.click('#ctx .tl-row input'); await win.waitForTimeout(200);
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+check('a box ticked, then Esc: the list closes, nothing closed', await win.evaluate(() => document.querySelector('#ctx').style.display !== 'block') && (await tabs()).length === 2);
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

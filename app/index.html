@@ -48,7 +48,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 @media (max-width:1340px){ .rb{min-width:36px;font-size:11px;letter-spacing:-.02em} .rb svg.i{width:18px;height:18px} .grp .cap{font-size:10px;letter-spacing:.04em} .brand{display:none} }
 
 /* ---------- view bar ---------- */
-.tabbar{display:flex;align-items:flex-end;gap:2px;background:var(--tabbar);border-bottom:1px solid var(--line2);padding:5px 8px 0;overflow-x:auto;overflow-y:hidden;flex:none;scrollbar-width:thin}
+.tabbar{scroll-padding-right:64px;display:flex;align-items:flex-end;gap:2px;background:var(--tabbar);border-bottom:1px solid var(--line2);padding:5px 8px 0;overflow-x:auto;overflow-y:hidden;flex:none;scrollbar-width:thin}
 .tabbar.hide{display:none}
 .dtab{display:flex;align-items:center;gap:7px;flex:none;min-width:120px;padding:6px 6px 7px 12px;border-radius:8px 8px 0 0;background:var(--tab);cursor:pointer;font-size:12.5px;color:var(--ink2);border:1px solid transparent;border-bottom:0;position:relative;top:1px;user-select:none}
 .dtab:hover{background:var(--tab-h)}
@@ -1447,13 +1447,14 @@ async function openInNewTab(bytes, name, handle){
   pdf.getMetadata().then(m => { if (m && m.info && m.info.IsCollectionPresent) toast('這是 PDF 包：裡面的檔案在左側「附件」分頁，可以按〔開啟〕', 'long'); }).catch(() => {});
 }
 async function closeTab(i){
-  const d = docs[i]; if (!d || isBusy()) return;
+  const d = docs[i]; if (!d) return false;
+  if (isBusy()) { toast('正在處理中，請稍後再關閉分頁', 'err'); return false; }
   if (i === active && NUDGE) await flushNudge();   // (a nudge not written yet: written first)
   if (docField(d, 'dirty')) {
     const v = await openModal({title:'關閉分頁', body:`<div style="max-width:400px">「${esc(docField(d, 'name'))}」有尚未儲存的修改。原檔不會被修改，要先另存新檔嗎？</div>`,
       buttons:[{label:'取消', value:null}, {label:'不儲存並關閉', value:'drop'}, {label:'另存新檔', value:'save', primary:true}]});
-    if (!v) return;
-    if (v === 'save') { if (i !== active) switchTab(i); await new Promise(r => setTimeout(r, 50)); if (!(await saveAsNew(S.bytes, '_已編輯'))) return; i = active; }
+    if (!v) return false;
+    if (v === 'save') { if (i !== active) switchTab(i); await new Promise(r => setTimeout(r, 50)); if (!(await saveAsNew(S.bytes, '_已編輯'))) return false; i = active; }
   }
   const pdf = docField(d, 'pdf');
   if (i === active) {
@@ -1466,6 +1467,7 @@ async function closeTab(i){
     renderTabs();
   }
   if (pdf) setTimeout(() => pdf.destroy(), 300);
+  return true;
 }
 function showWelcome(){
   deselectAnnot(); clearMulti();   // (the bar is no longer about an object)
@@ -1514,14 +1516,18 @@ function showTabList(btn){
   paint();
   ctx.style.display = 'block'; ctxShownAt = performance.now();
   ctx.style.left = Math.max(8, Math.min(r.right - ctx.offsetWidth, innerWidth - ctx.offsetWidth - 8)) + 'px'; ctx.style.top = Math.min(r.bottom + 4, innerHeight - ctx.offsetHeight - 8) + 'px';
+  ctx.onkeydown = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hideCtx(); } };   // (a ticked box has the focus: the page's own keys do not see Esc)
   ctx.onchange = e => { const c = e.target.closest('input[data-k]'); if (!c) return; const d = docs[+c.dataset.k]; if (c.checked) picked.add(d); else picked.delete(d);
     const b = ctx.querySelector('[data-tlclose]'); b.disabled = !picked.size; b.lastChild.textContent = `關閉勾選的分頁（${picked.size}）`; };
   ctx.onclick = async e => {
-    if (e.target.closest('[data-tlall]')) { docs.forEach(d => picked.add(d)); paint(); return; }
-    if (e.target.closest('[data-tlnone]')) { picked.clear(); paint(); return; }
+    const tick = all => { if (all) docs.forEach(d => picked.add(d)); else picked.clear(); ctx.querySelectorAll('input[data-k]').forEach(c => { c.checked = all; });
+      const b = ctx.querySelector('[data-tlclose]'); b.disabled = !picked.size; b.lastChild.textContent = `關閉勾選的分頁（${picked.size}）`; };   // (in place: the list stays where it was scrolled)
+    if (e.target.closest('[data-tlall]')) { tick(true); return; }
+    if (e.target.closest('[data-tlnone]')) { tick(false); return; }
     const go = e.target.closest('[data-tlgo]'); if (go) { e.preventDefault(); hideCtx(); const k = +go.dataset.tlgo; if (k !== active) switchTab(k); return; }
     if (e.target.closest('[data-tlclose]') && picked.size) {   // one at a time (a file with changes not saved asks first)
-      hideCtx(); for (const d of [...picked]) { const k = docs.indexOf(d); if (k >= 0) await closeTab(k); }
+      hideCtx(); const cur = docs[active], list = [...picked].sort((a, b) => (a === cur) - (b === cur));   // (the tab being looked at last: no other drawn meanwhile)
+      for (const d of list) { const k = docs.indexOf(d); if (k >= 0 && !(await closeTab(k))) break; }   // (one kept, 取消: the rest stay too)
     }
   };
 }
@@ -8433,14 +8439,16 @@ function dragAnnot(e, d, onDone){
       // the proportions kept: with Shift for every object, on every handle; a text box always; stamps and pictures on their corners
       const keep = shift || AS.a.subtype === 'FreeText' || (AS.keep && d.length === 2);
       if (keep && d.length === 2) {
-        const ar = s0.w / s0.h;
-        if (b.w / b.h > ar) b.w = b.h * ar; else b.h = b.w / ar;
+        const ar = s0.w / s0.h, f = Math.max(Math.min(b.w / s0.w, b.h / s0.h), MIN / Math.min(s0.w, s0.h));   // (one factor for both: never smaller than MIN either way)
+        b.w = s0.w * f; b.h = s0.h * f;
         if (d.includes('w')) b.x = s0.x + s0.w - b.w;
         if (d.includes('n')) b.y = s0.y + s0.h - b.h;
       } else if (keep) {   // a side: the other side follows, about its middle
         const ar = s0.w / s0.h;
-        if (d === 'e' || d === 'w') { b.h = Math.max(MIN, b.w / ar); b.y = s0.y + (s0.h - b.h) / 2; }
-        else { b.w = Math.max(MIN, b.h * ar); b.x = s0.x + (s0.w - b.w) / 2; }
+        const f = Math.max(d === 'e' || d === 'w' ? b.w / s0.w : b.h / s0.h, MIN / Math.min(s0.w, s0.h));
+        b.w = s0.w * f; b.h = s0.h * f;
+        if (d === 'e' || d === 'w') { b.y = s0.y + (s0.h - b.h) / 2; if (d === 'w') b.x = s0.x + s0.w - b.w; }
+        else { b.x = s0.x + (s0.w - b.w) / 2; if (d === 'n') b.y = s0.y + s0.h - b.h; }
       }
       if (rot) { const c = turnPt({x:b.x + b.w / 2, y:b.y + b.h / 2}, c0, rot); b.x = c.x - b.w / 2; b.y = c.y - b.h / 2; }   // keep the opposite edge where it is on the page
     }
