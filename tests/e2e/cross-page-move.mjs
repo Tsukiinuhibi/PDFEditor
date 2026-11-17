@@ -59,5 +59,16 @@ const two = await anns(0, 'Square');
 const g2 = await anns(1, 'Square');
 check('a group dragged to page 2: both there, as they were to each other', !(await anns(0, 'Square')).length && g2.length >= 2 && (() => { const [a, b] = two, f = id => g2.find(x => Math.abs(x.w - id.w) < 1 && Math.abs(x.h - id.h) < 1); const A2 = f(a), B2 = f(b); return A2 && B2 && Math.abs((B2.x - A2.x) - (b.x - a.x)) < 1.5 && Math.abs((B2.y - A2.y) - (b.y - a.y)) < 1.5; })(), {two, g2});
 
+// (review) Esc while over the other page: the floating picture goes, nothing moves
+{ await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+  const g = (await anns(1, 'Square'))[0];
+  { const p = await at(1, g.x + 2, g.y + g.h / 2); await win.mouse.click(p.x, p.y); await win.waitForTimeout(500); await win.keyboard.press('Escape'); await win.waitForTimeout(300); await win.keyboard.press('Escape'); await win.waitForTimeout(300); }
+  const n1 = (await anns(1, 'Square')).length, n0 = (await anns(0, 'Square')).length;
+  { const p = await at(1, g.x + 2, g.y + g.h / 2), q = await at(0, 150, H0 - 150); await win.mouse.click(p.x, p.y); await win.waitForTimeout(500); await win.mouse.move(p.x, p.y); await win.mouse.down(); await win.mouse.move(q.x, q.y, {steps:12}); await win.waitForTimeout(300);
+    await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+    const fl = await A(() => !!document.querySelector('.xghost'));
+    await win.mouse.up(); await win.waitForTimeout(2000);
+    check('Esc while dragging over another page: the floating picture goes, nothing moves', !fl && (await anns(1, 'Square')).length === n1 && (await anns(0, 'Square')).length === n0, {fl, n1, n0}); } }
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

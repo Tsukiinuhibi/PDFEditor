@@ -7980,12 +7980,16 @@ async function moveAcrossPages(i, j, moves, label){   // moves: [{id, nb (page-v
     const pi = doc.getPage(i), pj = doc.getPage(j), ctx = doc.context;
     let arrJ = pj.node.lookupMaybe(N_('Annots'), PDFArray); if (!arrJ) { arrJ = ctx.obj([]); pj.node.set(N_('Annots'), arrJ); }
     const arrI = pi.node.lookupMaybe(N_('Annots'), PDFArray);
+    // groups split by the move (members not moved: on a hidden or locked layer, or hidden): the moved ones a group of their own
+    const moving = new Set(moves.map(m => m.id)), regroup = new Map(), stay = new Set();
+    if (arrI) for (const r of arrI.asArray()) if (r instanceof PDFRef && !moving.has(annId(r))) { const g = grpOfDict(ctx.lookup(r)); if (g) stay.add(g); }
     let n = 0;
     for (const m of moves) {
       const ref = findAnnotRef(doc, i, m.id); if (!ref || !arrI) continue;
       const dict = ctx.lookup(ref, PDFDict), pop = dict.get(N_('Popup'));
       for (const r of [ref, pop instanceof PDFRef ? pop : null].filter(Boolean)) { const k = arrI.asArray().indexOf(r); if (k >= 0) arrI.remove(k); arrJ.push(r); const d = ctx.lookup(r, PDFDict); if (d) d.set(N_('P'), pj.ref); }
-      if (turned) turnAnnotDict(doc, dict, MUL(Vi, invM(Vj)));   // (the other page turned another way: the same way up on the screen)
+      const g = grpOfDict(dict); if (g && stay.has(g)) { if (!regroup.has(g)) regroup.set(g, newGroupId()); dict.set(N_('PDFE_Grp'), PDFString.of(regroup.get(g))); }
+      if (turned) { turnAnnotDict(doc, dict, MUL(Vi, invM(Vj))); const pd = pop instanceof PDFRef && ctx.lookup(pop, PDFDict); if (pd) turnAnnotDict(doc, pd, MUL(Vi, invM(Vj))); }   // (the other page turned another way: the same way up on the screen)
       const ob = vRect(j, numArr(dict.lookup(N_('Rect'), PDFArray))), pgj = S.pages[j];
       const nb = {x:clamp(m.nb.x, -ob.w / 2, pgj.w - ob.w / 2), y:clamp(m.nb.y, -ob.h / 2, pgj.h - ob.h / 2), w:ob.w, h:ob.h};
       moveAnnotInDoc(doc, j, m.id, ob, nb); n++;
@@ -7994,7 +7998,10 @@ async function moveAcrossPages(i, j, moves, label){   // moves: [{id, nb (page-v
     if (pj.node.lookupMaybe(N_('Annots'), PDFArray)) restack(doc);
   });
   if (!ok) { clearHolds(i); return false; }
-  if (S.tool === 'select' && S.els[j]) { if (S.hasGroups !== false) await loadGroups(j); const l = (await getAnns(j)).filter(a => ids.includes(a.id)); if (l.length > 1) setMulti(j, l); else if (l.length) selectAnnot(j, l[0]); }
+  if (S.hasGroups === false) S.hasGroups = null;
+  let picked = false;
+  if (S.tool === 'select' && S.els[j]) { if (S.hasGroups !== false) await loadGroups(j); const l = (await getAnns(j)).filter(a => ids.includes(a.id)); if (l.length > 1) { setMulti(j, l); picked = true; } else if (l.length) { selectAnnot(j, l[0]); picked = true; } }
+  if (!picked && BAR_HOLD) { releaseBar(); paintObjBar(); }   // (nothing selected again: the bar follows at once)
   return true;
 }
 // (a moved or resized object is let go while its change is written and selected again after: its bar above the pages is
@@ -8147,10 +8154,17 @@ function dragMulti(e, {onClick = null} = {}){
     end();
     if (xf) xf.remove();
     if (!moved || MS !== MS0) { unghost(); els.forEach(el => { el.style.transform = ''; }); if (!moved && MS === MS0 && onClick) onClick(); return; }
-    if (xj >= 0) {   // let go over another page: the group moved there, as they were to each other
-      const pj = pagePointXY(xj, last.x, last.y), mv = items.map(a => ({id:a.id, nb:{x:pj.x + (a.x - p0.x), y:pj.y + (a.y - p0.y), w:a.w, h:a.h}}));
-      unghost(); clearMulti();
-      moveAcrossPages(i, xj, mv); return;
+    { const j = pageAtPoint(last.x, last.y); xj = j >= 0 && j !== i ? j : -1; }   // (where it is let go, now)
+    if (xj >= 0) {   // let go over another page: the group moved there, as they were to each other (one offset for all, kept on the page)
+      const pj = pagePointXY(xj, last.x, last.y), pgj = S.pages[xj];
+      const gx0 = Math.min(...items.map(a => a.x)), gy0 = Math.min(...items.map(a => a.y)), gx1 = Math.max(...items.map(a => a.x + a.w)), gy1 = Math.max(...items.map(a => a.y + a.h));
+      let ox = pj.x - p0.x, oy = pj.y - p0.y;
+      ox = gx1 - gx0 <= pgj.w ? clamp(ox, -gx0, pgj.w - gx1) : -gx0; oy = gy1 - gy0 <= pgj.h ? clamp(oy, -gy0, pgj.h - gy1) : -gy0;
+      const mv = items.map(a => ({id:a.id, nb:{x:a.x + ox, y:a.y + oy, w:a.w, h:a.h}}));
+      els.forEach(el => el.querySelectorAll('.aghost').forEach(g => g.remove())); veils.forEach(v => v.classList.add('hold'));   // (the old places stay covered until the page is drawn again)
+      els.forEach(el => { el.style.visibility = 'hidden'; });
+      moveAcrossPages(i, xj, mv).then(ok => { if (!ok && MS === MS0) els.forEach(el => { el.style.transform = ''; el.style.visibility = ''; }); });
+      return;
     }
     const n = items.length;
     hold();
@@ -8405,17 +8419,19 @@ function dragAnnot(e, d, onDone){
     if (xj >= 0 && !xf) xf = floatGhost(i, [turnedFrame(s0, rot)], p0);
     if (xf) { xf.show(xj >= 0); xf.at(ptr.x, ptr.y); }
     AS.el.style.visibility = xj >= 0 ? 'hidden' : '';
+    if (xj >= 0) clearSnapMarks();
   };
   const move = ev => {
     if (AS !== AS0) { stop(); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); clearSnapMarks(); if (xf) xf.remove(); onDone && onDone(false); return; }
     ptr = {x:ev.clientX, y:ev.clientY}; shift = ev.shiftKey;
-    if (!moved) { if (Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return; begin(); stop = dragAssist(() => ptr, upd, {}); }
+    if (!moved) { if (Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return; begin(); stop = dragAssist(() => ptr, () => { upd(); xover(); }, {}); }   // (the page under the pointer followed while the view scrolls by itself too)
     upd(); xover();
   };
   const up = async () => {
     stop(); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); clearSnapMarks();
     if (xf) xf.remove();
     if (!moved || !AS || AS !== AS0) { onDone && onDone(false); return; }
+    if (d === 'move') { const j = pageAtPoint(ptr.x, ptr.y); xj = j >= 0 && j !== i ? j : -1; if (xj < 0) AS.el.style.visibility = ''; }   // (where it is let go, now)
     if (xj >= 0 && d === 'move') {   // let go over another page: moved there, where it was let go
       const {a} = AS, f0 = turnedFrame(s0, rot), pj = pagePointXY(xj, ptr.x, ptr.y);
       AS.dragging = false; holdSelection();
@@ -8427,6 +8443,15 @@ function dragAnnot(e, d, onDone){
     await commitAnnotBox(i, a, s0, box);
     onDone && onDone(true);
   };
+  // Esc, the window losing the focus or the pointer cancelled while moving: the floating picture goes, nothing moves
+  const abort = ev => { if (ev && ev.type === 'keydown' && ev.key !== 'Escape') return; if (!xf && !moved) return;
+    window.removeEventListener('keydown', abort, true); window.removeEventListener('blur', abort); window.removeEventListener('pointercancel', abort);
+    stop(); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); clearSnapMarks(); if (xf) xf.remove();
+    if (AS === AS0) { ev && ev.preventDefault && ev.preventDefault(); AS.el.style.visibility = ''; AS.dragging = false; selectAnnot(i, AS.a); }
+    onDone && onDone(false); };
+  window.addEventListener('keydown', abort, true); window.addEventListener('blur', abort); window.addEventListener('pointercancel', abort);
+  const off = () => { window.removeEventListener('keydown', abort, true); window.removeEventListener('blur', abort); window.removeEventListener('pointercancel', abort); };
+  window.addEventListener('pointerup', off, {once:true});
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
 }
 const mapPt = (p, ob, nb) => ({x:nb.x + (p.x - ob.x) * (nb.w / ob.w), y:nb.y + (p.y - ob.y) * (nb.h / ob.h)});
