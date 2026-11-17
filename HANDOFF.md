@@ -498,6 +498,12 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 轉過角度的圖片做文字辨識（`readPictureText`）：`ocrImage(i, box, turn)` 先把外框畫出來，再以中心轉回 `-deg`、切成圖片本身的大小，再辨識。
 - 測試：`image-url.mjs`（沒副檔名的圖片連結）、`image-ocr.mjs`（轉 30° 的圖片）、`move-flicker.mjs`（轉過角度的物件拖曳時舊位置看起來和旁邊一樣）。測試掛鉤 `turnSel(deg)`。
 
+### 3.9.32 右鍵選單的貼上、移動時工具列不閃、物件跨頁移動（v4.9.0）
+- 編輯文字的右鍵選單：剪下／複製／貼上改由視窗本身做（`DESK.editCmd` → `main.js` 的 `edit:cmd` → `webContents.cut/copy/paste()`），和按鍵一樣；網頁自己的 `execCommand('paste')` 在 Electron 被擋。
+- 移動、縮放選取的物件時，`holdSelection` 會先放開選取，寫入後再選回來；以前中間 `paintObjBar` 會把上方的設定列拿掉又放回來（閃一下，頁面也跟著跳）。`BAR_HOLD`：放開到選回來之間設定列保持不動（`selectAnnot`、`deselectAnnot`、`clearHolds` 解除，4 秒保險）。
+- 物件跨頁移動：`dragAnnot`（移動）與 `dragMulti` 在指標移到另一頁上方時顯示跟著滑鼠的圖（`floatGhost`，`.xghost`），原本頁上的選取框隱藏；在那一頁放開時 `moveAcrossPages(i, j, moves)`：把註解（和它的 Popup）從第 i 頁的 `/Annots` 拿掉、放到第 j 頁，設 `P`；兩頁轉向不同時用 `turnAnnotDict` 轉；再用 `moveAnnotInDoc` 放到放開的位置（夾在頁面內）。一個復原步驟，之後在新頁選取。
+- 測試：`object-menu.mjs`（選單貼上）、`bar-steady.mjs`（拖曳、群組、方向鍵時設定列逐格不變）、`cross-page-move.mjs`。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。
