@@ -67,6 +67,7 @@ const center = async k => { const b = (await A(async () => (await window.__pdfap
   await win.mouse.click(q0.x, q0.y); await win.waitForTimeout(400);
   const n = await at(c0.x + 40, c0.y), o = await at(c0.x - 26, c0.y);
   for (let k = 0; k < 4; k++) await win.keyboard.press('Shift+ArrowRight');
+  await win.waitForTimeout(60);   // (the next frame drawn: a capture taken before it shows the screen of the moment before the keys)
   const shots = await red([n, o], async () => {});
   check('nudged with the arrow keys: shown at its new place at once and until the page is drawn again', shots.every(s => s[0]), shots.map(s => +s[0]).join(''));
   check('…and not back at its old place', shots.every(s => !s[1]), shots.map(s => +s[1]).join(''));
