@@ -4892,7 +4892,8 @@ function showTextMenu(e){
   // (the highlighted text was kept by the caller: saveTBRange) — applyTextFormat restores it before each change
   const st = currentTBStyle(), box = TBE ? {boxBg:TBE.el.dataset.boxbg || '', border:!!TBE.el.dataset.border} : {boxBg:st.boxBg, border:st.border};
   const apply = (k, v) => applyTextFormat(k, v);
-  const edit = cmd => { restoreTBRange(); if (TBE) TBE.el.focus(); try { document.execCommand(cmd); } catch (_) {} };
+  const edit = cmd => { restoreTBRange(); if (TBE) TBE.el.focus();   // (the window itself cuts, copies or pastes, as the keys do: a page cannot paste on its own)
+    if (DESK && DESK.editCmd) DESK.editCmd(cmd).catch(() => {}); else try { document.execCommand(cmd); } catch (_) {} };
   formatMenu(e, '文字格式（套用到反白的文字）', [
     ...textFormatRows({...st, ...box}, apply, k => applyTextFormat(k, !currentTBStyle()[k]), at => openFontMenu(null, at), true),
     {t:'hr'}, {t:'it', label:'剪下', ic:'cut', kb:'Ctrl+X', run:() => edit('cut')}, {t:'it', label:'複製', ic:'copy', kb:'Ctrl+C', run:() => edit('copy')}, {t:'it', label:'貼上', ic:'paste', kb:'Ctrl+V', run:() => edit('paste')},
@@ -7958,16 +7959,22 @@ async function ungroupSelected(){
   if (!ok) return; await loadGroups(i);
   if (S.tool === 'select' && S.els[i]) { const l = (await getAnns(i)).filter(x => ids.includes(x.id)); if (l.length > 1) setMulti(i, l); else if (l.length) selectAnnot(i, l[0]); }
 }
+// (a moved or resized object is let go while its change is written and selected again after: its bar above the pages is
+// kept as it is meanwhile — otherwise it goes for a moment and comes back, and the pages jump with it)
+let BAR_HOLD = 0;
+const releaseBar = () => { if (!BAR_HOLD) return; clearTimeout(BAR_HOLD); BAR_HOLD = 0; };
 function holdSelection(){
   if (!AS) return;
+  releaseBar(); BAR_HOLD = setTimeout(() => { BAR_HOLD = 0; paintObjBar(); }, 4000);   // (not selected again by then: the bar follows)
   AS.el.querySelectorAll('.h,.eh,.rh').forEach(h => h.remove());
   AS.el.classList.add('hold'); AS.veil && AS.veil.classList.add('hold');
   if (!AS.ghost) AS.el.remove();
   AS.bar.remove(); if (S.els[AS.i]) S.els[AS.i].style.zIndex = '';
   AS = null; clearSnapMarks();
 }
-function clearHolds(i){ const el = S.els[i]; if (el) el.querySelectorAll('.hold').forEach(n => n.remove()); }
+function clearHolds(i){ if (BAR_HOLD) { releaseBar(); paintObjBar(); } const el = S.els[i]; if (el) el.querySelectorAll('.hold').forEach(n => n.remove()); }
 function deselectAnnot(){
+  if (BAR_HOLD && !AS) { releaseBar(); paintObjBar(); }
   if (!AS) return;
   AS.el.remove(); AS.bar.remove(); AS.veil && AS.veil.remove();
   if (S.els[AS.i]) S.els[AS.i].style.zIndex = '';
@@ -8120,6 +8127,7 @@ function snapshot(i, box){
   return c;
 }
 function selectAnnot(i, a){
+  releaseBar();
   clearMulti();   // one object chosen: the group is let go (Delete, the bar and the keys are about this one now)
   deselectAnnot();
   const pg = S.pages[i], ovl = S.els[i].querySelector('.ovl');
@@ -8198,6 +8206,7 @@ async function paintObjBar(){
   try { await paintObjBar_(); } finally { if (gen === OBJBAR_GEN) OBJBAR_FOR = AS ? AS.a.id : null; }   // (an older paint ending after a newer one began says nothing)
 }
 async function paintObjBar_(){
+  if (BAR_HOLD && !AS && !MS) return;   // (an object being moved: its bar stays until it is selected again)
   const h = $('#hint');
   const drop = () => { OBJBAR = null; if (h.classList.contains('objbar')) { h.classList.remove('objbar', 'show', 'styl', 'multi'); h.innerHTML = ''; } };
   if (S.tool === 'select' && MS) {

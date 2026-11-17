@@ -384,6 +384,8 @@ ipcMain.handle('url:fetch', async (e, id, url, kind = 'pdf') => {
   } finally { clearTimeout(idle); downloads.delete(id); }
 });
 ipcMain.handle('url:cancel', (_e, id) => { const c = downloads.get(id); if (c) c.abort('cancel'); });
+// 剪下／複製／貼上 from the program's own menus: done by the window itself, as the keys do (a page's execCommand('paste') is refused)
+ipcMain.handle('edit:cmd', (e, c) => { if (['cut', 'copy', 'paste'].includes(c) && !e.sender.isDestroyed()) e.sender[c](); });
 ipcMain.handle('app:clipboard-text', async () => { const t = String((await clipboard.readText()) || '').trim(); return t.length <= 4096 && /^https?:\/\/\S+$/i.test(t) ? t : ''; });   // (only a web address reaches the page)
 
 /* ---------------- 列印 ---------------- */

@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('desktop', {
     onProgress: cb => ipcRenderer.on('url:progress', (_e, id, got, total) => cb(id, got, total)),
   },
   clipboardText: () => ipcRenderer.invoke('app:clipboard-text'),
+  editCmd: c => ipcRenderer.invoke('edit:cmd', c),
   claude: {
     state: () => ipcRenderer.invoke('claude:state'),
     setEnabled: on => ipcRenderer.invoke('claude:set-enabled', on),

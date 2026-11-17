@@ -71,6 +71,14 @@ check('…〔B〕: the highlighted text bold', /font-weight:\s*(bold|700)|<b>/.t
 { const e = await A(() => { const r = document.querySelector('.tbed').getBoundingClientRect(); return {x:r.left + r.width / 2, y:r.top + r.height / 2}; }); await win.mouse.click(e.x, e.y, {button:'right'}); await win.waitForTimeout(600); }
 check('…〔色環…〕 there: the colour wheel opens', await wheelOpens());
 await win.keyboard.press('Escape'); await win.waitForTimeout(300);
+// 〔貼上〕 in the menu: the clipboard's text goes into the text being written (as Ctrl+V)
+await app.evaluate(({clipboard}) => clipboard.writeText('PASTED42'));
+await win.keyboard.press('End'); await win.waitForTimeout(200);
+{ const e = await A(() => { const r = document.querySelector('.tbed').getBoundingClientRect(); return {x:r.left + r.width / 2, y:r.top + r.height / 2}; }); await win.mouse.click(e.x, e.y, {button:'right'}); await win.waitForTimeout(600); }
+if (await menu()) await pick('貼上');
+await win.waitForTimeout(600);
+check('〔貼上〕 in the menu of the text being written: the clipboard text pasted', (await A(() => (window.__pdfapp.TBE() || {}).html || '')).includes('PASTED42'), (await A(() => (window.__pdfapp.TBE() || {}).html || '')).slice(0, 200));
+await win.keyboard.press('Escape'); await win.waitForTimeout(300);
 await win.keyboard.press('Escape'); await win.waitForTimeout(2500);
 await A(() => window.__pdfapp.setTool('select')); await win.waitForTimeout(300);
 
