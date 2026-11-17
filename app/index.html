@@ -12986,6 +12986,7 @@ function wheelSideways(e){
 }
 $('#ribbon').addEventListener('wheel', wheelSideways, {passive:false});
 $('#viewbar').addEventListener('wheel', wheelSideways, {passive:false});
+$('#tabbar').addEventListener('wheel', wheelSideways, {passive:false});   // (many files open: the tabs scrolled with the wheel)
 // a narrow view bar drops its words step by step: the labels, then the zoom buttons', the view modes', the last two;
 // last of all it closes up the gaps
 const VB_STEPS = ['c1', 'c2', 'c3', 'c4', 'c5'];
