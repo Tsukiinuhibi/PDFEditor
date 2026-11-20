@@ -512,6 +512,11 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 審查後：清單裡勾了方塊後 Esc 也能關（`ctx.onkeydown`）；`closeTab` 回傳是否關了，批次關閉時某個檔案選〔取消〕就停下，正在看的分頁最後關；〔全選〕〔全不選〕不重畫清單；`.tabbar` 的 `scroll-padding-right` 讓目前的分頁不被〔N ▾〕蓋住；忙碌中關分頁會提示。Shift 縮放用同一個倍率算兩邊，不會小於 MIN。
 - 測試：`tab-list.mjs`、`resize-shift.mjs`。
 
+### 3.9.34 頁面符合圖片（v4.11.0）
+- `fitPageToBox(i, b)`：第 i 頁的 MediaBox 與 CropBox 都設成 b（看到的座標，經 `visToPdf` 換成紙上的座標，所以旋轉、裁切過的頁也對），刪掉 TrimBox／BleedBox／ArtBox；頁面上的內容與物件留在紙上原處，框外的被裁掉。已經一樣大就提示、不動。經 `mutate()`，一步復原。
+- 入口：選取插入的圖片 → 工具列〔頁面符合圖片〕（`data-o="fitpage"`）或右鍵選單（`fitPageToPicture`，旋轉的圖片用外框）；擷取圖片工具點到頁面裡的圖片 → 列上的〔頁面符合圖片〕（`data-x="fit"`，用目前的框，可以先拉框調整）。
+- 測試：`page-fit-image.mjs`。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。
