@@ -8381,7 +8381,7 @@ function objBarHTML(kind, dict, doc = null){
     const spec = stampSpec(dict), op = readAnnStyle(dict).opacity;
     return {name:'戳記', ic:'stamp', st:{spec}, html:`<button class="pchip" data-o="stamp">更換戳記…</button>${spec ? `<span class="sb-h">顏色</span><button class="cpick" data-cp="color" title="選擇顏色" style="--c:${STAMP_COLORS[spec.c] || normHex(spec.c) || '#d6336c'}"><i></i>▾</button>` : ''}${opacitySel(op)}${spec ? '' : '<span class="sb-tip">舊版蓋的戳記無法改顏色，可以更換戳記</span>'}`};
   }
-  if (kind === 'image') return {name:'圖片', ic:'insImg', st:null, html:`<button class="pchip" data-o="image">更換圖片…</button><button class="pchip" data-o="ocr" title="用影像辨識讀出整張圖片裡的文字（在文字辨識視窗，可以複製）">${icon('ocr')}辨識整張</button><button class="pchip" data-o="ocrbox" title="在圖片上拖曳框選要辨識的範圍">${icon('rectI')}框選辨識</button><button class="pchip" data-o="fitpage" title="把這一頁改成這張圖片的大小（頁面上的內容留在紙上原來的位置，圖片外的部分裁掉）">${icon('fitPage')}頁面符合圖片</button>${opacitySel(readAnnStyle(dict).opacity)}`};
+  if (kind === 'image') return {name:'圖片', ic:'insImg', st:null, html:`<button class="pchip" data-o="image">更換圖片…</button><button class="pchip" data-o="ocr" title="用影像辨識讀出整張圖片裡的文字（在文字辨識視窗，可以複製）">${icon('ocr')}辨識整張</button><button class="pchip" data-o="ocrbox" title="在圖片上拖曳框選要辨識的範圍">${icon('rectI')}框選辨識</button><button class="pchip" data-o="fitpage" title="把這一頁改成這張圖片的大小（頁面上的內容留在原來的位置，圖片外的部分不再顯示）">${icon('fitPage')}頁面符合圖片</button>${opacitySel(readAnnStyle(dict).opacity)}`};
   const def = DRAW_TOOLS[kind], st = readObjStyle(dict);
   if (kind === 'fill' && subOf(dict) === 'Stamp' && !dict.get(N_('CA')) && doc) st.opacity = fillAlpha(doc, dict);   // (made before v1.0.34: the opacity is in its picture only)
   return {name:subjOf(dict) === '區域螢光筆' ? '區域螢光筆' : def.label.replace('工具', ''), ic:def.ic, html:styleBar(kind, st, true), st:null, style:st};
@@ -8706,25 +8706,29 @@ async function pictureOcrBox(ob){
   const tip = $('#hint span'); if (tip) tip.textContent = '在圖片上拖曳框選要辨識的範圍（只讀框住的部分）；Esc 或換工具結束';
   toast('在圖片上拖曳框選要辨識的範圍');
 }
-// 頁面符合圖片: page i becomes the box b (seen, in points): its media and crop boxes are b on the paper, so what is on
-// the page stays where it is on the paper and what is outside b is cut away; its trim, bleed and art boxes (the old
-// page's) go. → whether it changed
-async function fitPageToBox(i, b){
+// 頁面符合圖片: page i becomes the part of the box b (seen, in points) on the page: its media and crop boxes are that on
+// the paper, so what is on the page stays where it is on the paper and what is outside is no longer shown (the page never
+// grows: nothing cropped away before comes back); its trim, bleed and art boxes (the old page's) go. → whether it changed
+async function fitPageToBox(i, b0){
   const pg = S.pages[i]; if (!pg) return false;
-  if (!(b.w >= 1 && b.h >= 1)) { toast('圖片太小，無法讓頁面符合它', 'err'); return false; }
+  const x = Math.max(0, b0.x), y = Math.max(0, b0.y), b = {x, y, w:Math.min(pg.w, b0.x + b0.w) - x, h:Math.min(pg.h, b0.y + b0.h) - y};
+  if (!(b.w >= 3 && b.h >= 3)) { toast('圖片在頁面上的部分太小，無法把頁面改成這個大小', 'err'); return false; }
   if (Math.abs(b.x) < .5 && Math.abs(b.y) < .5 && Math.abs(b.w - pg.w) < .5 && Math.abs(b.h - pg.h) < .5) { toast('這一頁已經和圖片一樣大'); return false; }
   const [x0, y0, x1, y1] = visToPdf(i, b).rect.map(v => Math.round(v * 100) / 100);
-  return mutate(`第 ${i + 1} 頁已符合圖片大小（${fmtMm(b.w)} × ${fmtMm(b.h)}）`, doc => {
+  return mutate(`第 ${i + 1} 頁已改成圖片大小（${fmtMm(b.w)} × ${fmtMm(b.h)}）`, doc => {
     const page = doc.getPage(i);
     page.setMediaBox(x0, y0, x1 - x0, y1 - y0); page.setCropBox(x0, y0, x1 - x0, y1 - y0);
     for (const k of ['TrimBox', 'BleedBox', 'ArtBox']) page.node.delete(PDFName.of(k));
   });
 }
-// 頁面符合圖片 for an inserted picture: its box as seen (a turned picture: the box around it)
+// 頁面符合圖片 for an inserted picture: its box as seen (a turned picture: the box around it); an arrow-key nudge not
+// written yet is written first, so the box is where the picture is now
 async function fitPageToPicture(ob){
+  if (NUDGE) await flushNudge(); else while (NUDGE_RUN) await NUDGE_RUN;
+  if (activeDoc() !== ob.doc) return;
   const a = (await getAnns(ob.i)).find(x => x.id === ob.id); if (!a) { toast('找不到這張圖片', 'err'); return; }
   if (await fitPageToBox(ob.i, {x:a.x, y:a.y, w:a.w, h:a.h})) {   // (still selected: the page and the picture are one size now)
-    const n = (await getAnns(ob.i)).find(x => x.id === ob.id); if (n && S.els[ob.i] && !AS) selectAnnot(ob.i, n);
+    const n = (await getAnns(ob.i)).find(x => x.id === ob.id); if (n && S.els[ob.i] && !AS && S.tool === 'select') selectAnnot(ob.i, n);
   }
 }
 async function changeImageOf(ob){

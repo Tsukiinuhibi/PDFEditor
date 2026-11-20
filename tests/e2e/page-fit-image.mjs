@@ -129,5 +129,5 @@ await win.waitForTimeout(2500);
   check('partly off the page: the page is the part on the page (no wider than the picture\'s part)', near(z.w, m.x + m.w) && near(z.h, m.h), {z, m});
   check('partly off the page: the new box stays inside the old page (0 … 595)', !!k.media && k.media[0] >= -0.01 && k.media[2] <= 595.01, k); }
 
-await app.close();
-console.log(failed ? `\n${failed} failed` : '\nall passed');
+console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
+await app.evaluate(({app}) => app.exit(0)).catch(() => {});
