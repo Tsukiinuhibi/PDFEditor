@@ -21,6 +21,7 @@ const p3 = doc.addPage([595, 842]);                                             
 p3.node.set(N('Contents'), ctx.register(ctx.flateStream(Buffer.from('q 200 0 0 100 100 600 cm /Im0 Do Q\n'))));
 p3.node.set(N('Resources'), ctx.obj({XObject:{Im0:im}}));
 doc.addPage([595, 842]);                                                                      // page 5: left alone
+doc.addPage([595, 842]); doc.addPage([595, 842]);                                             // pages 6 and 7: nudged pictures
 const file = path.join(TMP, 'pagefit.pdf'); fs.writeFileSync(file, await doc.save());
 
 const { app } = await launchPath(file);
@@ -67,7 +68,7 @@ check('page 1 is now the size of the picture', near(z0.w, a0.w) && near(z0.h, a0
 check('the picture fills the page (at its top left corner)', !!q0 && near(q0.x, 0) && near(q0.y, 0) && near(q0.w, a0.w) && near(q0.h, a0.h), q0);
 check('the media box and the crop box are the picture\'s box; the trim box goes', !!k0.media && JSON.stringify(k0.media) === JSON.stringify(k0.crop) && near(k0.media[2] - k0.media[0], a0.w) && near(k0.media[3] - k0.media[1], a0.h) && !k0.trim, k0);
 check('one undo step', await undoN() === u0 + 1, {u0, now:await undoN()});
-check('the other pages stay as they were', JSON.stringify(await size(4)) === JSON.stringify(s4) && JSON.stringify(await boxes(4)) === JSON.stringify(b4) && k0.n === 5);
+check('the other pages stay as they were', JSON.stringify(await size(4)) === JSON.stringify(s4) && JSON.stringify(await boxes(4)) === JSON.stringify(b4) && k0.n === 7);
 await win.keyboard.press('Control+z'); await win.waitForTimeout(2500);
 const z0u = await size(0);
 check('undo: page 1 is A4 again', near(z0u.w, 595) && near(z0u.h, 842), z0u);
@@ -108,6 +109,25 @@ await win.waitForTimeout(2500);
 { const z = await size(3), k = await boxes(3);
   check('a picture in the page: the page becomes its size (200 × 100)', near(z.w, 200) && near(z.h, 100), z);
   check('…its box on the paper (100 600 300 700)', JSON.stringify(k.media) === '[100,600,300,700]', k); }
+
+// ---- (review) page 6: nudged with the arrow keys, then fitted at once (before the nudge is written) -------------------------
+{ const a = await putPicture(5, 300, 300);
+  for (let k = 0; k < 3; k++) await win.keyboard.press('Shift+ArrowRight');
+  await win.click('#hint.objbar [data-o="fitpage"]'); await win.waitForTimeout(3000);
+  const z = await size(5), q = (await pics(5))[0];
+  check('nudged, then fitted at once: the page is where the picture went (it fills the page)', !!q && near(q.x, 0) && near(q.y, 0) && near(z.w, a.w) && near(z.h, a.h), {z, q, a}); }
+
+// ---- (review) page 7: a picture partly off the page: the page becomes the part of it on the page, never larger ----------
+{ const a = await putPicture(6, 60, 300);
+  for (let k = 0; k < 4; k++) await win.keyboard.press('Shift+ArrowLeft');
+  await win.waitForTimeout(2500);
+  const m = (await pics(6))[0];
+  check('(the picture hangs over the left edge)', !!m && m.x < -5, m);
+  { const c = await see(6, Math.max(2, m.x + m.w / 2), m.y + m.h / 2); await win.mouse.click(...c); await win.waitForTimeout(1200); }
+  await win.click('#hint.objbar [data-o="fitpage"]'); await win.waitForTimeout(2500);
+  const z = await size(6), k = await boxes(6);
+  check('partly off the page: the page is the part on the page (no wider than the picture\'s part)', near(z.w, m.x + m.w) && near(z.h, m.h), {z, m});
+  check('partly off the page: the new box stays inside the old page (0 … 595)', !!k.media && k.media[0] >= -0.01 && k.media[2] <= 595.01, k); }
 
 await app.close();
 console.log(failed ? `\n${failed} failed` : '\nall passed');
