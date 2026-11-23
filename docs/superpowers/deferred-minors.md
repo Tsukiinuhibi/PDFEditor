@@ -128,3 +128,6 @@ section out of this file when its batch ships.
 - 追蹤修訂與註解不會轉進 PDF（只轉文件內容）。
 - 從網路下載的判斷只看 Windows 的「來自網路」標記。
 - 全部測試一起跑時，claude.mjs（pdf_replace／pdf_open 回報「正在忙」）和 font-identify-engine.mjs（FontId 還沒載入）偶爾會失敗，單獨重跑會通過。
+
+## v4.12.1（Word 開檔方式修正）
+- 新的開檔方式（以參數名稱呼叫 Word）仍需在使用者的 Windows＋Word 上確認；開啟 Word 檔與「轉存 Word（用 Word）」都要試。
