@@ -114,18 +114,22 @@ try {
   $word.Visible = $false
   $word.DisplayAlerts = 0
   $word.AutomationSecurity = 3
-  # FileName, ConfirmConversions, ReadOnly, AddToRecentFiles, PasswordDocument
-  $doc = $word.Documents.Open($in, $false, $true, $false, 'pdfe-no-password')
+  $m = [Type]::Missing
+  # FileName, ConfirmConversions, ReadOnly, AddToRecentFiles, PasswordDocument, PasswordTemplate, Revert,
+  # WritePasswordDocument, WritePasswordTemplate, Format, Encoding, Visible, OpenAndRepair, DocumentDirection, NoEncodingDialog
+  $doc = $word.Documents.Open($in, $false, $true, $false, 'pdfe-no-password', $m, $m, $m, $m, $m, $m, $false, $m, $m, $true)
   try { $doc.ExportAsFixedFormat($out, 17) } finally { $doc.Close(0) }
   [Console]::Out.WriteLine('PDFE_OK')
 } catch {
+  $ex = $_.Exception; while ($ex.InnerException) { $ex = $ex.InnerException }
+  [Console]::Out.WriteLine('PDFE_HR:' + ('{0:X8}' -f $ex.HResult))
   [Console]::Out.WriteLine('PDFE_ERR:' + $_.Exception.Message); $code = 2
 } finally {
   if ($word) { try { $word.Quit(0) } catch { }; [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) }
 }
 exit $code
 `;
-const PASSWORD = /password|密碼/i;
+const PASSWORD = /password|密碼/i, PASSWORD_HR = /PDFE_HR:800A1520/i;   // (Word's error 5408: a wrong password, in any language)
 // the Word file at `file` → its PDF by Word `version`. job / killWord as in convertWithWord
 // → {ok: true, data (Buffer)} | {ok: false, why: 'cancel' | 'timeout' | 'word' | 'password' | 'read', msg}
 async function wordToPdf({ file, version, run, job, killWord: kill = since => stopWord(run, since) }){
@@ -145,11 +149,21 @@ async function wordToPdf({ file, version, run, job, killWord: kill = since => st
     if (r.err && r.err.killed) { await kill(since); return { ok: false, why: 'timeout' }; }
     if (!/PDFE_OK/.test(r.stdout)) {
       const m = /PDFE_ERR:(.*)/.exec(r.stdout), msg = (m ? m[1] : r.stderr || (r.err && r.err.message) || '').trim().slice(0, 300);
-      return PASSWORD.test(msg) ? { ok: false, why: 'password', msg: `「${path.basename(file)}」有密碼保護，請先在 Word 裡移除密碼再開啟` } : { ok: false, why: 'word', msg };
+      return PASSWORD.test(msg) || PASSWORD_HR.test(r.stdout) ? { ok: false, why: 'password', msg: `「${path.basename(file)}」有密碼保護，請先在 Word 裡移除密碼再開啟` } : { ok: false, why: 'word', msg };
     }
     return { ok: true, data: await fs.readFile(tmpOut) };
   } catch (err) { return { ok: false, why: 'word', msg: String((err && err.message) || err) }; }
   finally { await fs.rm(dir, { recursive: true, force: true }).catch(() => {}); }
 }
 
-module.exports = { WORD_PS, WORD_PDF_PS, WORD_EXT, wordToPdf, wordVersion, readPdfWarning, setPdfWarning, stopWord, convertWithWord, sweepTemp, targetLocked };
+// Word jobs (轉存 Word and 開啟 Word 檔) one at a time: a stopped job closes every Word started since it began
+// (stopWord), so no other job may be running then. A failed job does not stop the next.
+let wordQueue = Promise.resolve();
+function oneAtATime(fn){ const run = wordQueue.then(fn, fn); wordQueue = run.catch(() => {}); return run; }
+// where a file came from (Windows marks a download: Zone.Identifier, ZoneId 3 internet, 4 untrusted); 0 when unmarked
+async function zoneOf(file){
+  if (process.platform !== 'win32') return 0;
+  try { const m = /ZoneId\s*=\s*(\d)/i.exec(await fs.readFile(file + ':Zone.Identifier', 'utf8')); return m ? +m[1] : 0; } catch (_) { return 0; }
+}
+
+module.exports = { WORD_PS, WORD_PDF_PS, WORD_EXT, wordToPdf, oneAtATime, zoneOf, wordVersion, readPdfWarning, setPdfWarning, stopWord, convertWithWord, sweepTemp, targetLocked };

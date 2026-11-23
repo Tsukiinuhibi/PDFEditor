@@ -187,7 +187,7 @@ ipcMain.handle('word:convert', async (_e, id, pdf, out) => {
     const v = await W.wordVersion(runFile);
     if (v < 15) return { ok: false, why: 'word', msg: '這台電腦沒有可以轉換 PDF 的 Word（需要 Word 2013 以後的版本）' };
     if (typeof out !== 'string' || !savedHere.has(path.resolve(out))) return { ok: false, why: 'word', msg: '不能存到這個位置' };
-    return await W.convertWithWord({ pdf: toBuf(pdf), out, version: v, run: runFile, job });
+    return await W.oneAtATime(() => W.convertWithWord({ pdf: toBuf(pdf), out, version: v, run: runFile, job }));
   } finally { wordJobs.delete(id); }
 });
 // 開啟 Word 檔: Word (2010 or later) turns the Word file at p into a PDF; its bytes come back (word.js wordToPdf). 取消 is
@@ -199,9 +199,11 @@ ipcMain.handle('word:open', async (_e, id, p) => {
     const v = await W.wordVersion(runFile);
     if (v < 14) return { ok: false, why: 'noword', msg: '開啟 Word 檔需要這台電腦裝有 Microsoft Word（2010 以後的版本）' };
     allowDir(path.dirname(p));   // (as an opened PDF's folder: exports may go there)
-    return await W.wordToPdf({ file: p, version: v, run: runFile, job });
+    return await W.oneAtATime(() => W.wordToPdf({ file: p, version: v, run: runFile, job }));
   } finally { wordJobs.delete(id); }
 });
+// a Word file downloaded from the internet (asked about before Word opens it: Word's Protected View is not used here)
+ipcMain.handle('word:zone', (_e, p) => typeof p === 'string' ? W.zoneOf(p) : 0);
 ipcMain.handle('word:cancel', (_e, id) => { const j = wordJobs.get(id); if (j) { j.cancelled = true; if (j.child) j.child.kill(); } });
 // Claude 增益集: the local bridge for Claude Desktop's extension (claude.js). A call goes to the page (claude:call) and its
 // answer comes back (claude:result); the page carries it out on the open document, through mutate()
@@ -490,6 +492,7 @@ ipcMain.handle('update:install', () => {
 
 /* ---------------- app lifecycle ---------------- */
 app.whenReady().then(async () => {
+  W.sweepTemp().catch(() => {});   // (copies of Word files a stopped Word kept: gone once they are an hour old)
   claudeSet = CL.loadSettings(claudeFile()); claudeApply().catch(() => {});
   await loadPicked();
   const root = __dirname;

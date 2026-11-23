@@ -90,7 +90,7 @@ if (W) {
   if (typeof W.wordToPdf === 'function') {
     const PS = W.WORD_PDF_PS || '';
     check('the script: macros never run, the file opened read-only (and a made-up password so it never asks), saved as PDF (17)',
-      /AutomationSecurity\s*=\s*3/.test(PS) && /Documents\.Open\(\$in, \$false, \$true, \$false, '[^']+'\)/.test(PS) && /ExportAsFixedFormat\(\$out, 17\)/.test(PS) && /\$word\.Quit\(0\)/.test(PS), PS.slice(0, 600));
+      /AutomationSecurity\s*=\s*3/.test(PS) && /Documents\.Open\(\$in, \$false, \$true, \$false, '[^']+'[,)]/.test(PS) && /ExportAsFixedFormat\(\$out, 17\)/.test(PS) && /\$word\.Quit\(0\)/.test(PS), PS.slice(0, 600));
     const src = path.join(TMP, '會議 紀錄.docx'); fs.writeFileSync(src, 'PK the users word file');
     // a fake Word that writes a PDF where it is asked, and remembers what it was given
     let seen = null;
@@ -129,6 +129,21 @@ if (W) {
     check('a file that cannot be read: 「read」, Word not started', !r.ok && r.why === 'read' && !g.calls.some(c => c[0] === 'powershell.exe'), r);
     g = fakePdf(); r = await W.wordToPdf({file:src, version:16, run:g.run, job:{cancelled:true}});
     check('取消 before it starts: Word not started', !r.ok && r.why === 'cancel' && !g.calls.some(c => c[0] === 'powershell.exe'), r);
+    // (review) no encoding question for a .doc / .rtf that is really text; the gaps filled with [Type]::Missing
+    check('(review) the script: NoEncodingDialog on (the 15th argument), Visible off', /\$m = \[Type\]::Missing/.test(PS) && /Documents\.Open\(\$in, \$false, \$true, \$false, '[^']+', \$m, \$m, \$m, \$m, \$m, \$m, \$false, \$m, \$m, \$true\)/.test(PS), PS.slice(0, 700));
+    // (review) a password told by Word's error number, whatever Word's language
+    { const run = async (file, args, opts = {}) => (file === 'powershell.exe' && args.includes('-File')) ? {stdout:'PDFE_HR:800A1520\r\nPDFE_ERR:パスワードが正しくありません。\r\n', stderr:'', err:{code:2}} : {stdout:'', stderr:'', err:null};
+      r = await W.wordToPdf({file:src, version:16, run, job:{cancelled:false}});
+      check('(review) a password in a Word of another language (error 5408): still 「password」', !r.ok && r.why === 'password', r); }
+    check('(review) the script prints the error number (of the innermost error)', /PDFE_HR:/.test(PS) && /InnerException/.test(PS));
+    // (review) Word jobs one at a time (a stopped one closes every Word started since it began)
+    check('(review) oneAtATime exists', typeof W.oneAtATime === 'function');
+    if (typeof W.oneAtATime === 'function') {
+      const order = [], job = (n, ms, fail) => () => new Promise((res, rej) => { order.push('start ' + n); setTimeout(() => { order.push('end ' + n); fail ? rej(new Error('x')) : res(n); }, ms); });
+      const rs = await Promise.allSettled([W.oneAtATime(job(1, 120, true)), W.oneAtATime(job(2, 20)), W.oneAtATime(job(3, 10))]);
+      check('(review) one Word job at a time, in order, a failed one does not stop the next', JSON.stringify(order) === JSON.stringify(['start 1', 'end 1', 'start 2', 'end 2', 'start 3', 'end 3']) && rs[1].value === 2 && rs[2].value === 3, order);
+    }
+    check('(review) zoneOf exists (a file from the internet), 0 where there is no mark', typeof W.zoneOf === 'function' && await W.zoneOf(src) === 0);
     check('the Word kinds: .docx .doc .docm .dotx .dot .rtf .odt, not .pdf or .txt', ['a.docx', 'a.DOC', 'a.docm', 'a.dotx', 'a.dot', 'a.rtf', 'a.odt'].every(n => W.WORD_EXT.test(n)) && !['a.pdf', 'a.txt', 'docx'].some(n => W.WORD_EXT.test(n)));
   }
 } else check('word.js exists and loads', false);

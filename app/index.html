@@ -1080,7 +1080,7 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
       <div class="wcard">
         <img class="logo" src="img/logo.png" alt="">
         <h1>開啟 PDF 開始閱讀與編輯</h1>
-        <p>把 PDF（或 Word 檔）拖曳到這裡，或點下方按鈕選擇檔案。<br>檔案只在你的瀏覽器內處理，不會上傳。</p>
+        <p>把 PDF（或 Word 檔）拖曳到這裡，或點下方按鈕選擇檔案。<br>檔案只在你的電腦上處理，不會上傳。</p>
         <div class="acts">
           <button class="btn pri" data-act="open"><i data-i="open"></i>選擇 PDF 或 Word 檔</button>
           <button class="btn" data-act="openUrl"><i data-i="web"></i>從網址開啟</button>
@@ -3809,7 +3809,9 @@ async function openWordPath(p){
   const same = docs.findIndex(d => { const h = docField(d, 'handle'); return h && samePath(h.path, p); });
   if (same >= 0) { switchTab(same); toast('「' + name + '」已經開啟'); return; }
   if (!DESK || !DESK.word || !DESK.word.open) { toast('開啟 Word 檔需要使用電腦版程式', 'err'); return; }
-  await whenIdle();
+  // (a window already open — settings, printing, 轉存 Word — is not replaced: the Word file waits for it)
+  for (;;) { await whenIdle(); if (!PR && !PRINTOPEN && !$('#mask').classList.contains('show')) break; await new Promise(r => setTimeout(r, 250)); }
+  if (DESK.word.zone && (await DESK.word.zone(p)) >= 3 && !(await confirmDlg('這個 Word 檔來自網路', `「${name}」是從網路下載的檔案。用 Word 轉成 PDF 時不會經過 Word 的「保護的檢視」（巨集一律不會執行）。確定是可以信任的檔案，再開啟。`, '開啟'))) { toast('已取消開啟「' + name + '」'); return; }
   const id = 'o' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   let r = null, open = true;
   const body = `<div style="max-width:420px">正在用 Word 把「${esc(name)}」轉成 PDF…<div class="dim" style="margin-top:6px">Word 在背景執行，可能需要一點時間。原本的 Word 檔不會被修改。</div></div>`;
@@ -3826,6 +3828,10 @@ async function openWordPath(p){
   const data = r.data instanceof Uint8Array ? r.data : new Uint8Array(r.data);
   await openFile(new File([data], pdfName, {type:'application/pdf'}), {kind:'file', name:pdfName, path:p, word:true}, {said:`已用 Word 開啟「${name}」，轉成 PDF（原本的 Word 檔不會被修改，完成後請另存新檔）`});
 }
+// files sent to the window (開啟檔案 from Explorer, dropped in) open one after the other (a Word file's window and
+// conversion are not cut short by the next one)
+let OPEN_Q = Promise.resolve();
+const queueOpenPath = p => (OPEN_Q = OPEN_Q.then(() => openPath(p)).catch(() => {}));
 let permAsk = null;
 function primeWrite(){
   // must run synchronously inside the click so the permission prompt is allowed
@@ -12309,7 +12315,9 @@ async function openWordDialog(){
   const run = async () => {
     if (done) { if (DESK && done.path) DESK.openPath(done.path); return null; }
     const pages = chosen(); if (!pages || WORDJOB) return undefined;
-    const fn = S.name.replace(/\.pdf$/i, '').replace(/_已編輯(\(\d+\))?$/, '') + '.docx';
+    let fn = S.name.replace(/\.pdf$/i, '').replace(/_已編輯(\(\d+\))?$/, '') + '.docx';
+    const src = S.handle && (S.handle.orig || S.handle.path) || '';
+    if (src.split(/[\\/]/).pop().toLowerCase() === fn.toLowerCase()) fn = fn.replace(/\.docx$/i, '_轉存.docx');   // (opened from that Word file: not its name)
     let where = null;
     if (DESK) {
       const dir = S.handle && S.handle.path ? S.handle.path.replace(/[\\/][^\\/]*$/, '') : '', orig = S.handle && (S.handle.orig || S.handle.path);
@@ -12709,12 +12717,15 @@ window.addEventListener('drop', e => {
   }
   const isPdf = x => /\.pdf$/i.test(x.name) || x.type === 'application/pdf' || (!!DESK && WORD_EXT.test(x.name));   // (a Word file: 開啟 Word 檔)
   const pdfs = f.filter(isPdf);
-  if (pdfs.length > 1) { (async () => { for (const x of pdfs) { const fp = DESK && DESK.pathForFile(x); if (fp) await openPath(fp); else await openFile(x); } })(); return; }
-  const idx = f.findIndex(isPdf);
+  const noPath = x => DESK && WORD_EXT.test(x.name) && !DESK.pathForFile(x);   // (a Word file from a mail or a zip: not on the disk)
+  if (pdfs.some(noPath)) toast('請先把 Word 檔存到電腦，再開啟（拖進來的 Word 檔不在電腦上）', 'err');
+  if (pdfs.filter(x => !noPath(x)).length > 1) { for (const x of pdfs) { if (noPath(x)) continue; const fp = DESK && DESK.pathForFile(x); if (fp) queueOpenPath(fp); else openFile(x); } return; }
+  const idx = f.findIndex(x => isPdf(x) && !noPath(x));
   const pdf = f[idx];
   const item = idx >= 0 && e.dataTransfer.items ? [...e.dataTransfer.items].filter(it => it.kind === 'file')[idx] : null;
   const hp = item && item.getAsFileSystemHandle ? item.getAsFileSystemHandle().catch(() => null) : Promise.resolve(null);
-  if (pdf && DESK) { const fp = DESK.pathForFile(pdf); if (fp) openPath(fp); else openFile(pdf); }
+  if (pdf && DESK) { const fp = DESK.pathForFile(pdf); if (fp) queueOpenPath(fp); else openFile(pdf); }
+  else if (pdfs.length && !pdf) return;   // (only Word files not on the disk: said above, not attached)
   else if (pdf) hp.then(h => openFile(pdf, h && h.kind === 'file' ? h : null)); else if (f.length && S.pdf) { const dt = new DataTransfer(); f.forEach(x => dt.items.add(x)); $('#fAttach').files = dt.files; $('#fAttach').dispatchEvent(new Event('change')); }
 });
 window.addEventListener('beforeunload', e => { if (anyDirty()) { e.preventDefault(); e.returnValue = ''; } });
@@ -13249,7 +13260,7 @@ if (DESK) {
     if (st.state === 'ready' && prev !== 'ready') toast(`新版本 v${st.version} 已下載完成`);
   });
   DESK.update.state().then(st => { if (st) { UPD.state = st; renderUpdate(); } });
-  DESK.onOpenPath(p => openPath(p));
+  DESK.onOpenPath(p => queueOpenPath(p));
   DESK.ready().then(async list => { for (const p of (list || [])) await openPath(p); });
 }
 /* ---------------- 顯示模式: follow the OS / dark / light ---------------- */

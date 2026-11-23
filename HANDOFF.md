@@ -522,6 +522,12 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 〔開啟〕的檔案選擇、拖曳進視窗、從檔案總管「開啟檔案」（`pdfArgs`）都接受 Word 檔（`WORD_EXT`：.docx .docm .doc .dotx .dotm .dot .rtf .odt）。`openPath` 遇到 Word 檔交給 `openWordPath`。
 - 轉換在主程式：`word:open`（main.js）→ `wordToPdf`（word.js）：需要 Word 2010 以後（`wordVersion` ≥ 14），沒有就回 `noword`。檔案先複製到暫存資料夾，PowerShell 透過 COM 唯讀開啟（`AutomationSecurity = 3` 巨集一律不執行；給一個假的開啟密碼，有密碼的檔案直接失敗而不是跳出詢問 → `password`），`ExportAsFixedFormat(…, 17)` 存成 PDF，讀回位元組；Word 一定關閉，暫存資料夾刪掉。取消與 10 分鐘上限沿用 `word:cancel`／`stopWord`。不動登錄檔設定。
 - 畫面：轉換時有「開啟 Word 檔」視窗（〔取消〕）；成功後開新分頁，名稱是 `X.pdf`，`S.handle = {kind:'file', name, path:Word 檔路徑, word:true}`（沒有 getFile／createWritable）：另存新檔建議 Word 檔的資料夾、`avoid` 擋住原檔、同一個 Word 檔再開一次只切換分頁。
+- 審查後：
+  - 送進視窗的檔案排隊依序開啟（`queueOpenPath`），主程式的 Word 工作一次一個（`oneAtATime`：轉存 Word 也是，停掉的工作用 `stopWord` 關掉「之後開的所有 Word」，所以不能同時有別的）。
+  - 已經有視窗開著（設定、列印、轉存 Word）時，Word 檔等它關掉才開始，不會把它取消。
+  - 從網路下載的檔案（`Zone.Identifier` ZoneId ≥ 3，`zoneOf`）先問過才開（不經過 Word 的「保護的檢視」）。
+  - `Documents.Open` 加上 `NoEncodingDialog`（第 15 個參數，中間用 `[Type]::Missing`），不會卡在選編碼的視窗；錯誤另外印出最內層的 HResult，`800A1520`（Word 5408：密碼錯誤）不論 Word 是什麼語言都認得。
+  - 拖進不在磁碟上的 Word 檔（郵件附件）會提示先存到電腦；從 X.docx 開的分頁轉存 Word 時建議 `X_轉存.docx`；程式啟動時清掉超過一小時的暫存資料夾。
 - 測試：`open-word.mjs`（主程式的 word:open 換成假的 Word）、`word-main.mjs`（wordToPdf 的流程）。在真的 Windows＋Word 上還沒有實測。
 
 ### 3.10 其他

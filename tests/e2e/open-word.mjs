@@ -34,6 +34,7 @@ await app.evaluate(({ipcMain}, PDF64) => {
   ipcMain.removeHandler('word:open'); ipcMain.handle('word:open', async (_e, id, p) => {
     global.__w.calls.push({id, p});
     if (/slow/.test(p)) { await new Promise(r => { global.__w.release = r; }); return global.__w.cancelled.includes(id) ? {ok:false, why:'cancel'} : {ok:true, data:Buffer.from(PDF64, 'base64')}; }
+    if (/twin-a/.test(p)) await new Promise(r => setTimeout(r, 1500));   // (a slower one: the next arrives meanwhile)
     if (/bad/.test(p)) return {ok:false, why:'word', msg:'測試用的錯誤'};
     if (/locked/.test(p)) return {ok:false, why:'password', msg:'「locked.docx」有密碼保護，請先在 Word 裡移除密碼再開啟'};
     return {ok:true, data:Buffer.from(PDF64, 'base64')};
@@ -75,6 +76,45 @@ const require = createRequire(import.meta.url);
 try { const a2 = await electron.launch({executablePath:require('electron'), args:[...(process.platform === 'linux' ? ['--no-sandbox'] : []), ROOT, other], env:{...process.env, PDFE_USER_DATA:path.join(TMP, 'profile')}, timeout:15000}); await a2.close().catch(() => {}); } catch (_) {}
 await win.waitForTimeout(3000);
 check('a Word file given to the program: the running window opens it', (await W()).calls.some(c => c.p === other) && (await tabs()).includes('第二份.pdf'), {calls:(await W()).calls.map(c => c.p), tabs:await tabs()});
+
+// ---- (review) ------------------------------------------------------------------------------------------------------
+await app.evaluate(({ipcMain}) => {
+  ipcMain.removeHandler('word:zone'); ipcMain.handle('word:zone', (_e, p) => /web/.test(p) ? 3 : 0);
+  global.__saveAsked = null; ipcMain.removeHandler('file:choose-save'); ipcMain.handle('file:choose-save', (_e, suggested) => { global.__saveAsked = suggested; return null; });
+});
+// two Word files given at once: one after the other, both open
+{ const a = path.join(TMP, 'twin-a.docx'), b = path.join(TMP, 'twin-b.docx'); await send(a); await send(b); await win.waitForTimeout(5000);
+  const t = await tabs(); check('(review) two Word files given at once: both open, one after the other', t.includes('twin-a.pdf') && t.includes('twin-b.pdf'), t); }
+// a window already open (設定) when a Word file arrives: it stays; the Word file waits for it
+{ await Ev(() => { window.__pdfapp.actions.settings(); }); await win.waitForTimeout(800);
+  const title0 = await Ev(() => document.querySelector('#modal .mh').textContent);
+  await send(path.join(TMP, 'later.docx')); await win.waitForTimeout(1500);
+  const title1 = await Ev(() => document.querySelector('#mask').classList.contains('show') ? document.querySelector('#modal .mh').textContent : null);
+  check('(review) a window open when a Word file arrives: it stays (not replaced)', title1 === title0 && !(await tabs()).includes('later.pdf'), {title0, title1});
+  await win.keyboard.press('Escape'); await win.waitForTimeout(400); await Ev(() => { if (document.querySelector('#mask').classList.contains('show')) document.querySelector('#modal .mf button').click(); });
+  await win.waitForTimeout(3500);
+  check('(review) …then the Word file opens', (await tabs()).includes('later.pdf'), await tabs()); }
+// a Word file from the internet: asked first; 取消 → Word not asked
+{ const web = path.join(TMP, 'web-file.docx'); const n0 = (await W()).calls.length;
+  await send(web); await win.waitForTimeout(1500);
+  const m = await Ev(() => document.querySelector('#mask').classList.contains('show') ? document.querySelector('#modal').textContent : null);
+  check('(review) a Word file from the internet: asked first (保護的檢視)', !!m && /網路/.test(m) && /保護的檢視/.test(m), m);
+  await Ev(() => [...document.querySelectorAll('#modal .mf button')].find(b => b.textContent.includes('取消')).click()); await win.waitForTimeout(1200);
+  check('(review) …取消: Word is not asked, nothing opens', (await W()).calls.length === n0 && !(await tabs()).includes('web-file.pdf'), {calls:(await W()).calls.length, n0});
+  await send(web); await win.waitForTimeout(1500);
+  await Ev(() => [...document.querySelectorAll('#modal .mf button')].find(b => b.textContent.trim() === '開啟').click()); await win.waitForTimeout(3000);
+  check('(review) …開啟: it opens', (await tabs()).includes('web-file.pdf'), await tabs()); }
+// a Word file dropped that is not on the disk (from a mail): said, not read as a PDF
+{ await Ev(() => { const dt = new DataTransfer(); dt.items.add(new File(['PK'], '郵件附件.docx')); window.dispatchEvent(new DragEvent('drop', {dataTransfer:dt, bubbles:true, cancelable:true})); }); await win.waitForTimeout(1500);
+  const t = await toasts(); check('(review) a Word file dropped from a mail (no path): asked to save it first, not read as a PDF', t.some(x => /存到電腦/.test(x)) && !t.some(x => /Invalid PDF/.test(x)), t); }
+// 轉存 Word in a tab opened from X.docx: not suggested as X.docx (the original)
+{ const k = (await tabs()).indexOf('會議 紀錄.pdf'); await Ev(k => document.querySelectorAll('.dtab')[k].click(), k); await win.waitForTimeout(1000);
+  await Ev(() => { window.__pdfapp.actions.exportWord(); }); await win.waitForTimeout(1500);
+  await Ev(() => { const h = document.querySelector('#wdHow'); if (h) { h.value = 'builtin'; h.dispatchEvent(new Event('change', {bubbles:true})); } }); await win.waitForTimeout(300);
+  await Ev(() => document.querySelector('#wdGo').click()); await win.waitForTimeout(1500);
+  const asked = await app.evaluate(() => global.__saveAsked);
+  check('(review) 轉存 Word from a tab opened from 會議 紀錄.docx: suggested 會議 紀錄_轉存.docx, not the original name', !!asked && /會議 紀錄_轉存\.docx$/.test(asked), asked);
+  await win.keyboard.press('Escape'); await win.waitForTimeout(400); }
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});
