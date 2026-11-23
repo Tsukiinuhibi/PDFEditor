@@ -121,3 +121,10 @@ section out of this file when its batch ships.
 - 頁面外的內容只是不再顯示，仍留在檔案裡（要真的刪掉資料不能靠這個功能）。
 - 擷取圖片工具先拉框調整範圍後，按鈕與提示仍說「圖片」，實際用的是框住的範圍。
 - 頁面大小不變、只位置改變時，重畫前會短暫看到舊畫面。
+
+## v4.12.0（開啟 Word 檔）留下的小問題
+- 還沒在真的 Windows＋Word 上實測（PowerShell 的參數、各種會跳出詢問的檔案）。
+- Word 檔裡的連結內容（例如網路上的範本、連結的圖片）開啟時仍可能被 Word 讀取；網路下載的檔案會先問。
+- 追蹤修訂與註解不會轉進 PDF（只轉文件內容）。
+- 從網路下載的判斷只看 Windows 的「來自網路」標記。
+- 全部測試一起跑時，claude.mjs（pdf_replace／pdf_open 回報「正在忙」）和 font-identify-engine.mjs（FontId 還沒載入）偶爾會失敗，單獨重跑會通過。
