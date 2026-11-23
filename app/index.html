@@ -1080,9 +1080,9 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
       <div class="wcard">
         <img class="logo" src="img/logo.png" alt="">
         <h1>開啟 PDF 開始閱讀與編輯</h1>
-        <p>把 PDF 拖曳到這裡，或點下方按鈕選擇檔案。<br>檔案只在你的瀏覽器內處理，不會上傳。</p>
+        <p>把 PDF（或 Word 檔）拖曳到這裡，或點下方按鈕選擇檔案。<br>檔案只在你的瀏覽器內處理，不會上傳。</p>
         <div class="acts">
-          <button class="btn pri" data-act="open"><i data-i="open"></i>選擇 PDF 檔案</button>
+          <button class="btn pri" data-act="open"><i data-i="open"></i>選擇 PDF 或 Word 檔</button>
           <button class="btn" data-act="openUrl"><i data-i="web"></i>從網址開啟</button>
           <button class="btn" data-act="sample">使用範例文件試用</button>
         </div>
@@ -1622,7 +1622,7 @@ function mountDoc({scroll = 'current', anchorOffset = 0, scrollTop = 0, scrollLe
 
 // the same file: Windows paths ignore case and the slash's direction
 const samePath = (a, b) => !!a && !!b && (a === b || (/^[A-Za-z]:[\\/]/.test(a) && a.replace(/\//g, '\\').toLowerCase() === String(b).replace(/\//g, '\\').toLowerCase()));
-async function openFile(file, handle = null, {rethrow = false} = {}){
+async function openFile(file, handle = null, {rethrow = false, said = ''} = {}){
   if (!file) return;
   await whenIdle();   // (a file sent while a change is being made opens after it)
   if (PR || PRINTOPEN) {   // (the print window prints the document it was opened for: this one opens when it closes)
@@ -1636,7 +1636,7 @@ async function openFile(file, handle = null, {rethrow = false} = {}){
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
     await openInNewTab(bytes, file.name, handle);
-    toast('已開啟 ' + file.name + '（修改不會動到原檔，完成後請另存新檔）');
+    toast(said || '已開啟 ' + file.name + '（修改不會動到原檔，完成後請另存新檔）', said ? 'long' : undefined);
   } catch (e) {
     console.error(e);
     toast(e && e.name === 'PasswordException' ? '此 PDF 受密碼保護，目前版本尚不支援' : '無法開啟此檔案：' + (e.message || e), 'err');
@@ -3794,10 +3794,37 @@ function desktopHandle(p, name){
   };
 }
 async function openPath(p){
+  if (WORD_EXT.test(p)) return openWordPath(p);
   try {
     const r = await DESK.readFile(p);
     await openFile(new File([r.data], r.name, {type:'application/pdf'}), desktopHandle(p, r.name));
   } catch (e) { toast('無法開啟檔案：' + (e.message || e), 'err'); }
+}
+// 開啟 Word 檔: Word on this computer turns the file into a PDF (main.js word:open → word.js wordToPdf), which opens in a
+// new tab as that PDF (named .pdf; its handle keeps the Word file's path, so 另存新檔 suggests its folder, the same file
+// opened again goes to its tab, and the Word file is never written). A window says what is going on; 〔取消〕 stops Word.
+const WORD_EXT = /\.(docx|docm|doc|dotx|dotm|dot|rtf|odt)$/i;
+async function openWordPath(p){
+  const name = String(p).split(/[\\/]/).pop(), pdfName = name.replace(WORD_EXT, '') + '.pdf';
+  const same = docs.findIndex(d => { const h = docField(d, 'handle'); return h && samePath(h.path, p); });
+  if (same >= 0) { switchTab(same); toast('「' + name + '」已經開啟'); return; }
+  if (!DESK || !DESK.word || !DESK.word.open) { toast('開啟 Word 檔需要使用電腦版程式', 'err'); return; }
+  await whenIdle();
+  const id = 'o' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  let r = null, open = true;
+  const body = `<div style="max-width:420px">正在用 Word 把「${esc(name)}」轉成 PDF…<div class="dim" style="margin-top:6px">Word 在背景執行，可能需要一點時間。原本的 Word 檔不會被修改。</div></div>`;
+  const wait = openModal({title:'開啟 Word 檔', body, buttons:[{label:'取消', value:'cancel'}]});
+  wait.then(() => { open = false; });
+  DESK.word.open(id, p).catch(e => ({ok:false, why:'word', msg:String(e && e.message || e)})).then(x => { r = x || {ok:false, why:'word', msg:''}; if (open) closeModal('done'); });
+  if (await wait !== 'done') { DESK.word.cancel(id); toast('已取消開啟「' + name + '」'); return; }
+  if (!r.ok) {
+    if (r.why === 'cancel') toast('已取消開啟「' + name + '」');
+    else if (r.why === 'timeout') toast('Word 超過 10 分鐘還沒有轉好「' + name + '」，已停止', 'err');
+    else toast(r.why === 'noword' || r.why === 'password' || r.why === 'read' ? r.msg : `Word 無法開啟「${name}」：${r.msg || '原因不明'}`, 'err');
+    return;
+  }
+  const data = r.data instanceof Uint8Array ? r.data : new Uint8Array(r.data);
+  await openFile(new File([data], pdfName, {type:'application/pdf'}), {kind:'file', name:pdfName, path:p, word:true}, {said:`已用 Word 開啟「${name}」，轉成 PDF（原本的 Word 檔不會被修改，完成後請另存新檔）`});
 }
 let permAsk = null;
 function primeWrite(){
@@ -12680,7 +12707,7 @@ window.addEventListener('drop', e => {
     if (pic) { imageUrlDialog(u, {auto:true}); return; }
     if (URL_OK(u) && !/\s/.test(u)) { openUrlDialog(u, {auto:true}); return; }
   }
-  const isPdf = x => /\.pdf$/i.test(x.name) || x.type === 'application/pdf';
+  const isPdf = x => /\.pdf$/i.test(x.name) || x.type === 'application/pdf' || (!!DESK && WORD_EXT.test(x.name));   // (a Word file: 開啟 Word 檔)
   const pdfs = f.filter(isPdf);
   if (pdfs.length > 1) { (async () => { for (const x of pdfs) { const fp = DESK && DESK.pathForFile(x); if (fp) await openPath(fp); else await openFile(x); } })(); return; }
   const idx = f.findIndex(isPdf);

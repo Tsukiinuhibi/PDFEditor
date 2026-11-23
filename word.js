@@ -100,4 +100,56 @@ async function convertWithWord({ pdf, out, version, run, job, killWord: kill = s
   }
 }
 
-module.exports = { WORD_PS, wordVersion, readPdfWarning, setPdfWarning, stopWord, convertWithWord, sweepTemp, targetLocked };
+// ---- 開啟 Word 檔: Word turns a Word file into a PDF ------------------------------------------------------------------------
+// The file is copied into a temporary folder first (Word never holds the user's file; odd paths do not matter), opened
+// read-only with macros switched off and a made-up password (a file with a password fails at once instead of asking),
+// and exported as PDF; Word is always closed. The PDF's bytes come back; nothing is written next to the user's file.
+const WORD_EXT = /\.(docx|docm|doc|dotx|dotm|dot|rtf|odt)$/i;
+const WORD_PDF_PS = `$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$in = $env:PDFE_IN; $out = $env:PDFE_OUT
+$word = $null; $code = 0
+try {
+  $word = New-Object -ComObject Word.Application
+  $word.Visible = $false
+  $word.DisplayAlerts = 0
+  $word.AutomationSecurity = 3
+  # FileName, ConfirmConversions, ReadOnly, AddToRecentFiles, PasswordDocument
+  $doc = $word.Documents.Open($in, $false, $true, $false, 'pdfe-no-password')
+  try { $doc.ExportAsFixedFormat($out, 17) } finally { $doc.Close(0) }
+  [Console]::Out.WriteLine('PDFE_OK')
+} catch {
+  [Console]::Out.WriteLine('PDFE_ERR:' + $_.Exception.Message); $code = 2
+} finally {
+  if ($word) { try { $word.Quit(0) } catch { }; [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) }
+}
+exit $code
+`;
+const PASSWORD = /password|密碼/i;
+// the Word file at `file` → its PDF by Word `version`. job / killWord as in convertWithWord
+// → {ok: true, data (Buffer)} | {ok: false, why: 'cancel' | 'timeout' | 'word' | 'password' | 'read', msg}
+async function wordToPdf({ file, version, run, job, killWord: kill = since => stopWord(run, since) }){
+  if (job.cancelled) return { ok: false, why: 'cancel' };
+  await sweepTemp();
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pdfe-word-'));
+  try {
+    const ext = (WORD_EXT.exec(file) || ['.docx'])[0].toLowerCase(), inDoc = path.join(dir, 'in' + ext), tmpOut = path.join(dir, 'out.pdf'), ps1 = path.join(dir, 'topdf.ps1');
+    try { await fs.copyFile(file, inDoc); }
+    catch (err) { return { ok: false, why: 'read', msg: `讀不到這個檔案：${path.basename(file)}` + (err && err.code ? `（${err.code}）` : '') }; }
+    await fs.writeFile(ps1, '\ufeff' + WORD_PDF_PS, 'utf8');
+    if (job.cancelled) return { ok: false, why: 'cancel' };
+    const since = new Date(Date.now() - 3000);
+    const r = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ps1],
+      { timeout: LIMIT, env: { ...process.env, PDFE_IN: inDoc, PDFE_OUT: tmpOut }, onChild: c => { job.child = c; } });
+    if (job.cancelled) { await kill(since); return { ok: false, why: 'cancel' }; }
+    if (r.err && r.err.killed) { await kill(since); return { ok: false, why: 'timeout' }; }
+    if (!/PDFE_OK/.test(r.stdout)) {
+      const m = /PDFE_ERR:(.*)/.exec(r.stdout), msg = (m ? m[1] : r.stderr || (r.err && r.err.message) || '').trim().slice(0, 300);
+      return PASSWORD.test(msg) ? { ok: false, why: 'password', msg: `「${path.basename(file)}」有密碼保護，請先在 Word 裡移除密碼再開啟` } : { ok: false, why: 'word', msg };
+    }
+    return { ok: true, data: await fs.readFile(tmpOut) };
+  } catch (err) { return { ok: false, why: 'word', msg: String((err && err.message) || err) }; }
+  finally { await fs.rm(dir, { recursive: true, force: true }).catch(() => {}); }
+}
+
+module.exports = { WORD_PS, WORD_PDF_PS, WORD_EXT, wordToPdf, wordVersion, readPdfWarning, setPdfWarning, stopWord, convertWithWord, sweepTemp, targetLocked };

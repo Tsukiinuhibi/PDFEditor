@@ -22,7 +22,8 @@ protocol.registerSchemesAsPrivileged([{
 }]);
 
 /* ---------------- single instance + open-with ---------------- */
-const pdfArgs = argv => argv.slice(1).filter(a => /\.pdf$/i.test(a) && !a.startsWith('-'));
+// (a Word file too: 開啟 Word 檔 turns it into a PDF with Word)
+const pdfArgs = argv => argv.slice(1).filter(a => /\.(pdf|docx|docm|doc|dotx|dotm|dot|rtf|odt)$/i.test(a) && !a.startsWith('-'));
 // a separate profile (used by the end-to-end tests so they never touch the installed app's data)
 if (process.env.PDFE_USER_DATA) app.setPath('userData', process.env.PDFE_USER_DATA);
 // whether the program ran on this computer before (Chromium writes Preferences into the profile on every start; it is
@@ -102,8 +103,9 @@ ipcMain.handle('renderer-ready', () => {
 });
 ipcMain.handle('file:open-dialog', async () => {
   const r = await dialog.showOpenDialog(win, {
-    title: '開啟 PDF（可一次選擇多個檔案）', properties: ['openFile', 'multiSelections'],
-    filters: [{ name: 'PDF 文件', extensions: ['pdf'] }, { name: '所有檔案', extensions: ['*'] }],
+    title: '開啟 PDF 或 Word 檔（可一次選擇多個檔案）', properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'PDF 與 Word 文件', extensions: ['pdf', ...WORD_KINDS] }, { name: 'PDF 文件', extensions: ['pdf'] },
+      { name: 'Word 文件', extensions: WORD_KINDS }, { name: '所有檔案', extensions: ['*'] }],
   });
   return r.canceled ? [] : r.filePaths;
 });
@@ -173,6 +175,7 @@ ipcMain.handle('file:save-as', async (_e, suggested, data, opts) => {
 ipcMain.handle('pdf:decrypt', async (_e, bytes) => require('./pdfcrypt').decryptPdf(bytes));
 // 轉存 Word with Microsoft Word: see word.js (it runs Word through PowerShell; kept apart so it can be tested without Word)
 const W = require('./word');
+const WORD_KINDS = ['docx', 'doc', 'docm', 'dotx', 'dotm', 'dot', 'rtf', 'odt'];
 const { execFile } = require('child_process');
 const runFile = (file, args, opts = {}) => new Promise(res => { const child = execFile(file, args, { windowsHide: true, encoding: 'utf8', maxBuffer: 4 << 20, ...opts },
   (err, stdout, stderr) => res({ err, stdout: String(stdout || ''), stderr: String(stderr || '') })); if (opts.onChild) opts.onChild(child); });
@@ -185,6 +188,18 @@ ipcMain.handle('word:convert', async (_e, id, pdf, out) => {
     if (v < 15) return { ok: false, why: 'word', msg: '這台電腦沒有可以轉換 PDF 的 Word（需要 Word 2013 以後的版本）' };
     if (typeof out !== 'string' || !savedHere.has(path.resolve(out))) return { ok: false, why: 'word', msg: '不能存到這個位置' };
     return await W.convertWithWord({ pdf: toBuf(pdf), out, version: v, run: runFile, job });
+  } finally { wordJobs.delete(id); }
+});
+// 開啟 Word 檔: Word (2010 or later) turns the Word file at p into a PDF; its bytes come back (word.js wordToPdf). 取消 is
+// word:cancel with the same id
+ipcMain.handle('word:open', async (_e, id, p) => {
+  if (typeof p !== 'string' || !W.WORD_EXT.test(p)) return { ok: false, why: 'word', msg: '這不是 Word 檔' };
+  const job = { cancelled: false, child: null }; wordJobs.set(id, job);
+  try {
+    const v = await W.wordVersion(runFile);
+    if (v < 14) return { ok: false, why: 'noword', msg: '開啟 Word 檔需要這台電腦裝有 Microsoft Word（2010 以後的版本）' };
+    allowDir(path.dirname(p));   // (as an opened PDF's folder: exports may go there)
+    return await W.wordToPdf({ file: p, version: v, run: runFile, job });
   } finally { wordJobs.delete(id); }
 });
 ipcMain.handle('word:cancel', (_e, id) => { const j = wordJobs.get(id); if (j) { j.cancelled = true; if (j.child) j.child.kill(); } });

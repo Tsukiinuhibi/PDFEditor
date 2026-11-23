@@ -518,6 +518,12 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 審查後：只取圖片在頁面上的部分（頁面不會變大，原本被裁切的內容不會露出來），小於 3 pt 不做；方向鍵移動還沒寫入時先寫入再量位置（`flushNudge`），換了分頁就不做。
 - 測試：`page-fit-image.mjs`。
 
+### 3.9.35 開啟 Word 檔（v4.12.0）
+- 〔開啟〕的檔案選擇、拖曳進視窗、從檔案總管「開啟檔案」（`pdfArgs`）都接受 Word 檔（`WORD_EXT`：.docx .docm .doc .dotx .dotm .dot .rtf .odt）。`openPath` 遇到 Word 檔交給 `openWordPath`。
+- 轉換在主程式：`word:open`（main.js）→ `wordToPdf`（word.js）：需要 Word 2010 以後（`wordVersion` ≥ 14），沒有就回 `noword`。檔案先複製到暫存資料夾，PowerShell 透過 COM 唯讀開啟（`AutomationSecurity = 3` 巨集一律不執行；給一個假的開啟密碼，有密碼的檔案直接失敗而不是跳出詢問 → `password`），`ExportAsFixedFormat(…, 17)` 存成 PDF，讀回位元組；Word 一定關閉，暫存資料夾刪掉。取消與 10 分鐘上限沿用 `word:cancel`／`stopWord`。不動登錄檔設定。
+- 畫面：轉換時有「開啟 Word 檔」視窗（〔取消〕）；成功後開新分頁，名稱是 `X.pdf`，`S.handle = {kind:'file', name, path:Word 檔路徑, word:true}`（沒有 getFile／createWritable）：另存新檔建議 Word 檔的資料夾、`avoid` 擋住原檔、同一個 Word 檔再開一次只切換分頁。
+- 測試：`open-word.mjs`（主程式的 word:open 換成假的 Word）、`word-main.mjs`（wordToPdf 的流程）。在真的 Windows＋Word 上還沒有實測。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。

@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('desktop', {
     detect: () => ipcRenderer.invoke('word:detect'),
     convert: (id, pdf, out) => ipcRenderer.invoke('word:convert', id, pdf, out),
     cancel: id => ipcRenderer.invoke('word:cancel', id),
+    open: (id, p) => ipcRenderer.invoke('word:open', id, p),
   },
   print: {
     printers: () => ipcRenderer.invoke('print:printers'),

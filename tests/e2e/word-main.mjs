@@ -84,6 +84,53 @@ if (W) {
   r = await W.convertWithWord({pdf:new Uint8Array([37, 80, 68, 70]), out:path.join(TMP, 'sweep.docx'), version:16, run:f.run, job});
   check('a temporary folder over an hour old (a Word that could not be closed) goes at the next run; a new one is kept', r.ok && !fs.existsSync(old) && fs.existsSync(fresh), {r, old:fs.existsSync(old), fresh:fs.existsSync(fresh)});
   fs.rmSync(old, {recursive:true, force:true}); fs.rmSync(fresh, {recursive:true, force:true});
+
+  // ---- 開啟 Word 檔: Word turns a Word file into a PDF (wordToPdf) -------------------------------------------------------
+  check('開啟 Word 檔: wordToPdf exists', typeof W.wordToPdf === 'function');
+  if (typeof W.wordToPdf === 'function') {
+    const PS = W.WORD_PDF_PS || '';
+    check('the script: macros never run, the file opened read-only (and a made-up password so it never asks), saved as PDF (17)',
+      /AutomationSecurity\s*=\s*3/.test(PS) && /Documents\.Open\(\$in, \$false, \$true, \$false, '[^']+'\)/.test(PS) && /ExportAsFixedFormat\(\$out, 17\)/.test(PS) && /\$word\.Quit\(0\)/.test(PS), PS.slice(0, 600));
+    const src = path.join(TMP, '會議 紀錄.docx'); fs.writeFileSync(src, 'PK the users word file');
+    // a fake Word that writes a PDF where it is asked, and remembers what it was given
+    let seen = null;
+    const fakePdf = ({ps = 'ok', job = null} = {}) => { const calls = [];
+      return {calls, run:async (file, args, opts = {}) => { calls.push([file, ...args]);
+        if (file === 'powershell.exe' && args.includes('-File')) {
+          if (opts.onChild) opts.onChild({kill:() => calls.push(['kill'])});
+          const inp = opts.env && opts.env.PDFE_IN, out = opts.env && opts.env.PDFE_OUT;
+          seen = {inp, content:inp && fs.existsSync(inp) ? fs.readFileSync(inp, 'utf8') : null};
+          if (ps === 'ok') { fs.writeFileSync(out, '%PDF-1.7 made by word'); return {stdout:'PDFE_OK\r\n', stderr:'', err:null}; }
+          if (ps === 'password') return {stdout:'PDFE_ERR:The password is incorrect. Word cannot open the document.\r\n', stderr:'', err:{code:2}};
+          if (ps === 'fail') return {stdout:'PDFE_ERR:檔案已損毀\r\n', stderr:'', err:{code:2}};
+          if (ps === 'cancel') { job.cancelled = true; return {stdout:'', stderr:'', err:{killed:true, signal:'SIGTERM'}}; }
+          if (ps === 'timeout') return {stdout:'', stderr:'', err:{killed:true, signal:'SIGTERM'}};
+        }
+        return {stdout:'', stderr:'', err:null}; }}; };
+    let g = fakePdf(); job = {cancelled:false};
+    r = await W.wordToPdf({file:src, version:16, run:g.run, job});
+    check('success: the PDF Word made comes back', r.ok && Buffer.from(r.data).toString() === '%PDF-1.7 made by word', r);
+    check('Word is given a copy in a temporary folder (same kind, same content), never the user\'s file itself',
+      !!seen && seen.inp !== src && /\.docx$/i.test(seen.inp) && seen.content === 'PK the users word file' && fs.readFileSync(src, 'utf8') === 'PK the users word file', seen);
+    check('no registry setting is touched', !g.calls.some(c => c[0] === 'reg'), g.calls.map(c => c[0]));
+    await new Promise(res => setTimeout(res, 200));
+    check('the temporary folder goes afterwards', tempLeft().length === 0, tempLeft());
+    g = fakePdf({ps:'password'}); r = await W.wordToPdf({file:src, version:16, run:g.run, job:{cancelled:false}});
+    check('a file with a password: 「password」 and a message saying so', !r.ok && r.why === 'password' && /密碼/.test(r.msg || ''), r);
+    g = fakePdf({ps:'fail'}); r = await W.wordToPdf({file:src, version:16, run:g.run, job:{cancelled:false}});
+    check('Word fails: its message comes back', !r.ok && r.why === 'word' && r.msg === '檔案已損毀', r);
+    job = {cancelled:false}; g = fakePdf({ps:'cancel', job});
+    r = await W.wordToPdf({file:src, version:16, run:g.run, job, killWord:async () => { g.calls.push(['killWord']); }});
+    check('取消 during the run: Word is closed, nothing comes back', !r.ok && r.why === 'cancel' && g.calls.some(c => c[0] === 'killWord'), {r, calls:g.calls});
+    g = fakePdf({ps:'timeout'});
+    r = await W.wordToPdf({file:src, version:16, run:g.run, job:{cancelled:false}, killWord:async () => { g.calls.push(['killWord']); }});
+    check('a timeout: Word is closed', !r.ok && r.why === 'timeout' && g.calls.some(c => c[0] === 'killWord'), r);
+    g = fakePdf(); r = await W.wordToPdf({file:path.join(TMP, 'not-there.docx'), version:16, run:g.run, job:{cancelled:false}});
+    check('a file that cannot be read: 「read」, Word not started', !r.ok && r.why === 'read' && !g.calls.some(c => c[0] === 'powershell.exe'), r);
+    g = fakePdf(); r = await W.wordToPdf({file:src, version:16, run:g.run, job:{cancelled:true}});
+    check('取消 before it starts: Word not started', !r.ok && r.why === 'cancel' && !g.calls.some(c => c[0] === 'powershell.exe'), r);
+    check('the Word kinds: .docx .doc .docm .dotx .dot .rtf .odt, not .pdf or .txt', ['a.docx', 'a.DOC', 'a.docm', 'a.dotx', 'a.dot', 'a.rtf', 'a.odt'].every(n => W.WORD_EXT.test(n)) && !['a.pdf', 'a.txt', 'docx'].some(n => W.WORD_EXT.test(n)));
+  }
 } else check('word.js exists and loads', false);
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 check('word.js is packed into the installer (package.json build.files)', (pkg.build.files || []).includes('word.js'), pkg.build.files.slice(0, 4));
