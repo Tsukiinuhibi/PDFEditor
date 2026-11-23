@@ -90,7 +90,7 @@ if (W) {
   if (typeof W.wordToPdf === 'function') {
     const PS = W.WORD_PDF_PS || '';
     check('the script: macros never run, the file opened read-only (and a made-up password so it never asks), saved as PDF (17)',
-      /AutomationSecurity\s*=\s*3/.test(PS) && /Documents\.Open\(\$in, \$false, \$true, \$false, '[^']+'[,)]/.test(PS) && /ExportAsFixedFormat\(\$out, 17\)/.test(PS) && /\$word\.Quit\(0\)/.test(PS), PS.slice(0, 600));
+      /AutomationSecurity\s*=\s*3/.test(PS) && /Open-WordDoc \$word \$in/.test(PS) && /\$word\.Quit\(0\)/.test(PS), PS.slice(0, 600));
     const src = path.join(TMP, '會議 紀錄.docx'); fs.writeFileSync(src, 'PK the users word file');
     // a fake Word that writes a PDF where it is asked, and remembers what it was given
     let seen = null;
@@ -129,8 +129,14 @@ if (W) {
     check('a file that cannot be read: 「read」, Word not started', !r.ok && r.why === 'read' && !g.calls.some(c => c[0] === 'powershell.exe'), r);
     g = fakePdf(); r = await W.wordToPdf({file:src, version:16, run:g.run, job:{cancelled:true}});
     check('取消 before it starts: Word not started', !r.ok && r.why === 'cancel' && !g.calls.some(c => c[0] === 'powershell.exe'), r);
-    // (review) no encoding question for a .doc / .rtf that is really text; the gaps filled with [Type]::Missing
-    check('(review) the script: NoEncodingDialog on (the 15th argument), Visible off', /\$m = \[Type\]::Missing/.test(PS) && /Documents\.Open\(\$in, \$false, \$true, \$false, '[^']+', \$m, \$m, \$m, \$m, \$m, \$m, \$false, \$m, \$m, \$true\)/.test(PS), PS.slice(0, 700));
+    // (review) no encoding question for a .doc / .rtf that is really text. (v4.12.1) Not as 15 positional arguments with
+    // [Type]::Missing in the gaps: Windows PowerShell cannot pass them (「無法將 bool 類型的 True 值轉換成 Object 類型」,
+    // seen on the user's computer): by name, through IDispatch (InvokeMember), and only if that cannot be called at all
+    // (not an error from Word itself), the plain call
+    check('(v4.12.1) the file is opened by named arguments (InvokeMember: ReadOnly, PasswordDocument, Visible, NoEncodingDialog)',
+      /InvokeMember\('Open'/.test(PS) && ['FileName', 'ConfirmConversions', 'ReadOnly', 'AddToRecentFiles', 'PasswordDocument', 'Visible', 'NoEncodingDialog'].every(n => PS.includes(`'${n}'`)) && !/\[Type\]::Missing/.test(PS), PS.slice(0, 1200));
+    check('(v4.12.1) …the plain call only when that cannot be called (an error from Word itself, 800A…, is not retried)', /Test-WordError/.test(PS) && /'800A'/.test(PS) && /\.Open\(\$path, \$false, \$true, \$false, 'pdfe-no-password'\)/.test(PS));
+    check('(v4.12.1) saved as PDF by ExportAsFixedFormat, or SaveAs2 (17) when that cannot be called', /ExportAsFixedFormat\(\$out, 17\)/.test(PS) && /SaveAs2\(\$out, 17\)/.test(PS));
     // (review) a password told by Word's error number, whatever Word's language
     { const run = async (file, args, opts = {}) => (file === 'powershell.exe' && args.includes('-File')) ? {stdout:'PDFE_HR:800A1520\r\nPDFE_ERR:パスワードが正しくありません。\r\n', stderr:'', err:{code:2}} : {stdout:'', stderr:'', err:null};
       r = await W.wordToPdf({file:src, version:16, run, job:{cancelled:false}});

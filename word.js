@@ -12,22 +12,43 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs/promises');
 
+// PowerShell helpers for both scripts. Word's own errors (numbers 800A....) are told apart from calls PowerShell cannot
+// make; the file is opened by named arguments through IDispatch (Windows PowerShell cannot pass Word's long positional
+// argument lists: 「無法將 bool 類型的 True 值轉換成 Object 類型」 on the user's computer), and only when that cannot be
+// called at all, by the plain call. Close and Quit fall back to no arguments the same way.
+const psHelpers = (names, vals, plain) => `function Test-WordError($err) {
+  $ex = $err.Exception; while ($ex.InnerException) { $ex = $ex.InnerException }
+  return ('{0:X8}' -f $ex.HResult).StartsWith('800A')
+}
+function Open-WordDoc($word, $path) {
+  $docs = $word.Documents
+  $names = [string[]]@(${names.map(n => `'${n}'`).join(', ')})
+  $vals = [object[]]@(${vals})
+  # (returned as ,$d: PowerShell would otherwise unroll what it can enumerate)
+  try { $d = $docs.GetType().InvokeMember('Open', [System.Reflection.BindingFlags]::InvokeMethod, $null, $docs, $vals, $null, $null, $names); return ,$d }
+  catch { if (Test-WordError $_) { throw } }
+  $d = $docs.${plain}; return ,$d
+}
+function Close-WordDoc($doc) { try { $doc.Close(0) } catch { if (Test-WordError $_) { throw }; $doc.Saved = $true; $doc.Close() } }
+function Quit-Word($word) { try { $word.Quit(0) } catch { try { $word.Quit() } catch { } } }
+`;
 const WORD_PS = `$ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $in = $env:PDFE_IN; $out = $env:PDFE_OUT
 $word = $null; $code = 0
+${psHelpers(['FileName', 'ConfirmConversions', 'ReadOnly', 'AddToRecentFiles', 'Visible'], '$path, $false, $true, $false, $false', 'Open($path, $false, $true, $false)')}
 try {
   $word = New-Object -ComObject Word.Application
   $word.Visible = $false
   $word.DisplayAlerts = 0
-  # FileName, ConfirmConversions, ReadOnly, AddToRecentFiles
-  $doc = $word.Documents.Open($in, $false, $true, $false)
-  try { $doc.SaveAs2($out, 16) } finally { $doc.Close(0) }
+  # FileName, ConfirmConversions, ReadOnly, AddToRecentFiles (by name: Open-WordDoc)
+  $doc = Open-WordDoc $word $in
+  try { $doc.SaveAs2($out, 16) } finally { Close-WordDoc $doc }
   [Console]::Out.WriteLine('PDFE_OK')
 } catch {
   [Console]::Out.WriteLine('PDFE_ERR:' + $_.Exception.Message); $code = 2
 } finally {
-  if ($word) { try { $word.Quit(0) } catch { }; [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) }
+  if ($word) { Quit-Word $word; [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) }
 }
 exit $code
 `;
@@ -109,23 +130,24 @@ const WORD_PDF_PS = `$ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $in = $env:PDFE_IN; $out = $env:PDFE_OUT
 $word = $null; $code = 0
+${psHelpers(['FileName', 'ConfirmConversions', 'ReadOnly', 'AddToRecentFiles', 'PasswordDocument', 'Visible', 'NoEncodingDialog'], "$path, $false, $true, $false, 'pdfe-no-password', $false, $true", "Open($path, $false, $true, $false, 'pdfe-no-password')")}
 try {
   $word = New-Object -ComObject Word.Application
   $word.Visible = $false
   $word.DisplayAlerts = 0
   $word.AutomationSecurity = 3
-  $m = [Type]::Missing
-  # FileName, ConfirmConversions, ReadOnly, AddToRecentFiles, PasswordDocument, PasswordTemplate, Revert,
-  # WritePasswordDocument, WritePasswordTemplate, Format, Encoding, Visible, OpenAndRepair, DocumentDirection, NoEncodingDialog
-  $doc = $word.Documents.Open($in, $false, $true, $false, 'pdfe-no-password', $m, $m, $m, $m, $m, $m, $false, $m, $m, $true)
-  try { $doc.ExportAsFixedFormat($out, 17) } finally { $doc.Close(0) }
+  $doc = Open-WordDoc $word $in
+  try {
+    try { $doc.ExportAsFixedFormat($out, 17) }
+    catch { if (Test-WordError $_) { throw }; $doc.SaveAs2($out, 17) }
+  } finally { Close-WordDoc $doc }
   [Console]::Out.WriteLine('PDFE_OK')
 } catch {
   $ex = $_.Exception; while ($ex.InnerException) { $ex = $ex.InnerException }
   [Console]::Out.WriteLine('PDFE_HR:' + ('{0:X8}' -f $ex.HResult))
   [Console]::Out.WriteLine('PDFE_ERR:' + $_.Exception.Message); $code = 2
 } finally {
-  if ($word) { try { $word.Quit(0) } catch { }; [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) }
+  if ($word) { Quit-Word $word; [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) }
 }
 exit $code
 `;

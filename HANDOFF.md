@@ -528,6 +528,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
   - 從網路下載的檔案（`Zone.Identifier` ZoneId ≥ 3，`zoneOf`）先問過才開（不經過 Word 的「保護的檢視」）。
   - `Documents.Open` 加上 `NoEncodingDialog`（第 15 個參數，中間用 `[Type]::Missing`），不會卡在選編碼的視窗；錯誤另外印出最內層的 HResult，`800A1520`（Word 5408：密碼錯誤）不論 Word 是什麼語言都認得。
   - 拖進不在磁碟上的 Word 檔（郵件附件）會提示先存到電腦；從 X.docx 開的分頁轉存 Word 時建議 `X_轉存.docx`；程式啟動時清掉超過一小時的暫存資料夾。
+- v4.12.1：使用者電腦上 `Documents.Open` 的 15 個位置參數（中間 `[Type]::Missing`）失敗：「無法將 "bool" 類型的 "True" 值轉換成 "Object" 類型」。兩個腳本（`WORD_PS`、`WORD_PDF_PS`）改用共用的 `psHelpers`：`Open-WordDoc` 先以參數名稱經 IDispatch 呼叫（`InvokeMember('Open', …, $names)`），只有在這種呼叫本身失敗（不是 Word 回報的 800A… 錯誤，`Test-WordError`）時才改用簡短的位置參數；`Close-WordDoc`、`Quit-Word` 同樣有不帶參數的備援；匯出 PDF 時 `ExportAsFixedFormat` 呼叫失敗就改用 `SaveAs2(…, 17)`。
 - 測試：`open-word.mjs`（主程式的 word:open 換成假的 Word）、`word-main.mjs`（wordToPdf 的流程）。在真的 Windows＋Word 上還沒有實測。
 
 ### 3.10 其他

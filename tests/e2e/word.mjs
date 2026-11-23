@@ -1,6 +1,7 @@
 // 轉存 Word: the document as it is now (our annotations flattened onto the pages) becomes an editable .docx — by
 // Microsoft Word when it is installed, otherwise by the built-in converter (text → paragraphs, sizes, bold, italic,
 // pictures, scanned pages). The save dialog is answered by the test; the .docx is unzipped and read.
+import { createRequire } from 'module';
 import { launchPath, TMP, ROOT } from './_env.mjs';
 import { PDFDocument, PDFName, PDFString, PDFOperator, StandardFonts, rgb, pushGraphicsState, popGraphicsState, beginText, endText, setFontAndSize, setTextRenderingMode, TextRenderingMode, moveText, showText } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
@@ -289,9 +290,12 @@ const fb = await waitFile(OUT6), zf = fb ? unzip(fs.readFileSync(OUT6)) : null;
 check('Word fails: 「Word 轉換失敗：…」 and the built-in converter is chosen; 〔轉存〕 again makes the .docx that way',
   failed1.err.includes('測試用的錯誤') && failed1.how === 'builtin' && failed1.go === '轉存' && !!zf && /Annual Report/.test(zf['word/document.xml'].toString('utf8')) && !/Quarterly/.test(zf['word/document.xml'].toString('utf8')), {failed1, fb});
 await win.click('#wdCancel'); await win.waitForTimeout(300);
-const mainSrc = fs.readFileSync(path.join(ROOT, 'word.js'), 'utf8'), ps = (mainSrc.match(/const WORD_PS = `([\s\S]*?)`;/) || [])[1] || '';
+const ps = createRequire(import.meta.url)(path.join(ROOT, 'word.js')).WORD_PS || '';   // (the script as it is built)
+// (v4.12.1) opened by named arguments (InvokeMember; Windows PowerShell cannot pass the positional booleans), the plain
+// call only when that cannot be called
 check('the script Word runs: paths from the environment, opened read-only without asking, saved as .docx, Word always closed',
-  ps.includes('$env:PDFE_IN') && ps.includes('$env:PDFE_OUT') && ps.includes('Documents.Open($in, $false, $true, $false)') && /SaveAs2\(\$out, 16\)/.test(ps) && /finally[\s\S]*Quit\(/.test(ps), ps.slice(0, 200));
+  ps.includes('$env:PDFE_IN') && ps.includes('$env:PDFE_OUT') && /InvokeMember\('Open'/.test(ps) && ps.includes("'ReadOnly'") && ps.includes('Open($path, $false, $true, $false)') && ps.includes('Open-WordDoc $word $in')
+  && /SaveAs2\(\$out, 16\)/.test(ps) && /finally[\s\S]*Quit-Word/.test(ps) && !ps.includes('${'), ps.slice(0, 200));
 
 // ---- part 4 (v1.0.47): a conversion under way (Esc, 取消, 取消 too late), a locked .docx, annotations with nothing to draw,
 // one page of a large file. main's word:* stay replaced; the conversion now takes a while and can finish after 取消

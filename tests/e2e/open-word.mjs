@@ -2,7 +2,7 @@
 // tab as that PDF (named .pdf; saved as a new file next to the Word file; the Word file is never written). Linux has no
 // Word: the real handler says so; then the main process's word:open is replaced here by a fake Word.
 import { launch, ROOT, TMP } from './_env.mjs';
-import { _electron as electron } from 'playwright-core';
+import { spawn } from 'child_process';
 import { createRequire } from 'module';
 import { PDFDocument } from 'pdf-lib';
 import fs from 'fs';
@@ -73,7 +73,9 @@ await send(path.join(TMP, 'locked.docx')); await win.waitForTimeout(2000);
 // given to the program (a second start, as 「開啟檔案」 from Explorer): the running window opens it
 const other = path.join(TMP, '第二份.docx'); fs.writeFileSync(other, 'PK');
 const require = createRequire(import.meta.url);
-try { const a2 = await electron.launch({executablePath:require('electron'), args:[...(process.platform === 'linux' ? ['--no-sandbox'] : []), ROOT, other], env:{...process.env, PDFE_USER_DATA:path.join(TMP, 'profile')}, timeout:15000}); await a2.close().catch(() => {}); } catch (_) {}
+// (started directly, not through playwright: the second start hands the file over and quits at once)
+await new Promise(res => { const c = spawn(require('electron'), [...(process.platform === 'linux' ? ['--no-sandbox'] : []), ROOT, other], {env:{...process.env, PDFE_USER_DATA:path.join(TMP, 'profile')}, stdio:'ignore'});
+  const t = setTimeout(() => { c.kill(); res(); }, 15000); c.on('exit', () => { clearTimeout(t); res(); }); c.on('error', () => { clearTimeout(t); res(); }); });
 await win.waitForTimeout(3000);
 check('a Word file given to the program: the running window opens it', (await W()).calls.some(c => c.p === other) && (await tabs()).includes('第二份.pdf'), {calls:(await W()).calls.map(c => c.p), tabs:await tabs()});
 
