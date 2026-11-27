@@ -529,6 +529,15 @@ npm start          # 開啟程式（開發模式不會檢查更新）
   - `Documents.Open` 加上 `NoEncodingDialog`（第 15 個參數，中間用 `[Type]::Missing`），不會卡在選編碼的視窗；錯誤另外印出最內層的 HResult，`800A1520`（Word 5408：密碼錯誤）不論 Word 是什麼語言都認得。
   - 拖進不在磁碟上的 Word 檔（郵件附件）會提示先存到電腦；從 X.docx 開的分頁轉存 Word 時建議 `X_轉存.docx`；程式啟動時清掉超過一小時的暫存資料夾。
 - v4.12.1：使用者電腦上 `Documents.Open` 的 15 個位置參數（中間 `[Type]::Missing`）失敗：「無法將 "bool" 類型的 "True" 值轉換成 "Object" 類型」。兩個腳本（`WORD_PS`、`WORD_PDF_PS`）改用共用的 `psHelpers`：`Open-WordDoc` 先以參數名稱經 IDispatch 呼叫（`InvokeMember('Open', …, $names)`），只有在這種呼叫本身失敗（不是 Word 回報的 800A… 錯誤，`Test-WordError`）時才改用簡短的位置參數；`Close-WordDoc`、`Quit-Word` 同樣有不帶參數的備援；匯出 PDF 時 `ExportAsFixedFormat` 呼叫失敗就改用 `SaveAs2(…, 17)`。
+
+### 3.9.36 大型檔案不卡頓（v4.13.0）
+- 頁面在背景畫：`app/render-worker.mjs` 是一個 Web Worker，裡面跑 pdf.js（解析也在同一個執行緒，`pdf-worker.mjs` 被 import 後 pdf.js 用「fake worker」），用 OffscreenCanvas 畫頁面，回傳 ImageBitmap（轉移，不複製）。主畫面（`renderPage`）與縮圖（`buildThumbs`）都經 `rwRender`；回來的圖用 `bitmapCanvas` 畫進一般的 2D canvas，其他程式（`canvas.pc` 取色、快照、文字辨識）照舊可以讀。縮圖等頁面畫完才畫（`rwPagesIdle`）。
+- 文件以版本傳給 worker（`S.version` 跨分頁唯一，`rwDoc` 傳一份複本），worker 保留最後三份。worker 裡沒有 DOM：`OffCanvasFactory`、`NoFilterFactory`（轉換函數、高對比的 SVG 濾鏡省略）、`ownerDocument` 只有 fonts 與 canvas、`useWorkerFetch:true`。
+- 圖片位置（擷取圖片、`detectImages`）由 worker 從畫頁面用的運算清單算出（`imgboxes.mjs` 的 `imageBoxesOf`，`skipAnnotations` 跳過註解），同一張圖不再為了找位置再解碼一次；還沒畫過的頁用 `rwBoxes`。`imageBoxesOf`、`boxMeet`、`sameBox` 搬到 `app/imgboxes.mjs`，主程式 import。
+- JPEG 用瀏覽器內建的解碼器（約快五倍）：pdf.js 在 Chromium 預設不用，因為它會照 Exif 方向轉圖。`app/pdf-worker.mjs` 包住 `ImageDecoder`：先拿掉 Exif（`stripExif`）、`colorSpaceConversion:'none'`，再交給原生解碼器；它是 pdf.js 的 `workerSrc`，`PDF_OPTS.isImageDecoderSupported = true`。
+- worker 出錯（`rwFail`）就全部改回在視窗裡畫（原本的做法），單頁畫失敗也會改在視窗裡畫（`RW.stats.fallback`）。移動物件時的「底圖」（`renderUnder`）、編輯後先畫好的新頁（`prerenderNew`）、匯出、列印仍在視窗裡畫。
+- 量測（xvfb）：65 MB 單張照片首頁 10.3 秒 → 2.5 秒；30 頁 A0 向量圖首頁 7 秒 → 1.5 秒、捲動時視窗不再被卡住（原本 20 秒裡卡 20 秒）。
+- 測試：`smooth-render.mjs`（Exif 方向、原生解碼、背景畫頁面與縮圖、重的頁不卡、圖片位置、編輯後重畫、worker 失敗改回）。
 - 測試：`open-word.mjs`（主程式的 word:open 換成假的 Word）、`word-main.mjs`（wordToPdf 的流程）。在真的 Windows＋Word 上還沒有實測。
 
 ### 3.10 其他

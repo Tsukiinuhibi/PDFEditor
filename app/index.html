@@ -1132,13 +1132,14 @@ html[data-page="sepia"] .tbveil{filter:sepia(.55) saturate(1.2) brightness(.95)}
 <script src="fontid.js"></script>
 <script type="module">
 import * as pdfjs from '../node_modules/pdfjs-dist/build/pdf.min.mjs';
-pdfjs.GlobalWorkerOptions.workerSrc = new URL('../node_modules/pdfjs-dist/build/pdf.worker.min.mjs', location.href).href;
+pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdf-worker.mjs', location.href).href;   // (pdf.js's worker, JPEGs by the browser's decoder)
 window.pdfjsLib = pdfjs;
 import { GIFEncoder, quantize, applyPalette } from '../node_modules/gifenc/dist/gifenc.esm.js';
 window.gifenc = { GIFEncoder, quantize, applyPalette };
 </script>
 <script type="module">
 "use strict";
+import { imageBoxesOf as imageBoxesOf_, boxMeet, sameBox } from './imgboxes.mjs';
 /* ====================================================================
    PDF 工作台 — reader + editor
    ==================================================================== */
@@ -1150,6 +1151,7 @@ const PROFILE_USED = (() => { try { return Object.keys(localStorage).some(k => k
 // CJK character maps + standard fonts ship with the app, so Chinese PDFs without embedded fonts render correctly
 const PDF_OPTS = {
   isEvalSupported: false,
+  isImageDecoderSupported: true,   // (JPEGs decoded by the browser, Exif ignored: pdf-worker.mjs)
   cMapUrl: new URL('../node_modules/pdfjs-dist/cmaps/', location.href).href, cMapPacked: true,
   standardFontDataUrl: new URL('../node_modules/pdfjs-dist/standard_fonts/', location.href).href,
 };
@@ -1816,6 +1818,75 @@ function updateCurrentFromScroll(){
    Rendering
    ==================================================================== */
 let renderTimer = 0;
+/* 頁面在背景畫 (render-worker.mjs): the pages and thumbnails are drawn in a worker on an OffscreenCanvas, so a page that
+   takes long to draw never holds up the window; the worker also says where the pictures are (擷取圖片). The worker keeps
+   a document per version (S.version, unique across tabs); a render answers like a pdf.js render task ({promise, cancel},
+   RenderingCancelledException). Should the worker fail, everything is drawn on the window's own thread as before. */
+const RW = {w:null, ok:typeof Worker === 'function' && typeof OffscreenCanvas === 'function' && typeof createImageBitmap === 'function', has:[], wait:new Map(), seq:0, busy:0, idle:[],
+  stats:{pages:0, thumbs:0, boxes:0, native:0, main:0, fallback:0, why:''}};
+function rwStart(){
+  if (RW.w || !RW.ok) return RW.ok;
+  try {
+    RW.w = new Worker(new URL('render-worker.mjs', location.href), {type:'module'});
+    RW.w.onmessage = e => { const m = e.data; if (!m || !m.type || m.id == null) return; if (m.native) RW.stats.native = m.native; const r = RW.wait.get(m.id); if (r) { RW.wait.delete(m.id); r(m); } };
+    RW.w.onerror = e => rwFail('worker error: ' + (e && e.message || ''));
+    const {isEvalSupported, cMapUrl, cMapPacked, standardFontDataUrl, isImageDecoderSupported} = PDF_OPTS;
+    RW.w.postMessage({type:'init', opts:{isEvalSupported, cMapUrl, cMapPacked, standardFontDataUrl, isImageDecoderSupported}});
+  } catch (e) { rwFail(String(e && e.message || e)); }
+  return RW.ok;
+}
+function rwFail(why){
+  RW.ok = false; RW.stats.why = why; console.warn('頁面改在視窗裡畫：', why);
+  try { RW.w && RW.w.terminate(); } catch (_) {}
+  RW.w = null; RW.has = [];
+  const w = [...RW.wait.values()]; RW.wait.clear(); w.forEach(r => r({ok:false, err:why, failed:true}));
+}
+// the worker has this document (S.bytes of S.version): sent once (a copy: the window keeps its own)
+function rwDoc(){
+  if (!RW.has.includes(S.version)) {
+    RW.w.postMessage({type:'doc', ver:S.version, bytes:S.bytes.slice()});
+    RW.has.push(S.version); while (RW.has.length > 3) RW.has.shift();   // (the worker keeps the last three too)
+  }
+}
+function rwAsk(msg){
+  const id = ++RW.seq;
+  const p = new Promise(res => RW.wait.set(id, res));
+  RW.w.postMessage({...msg, id});
+  return {id, p};
+}
+// page i at scale (pixels per point) → a render task, or null (no worker: draw on the window's thread)
+function rwRender(i, scale, {thumb = false} = {}){
+  if (!rwStart()) return null;
+  rwDoc();
+  const ver = S.version, {id, p} = rwAsk({type:'render', ver, i, scale, annotationMode:pdfjsLib.AnnotationMode.ENABLE});
+  if (!thumb) RW.busy++;
+  const promise = p.then(m => {
+    if (m.ok) { thumb ? RW.stats.thumbs++ : RW.stats.pages++; if (m.boxes) rwKeepBoxes(ver, i, m.boxes); return m; }
+    throw Object.assign(new Error(m.err || 'render failed'), {name:m.cancelled ? 'RenderingCancelledException' : 'RenderWorkerError', rw:true});
+  }).finally(() => { if (!thumb && --RW.busy === 0) { const q = RW.idle; RW.idle = []; q.forEach(f => f()); } });
+  return {promise, cancel:() => { if (RW.w) RW.w.postMessage({type:'cancel', id}); }};
+}
+// the thumbnails wait while pages are being drawn (the page in view comes first)
+const rwPagesIdle = () => RW.busy ? new Promise(r => RW.idle.push(r)) : Promise.resolve();
+// the boxes of the pictures the worker worked out while drawing: kept for 擷取圖片 (detectImages)
+function rwKeepBoxes(ver, i, boxes){
+  if (ver !== S.version) return;
+  const key = ver + ':' + i; if (imgResolved.has(key)) return;
+  imgResolved.set(key, boxes); S.imgCache.set(key, Promise.resolve(boxes)); RW.stats.boxes++;
+}
+async function rwBoxes(i){
+  if (!rwStart()) return null;
+  rwDoc();
+  const ver = S.version, m = await rwAsk({type:'boxes', ver, i}).p;
+  if (!m.ok) return null;
+  RW.stats.boxes++; return m.boxes;
+}
+// a picture the worker drew, as a canvas the rest of the program can read like one drawn here
+function bitmapCanvas(bmp, c = document.createElement('canvas')){
+  c.width = bmp.width; c.height = bmp.height;
+  c.getContext('2d').drawImage(bmp, 0, 0); bmp.close();
+  return c;
+}
 function scheduleRender(delay){ clearTimeout(renderTimer); renderTimer = setTimeout(renderVisible, delay); }
 function pagesInView(buffer){
   const top = viewer.scrollTop - buffer, bot = viewer.scrollTop + viewer.clientHeight + buffer, out = [];
@@ -1847,9 +1918,18 @@ async function renderPage(i){
   const vp = pg.page.getViewport({scale:rs});
   const c = document.createElement('canvas'); c.className = 'pc';
   c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
-  const task = pg.page.render({canvasContext:c.getContext('2d'), viewport:vp, annotationMode:pdfjsLib.AnnotationMode.ENABLE});
+  const here = () => { RW.stats.main++; return pg.page.render({canvasContext:c.getContext('2d'), viewport:vp, annotationMode:pdfjsLib.AnnotationMode.ENABLE}); };
+  let task = rwRender(i, rs) || here();
   st.task = task; st.taskScale = want;
-  try { await task.promise; }
+  try {
+    let r;
+    try { r = await task.promise; }
+    catch (e) {   // the worker could not draw it (not cancelled): drawn here
+      if (!(e && e.rw && e.name !== 'RenderingCancelledException') || st.task !== task) throw e;
+      RW.stats.fallback++; st.task = task = here(); r = await task.promise;
+    }
+    if (r && r.bmp) bitmapCanvas(r.bmp, c);
+  }
   catch (e) { if (!e || e.name !== 'RenderingCancelledException') console.error(e); return; }
   finally { if (st.task === task) st.task = null; }
   if (ver !== S.version) return;
@@ -1982,68 +2062,18 @@ document.addEventListener('pointerdown', e => { if (!pop.contains(e.target)) pop
 /* ---------------- image detection ---------------- */
 const imgResolved = new Map();
 // [x0, y0, x1, y1] boxes: where two meet (null: one is missing → the other; no overlap → null); two {x, y, w, h} alike
-const boxMeet = (a, b) => { if (!a) return b; if (!b) return a; const r = [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])]; return r[0] <= r[2] && r[1] <= r[3] ? r : null; };
-const sameBox = (p, q, d = 1.5) => !!p && !!q && ['x', 'y', 'w', 'h'].every(k => Math.abs(p[k] - q[k]) <= d);
 async function detectImages(i){
   const key = S.version + ':' + i; if (S.imgCache.has(key)) return S.imgCache.get(key);
   const p = (async () => {
     const pg = S.pages[i];
+    const b = RW.ok ? await rwBoxes(i) : null; if (b) return b;   // (worked out in the worker: the pictures are not decoded here)
     return imageBoxesOf(await pg.page.getOperatorList({annotationMode:pdfjsLib.AnnotationMode.DISABLE}), pg.vp1.transform, pg.w, pg.h);
   })().then(out => { imgResolved.set(key, out); return out; }).catch(e => { console.warn(e); return []; });
   S.imgCache.set(key, p); return p;
 }
 // the pictures an operator list paints, as boxes in the page view (vt: the page's view transform at scale 1; W × H its size):
 // {x, y, w, h: the part that shows (clipped), nw × nh: its pixels, full: the whole picture}
-function imageBoxesOf(ops, vt, W, H){
-  {
-    const O = pdfjsLib.OPS, U = pdfjsLib.Util;
-    // the clip (page view, [x0, y0, x1, y1]) follows the clipping paths: a path's box (its control points included: pdf.js
-    // leaves curves out of its own minMax) takes effect at the end of the path, like in the renderer
-    let ctm = [1, 0, 0, 1, 0, 0], clip = null, path = null, pending = false; const stack = [], out = [];
-    const view = (r, m) => { const q = [[r[0], r[1]], [r[2], r[1]], [r[0], r[3]], [r[2], r[3]]].map(p => U.applyTransform(U.applyTransform(p, m), vt)), xs = q.map(p => p[0]), ys = q.map(p => p[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; };
-    const PATH_ARGS = {[O.moveTo]:2, [O.lineTo]:2, [O.curveTo]:6, [O.curveTo2]:4, [O.curveTo3]:4, [O.closePath]:0, [O.rectangle]:4};
-    const pathBox = (fns, args) => {
-      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, j = 0;
-      const pt = (x, y) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); };
-      for (const f of fns) {
-        const n = PATH_ARGS[f] ?? 0;
-        if (f === O.rectangle) { pt(args[j], args[j + 1]); pt(args[j] + args[j + 2], args[j + 1] + args[j + 3]); }
-        else for (let k = 0; k + 1 < n; k += 2) pt(args[j + k], args[j + k + 1]);
-        j += n;
-      }
-      return x0 <= x1 && y0 <= y1 ? [x0, y0, x1, y1] : null;
-    };
-    const add = (nw, nh) => {
-      const f = view([0, 0, 1, 1], ctm), m = clip ? boxMeet(f, clip) : f, v = m && boxMeet(m, [0, 0, W, H]);   // (clipped away entirely: no red box)
-      if (!v || v[2] - v[0] < 4 || v[3] - v[1] < 4) return;
-      const full = {x:f[0], y:f[1], w:f[2] - f[0], h:f[3] - f[1]};
-      if (!out.some(o => sameBox(o.full, full, 1))) out.push({x:v[0], y:v[1], w:v[2] - v[0], h:v[3] - v[1], nw:nw | 0, nh:nh | 0, full});
-    };
-    for (let k = 0; k < ops.fnArray.length; k++) {
-      const fn = ops.fnArray[k], a = ops.argsArray[k];
-      switch (fn) {
-        case O.save: stack.push({ctm:ctm.slice(), clip}); break;
-        case O.restore: if (stack.length) ({ctm, clip} = stack.pop()); path = null; pending = false; break;
-        case O.transform: ctm = U.transform(ctm, a); break;
-        case O.constructPath: { const b = a && pathBox(a[0], a[1]); if (b) { const v = view(b, ctm); path = path ? [Math.min(path[0], v[0]), Math.min(path[1], v[1]), Math.max(path[2], v[2]), Math.max(path[3], v[3])] : v; } break; }
-        case O.clip: case O.eoClip: pending = true; break;
-        case O.endPath: case O.fill: case O.eoFill: case O.stroke: case O.closeStroke: case O.fillStroke: case O.eoFillStroke: case O.closeFillStroke: case O.closeEOFillStroke:
-          if (pending && path) clip = boxMeet(clip, path) || [0, 0, 0, 0];
-          path = null; pending = false; break;
-        case O.paintFormXObjectBegin:
-          stack.push({ctm:ctm.slice(), clip});
-          if (a && a[0] && a[0].length === 6) ctm = U.transform(ctm, a[0]);
-          if (a && a[1] && a[1].length === 4) clip = boxMeet(clip, view(a[1], ctm)) || [0, 0, 0, 0];
-          break;
-        case O.paintFormXObjectEnd: if (stack.length) ({ctm, clip} = stack.pop()); break;
-        case O.paintImageXObject: add(a[1], a[2]); break;
-        case O.paintInlineImageXObject: add(a[0] && a[0].width, a[0] && a[0].height); break;
-        case O.paintImageMaskXObject: add(a[0] && a[0].width, a[0] && a[0].height); break;
-      }
-    }
-    return out;
-  }
-}
+const imageBoxesOf = (ops, vt, W, H) => imageBoxesOf_(ops, vt, W, H, pdfjsLib);
 
 /* render a region (visual pt coords) of a page to a canvas */
 async function renderRegion(i, box, pxPerPt){
@@ -10024,7 +10054,13 @@ function buildThumbs(map = null, pre = null){
     const c = document.createElement('canvas'); c.className = 'tc'; c.style.cssText = shown.style.cssText;
     const s = (parseFloat(shown.style.width) * dpr) / pg.w, vp = pg.page.getViewport({scale:s});
     c.width = vp.width; c.height = vp.height;
-    try { await pg.page.render({canvasContext:c.getContext('2d'), viewport:vp, annotationMode:pdfjsLib.AnnotationMode.ENABLE}).promise; } catch (_) { return; }
+    await rwPagesIdle(); if (ver !== S.version || !shown.isConnected) return;
+    try {
+      const task = rwRender(i, s, {thumb:true});
+      let r = null; if (task) { try { r = await task.promise; } catch (_) { r = null; } }
+      if (r && r.bmp) bitmapCanvas(r.bmp, c);
+      else { RW.stats.main++; await pg.page.render({canvasContext:c.getContext('2d'), viewport:vp, annotationMode:pdfjsLib.AnnotationMode.ENABLE}).promise; }
+    } catch (_) { return; }
     if (ver === S.version && shown.isConnected) shown.replaceWith(c);
   }), {root:panel, rootMargin:'200px'});
   S.pages.forEach((pg, i) => {
@@ -13372,6 +13408,7 @@ window.__pdfapp = {
       groups:[...p.querySelectorAll('.fi-img .fi-grp')].map(g => ({title:(g.querySelector('.fi-h') || {}).textContent || '', rows:[...g.querySelectorAll('.fi-row')].map(row)}))}; },
   fontIdGoogle:(fn, {timeout = 8000, deadline = 12000} = {}) => { FONTID.fetchCss = fn || null; FONTID.timeout = timeout; FONTID.deadline = deadline; },
   fontIdRecent:() => FONTID.recent.map(r => ({...r})),
+  rw:{stats:() => ({...RW.stats, worker:RW.ok && !!RW.w}), fail:why => rwFail(why || 'test')}, detectImages,
   S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box, tidyOcr, denoiseCanvas,
   fontCat:() => ({ok:FONTCAT.ok, fams:FONTCAT.fams.map(f => ({...f}))}), fontLoad:loadFontCatalog,
   registerTestFont,
