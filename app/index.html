@@ -1458,7 +1458,8 @@ async function closeTab(i){
     if (!v) return false;
     if (v === 'save') { if (i !== active) switchTab(i); await new Promise(r => setTimeout(r, 50)); if (!(await saveAsNew(S.bytes, '_已編輯'))) return false; i = active; }
   }
-  const pdf = docField(d, 'pdf');
+  const pdf = docField(d, 'pdf'), dver = docField(d, 'version');
+  if (dver) rwDrop(dver);   // (the render worker lets its copy go)
   if (i === active) {
     S.st.forEach(st => st && st.task && st.task.cancel());
     docs.splice(i, 1);
@@ -1546,7 +1547,9 @@ async function loadDoc(bytes, {name, keepView = false, scrollToCurrent = false} 
     pages.push({page:p, vp1:vp, w:vp.width, h:vp.height, rot:((p.rotate % 360) + 360) % 360});
   }
   if (prev) { prev.map = matchPages(prev.pages, pages); prev.pre = await prerenderNew(pages, prev); }
+  const verBefore = S.version;
   S.pdf = pdf; S.pages = pages; S.bytes = bytes; S.version = ++VSEQ;
+  if (keepView && verBefore) setTimeout(() => rwDrop(verBefore), 3000);   // (the version before this edit: no longer drawn)
   if (!keepView) { S.hasGroups = null; S.pageFilter = 'all'; }   // (an edit, undo or redo keeps both: only grouping and pasting make groups, and they say so)
   else if (S.pageFilter && S.pageFilter !== 'all' && !shownPages().includes(S.current)) { const v = shownPages(); S.current = v.find(k => k > S.current) ?? v[v.length - 1]; }   // (pages added or taken away: a page shown)
   if (name) S.name = name;
@@ -1823,13 +1826,22 @@ let renderTimer = 0;
    a document per version (S.version, unique across tabs); a render answers like a pdf.js render task ({promise, cancel},
    RenderingCancelledException). Should the worker fail, everything is drawn on the window's own thread as before. */
 const RW = {w:null, ok:typeof Worker === 'function' && typeof OffscreenCanvas === 'function' && typeof createImageBitmap === 'function', has:[], wait:new Map(), seq:0, busy:0, idle:[],
-  stats:{pages:0, thumbs:0, boxes:0, native:0, main:0, fallback:0, why:''}};
+  here:new Set(),   // 'version:page' drawn in the window (they need SVG filters: a soft mask, a transfer function)
+  stats:{pages:0, thumbs:0, boxes:0, renderBoxes:0, native:0, main:0, fallback:0, here:0, hereDrawn:0, why:''}};   // (main: drawn in the window though the worker could have; hereDrawn: pages that need the window)
+const RW_LIMIT = 120000;   // (no answer for two minutes: the worker is taken to be stuck, the window draws)
 function rwStart(){
   if (RW.w || !RW.ok) return RW.ok;
   try {
     RW.w = new Worker(new URL('render-worker.mjs', location.href), {type:'module'});
-    RW.w.onmessage = e => { const m = e.data; if (!m || !m.type || m.id == null) return; if (m.native) RW.stats.native = m.native; const r = RW.wait.get(m.id); if (r) { RW.wait.delete(m.id); r(m); } };
+    RW.w.onmessage = e => {
+      const m = e.data; if (!m || !m.type) return;   // (pdf.js's own messages from that thread are not for here)
+      if (m.type === 'fatal') { rwFail('worker: ' + m.err); return; }
+      if (m.id == null) return;
+      if (m.native) RW.stats.native = m.native;
+      const r = RW.wait.get(m.id); if (r) { RW.wait.delete(m.id); r(m); }
+    };
     RW.w.onerror = e => rwFail('worker error: ' + (e && e.message || ''));
+    RW.w.onmessageerror = () => rwFail('worker message error');
     const {isEvalSupported, cMapUrl, cMapPacked, standardFontDataUrl, isImageDecoderSupported} = PDF_OPTS;
     RW.w.postMessage({type:'init', opts:{isEvalSupported, cMapUrl, cMapPacked, standardFontDataUrl, isImageDecoderSupported}});
   } catch (e) { rwFail(String(e && e.message || e)); }
@@ -1844,27 +1856,44 @@ function rwFail(why){
 // the worker has this document (S.bytes of S.version): sent once (a copy: the window keeps its own)
 function rwDoc(){
   if (!RW.has.includes(S.version)) {
-    RW.w.postMessage({type:'doc', ver:S.version, bytes:S.bytes.slice()});
+    const copy = S.bytes.slice();
+    RW.w.postMessage({type:'doc', ver:S.version, bytes:copy}, [copy.buffer]);   // (the copy handed over, not copied again)
     RW.has.push(S.version); while (RW.has.length > 3) RW.has.shift();   // (the worker keeps the last three too)
   }
 }
+// a version no longer shown (an edit made a new one, its tab was closed): the worker lets it go
+function rwDrop(ver){
+  const k = RW.has.indexOf(ver); if (k < 0 || !RW.w) return;
+  RW.has.splice(k, 1); RW.w.postMessage({type:'drop', ver});
+}
 function rwAsk(msg){
   const id = ++RW.seq;
-  const p = new Promise(res => RW.wait.set(id, res));
+  const p = new Promise(res => {
+    const t = setTimeout(() => { if (RW.wait.delete(id)) { res({ok:false, err:'no answer', failed:true}); rwFail('no answer from the worker'); } }, RW_LIMIT);
+    RW.wait.set(id, m => { clearTimeout(t); res(m); });
+  });
   RW.w.postMessage({...msg, id});
   return {id, p};
 }
 // page i at scale (pixels per point) → a render task, or null (no worker: draw on the window's thread)
 function rwRender(i, scale, {thumb = false} = {}){
-  if (!rwStart()) return null;
+  if (RW.here.has(S.version + ':' + i) || !rwStart()) return null;
   rwDoc();
   const ver = S.version, {id, p} = rwAsk({type:'render', ver, i, scale, annotationMode:pdfjsLib.AnnotationMode.ENABLE});
   if (!thumb) RW.busy++;
   const promise = p.then(m => {
-    if (m.ok) { thumb ? RW.stats.thumbs++ : RW.stats.pages++; if (m.boxes) rwKeepBoxes(ver, i, m.boxes); return m; }
+    if (m.ok) { thumb ? RW.stats.thumbs++ : RW.stats.pages++; if (m.fromRender) RW.stats.renderBoxes++; if (m.boxes) rwKeepBoxes(ver, i, m.boxes); return m; }
+    if (m.filters) { RW.here.add(ver + ':' + i); RW.stats.here++; }   // (drawn in the window from now on)
     throw Object.assign(new Error(m.err || 'render failed'), {name:m.cancelled ? 'RenderingCancelledException' : 'RenderWorkerError', rw:true});
   }).finally(() => { if (!thumb && --RW.busy === 0) { const q = RW.idle; RW.idle = []; q.forEach(f => f()); } });
   return {promise, cancel:() => { if (RW.w) RW.w.postMessage({type:'cancel', id}); }};
+}
+// (tests) page i drawn at scale, cancelled after ms → {cancelled, ms}
+async function rwProbe(i, scale, ms){
+  const t0 = performance.now(), task = rwRender(i, scale, {thumb:true}); if (!task) return null;
+  setTimeout(() => task.cancel(), ms);
+  try { const r = await task.promise; if (r.bmp) r.bmp.close(); return {cancelled:false, ms:Math.round(performance.now() - t0)}; }
+  catch (e) { return {cancelled:e.name === 'RenderingCancelledException', ms:Math.round(performance.now() - t0)}; }
 }
 // the thumbnails wait while pages are being drawn (the page in view comes first)
 const rwPagesIdle = () => RW.busy ? new Promise(r => RW.idle.push(r)) : Promise.resolve();
@@ -1918,15 +1947,16 @@ async function renderPage(i){
   const vp = pg.page.getViewport({scale:rs});
   const c = document.createElement('canvas'); c.className = 'pc';
   c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
-  const here = () => { RW.stats.main++; return pg.page.render({canvasContext:c.getContext('2d'), viewport:vp, annotationMode:pdfjsLib.AnnotationMode.ENABLE}); };
+  const here = () => { RW.here.has(ver + ':' + i) ? RW.stats.hereDrawn++ : RW.stats.main++; return pg.page.render({canvasContext:c.getContext('2d'), viewport:vp, annotationMode:pdfjsLib.AnnotationMode.ENABLE}); };
   let task = rwRender(i, rs) || here();
   st.task = task; st.taskScale = want;
   try {
     let r;
     try { r = await task.promise; }
     catch (e) {   // the worker could not draw it (not cancelled): drawn here
-      if (!(e && e.rw && e.name !== 'RenderingCancelledException') || st.task !== task) throw e;
-      RW.stats.fallback++; st.task = task = here(); r = await task.promise;
+      if (!(e && e.rw && e.name !== 'RenderingCancelledException') || st.task !== task || ver !== S.version) throw e;
+      if (!RW.here.has(ver + ':' + i)) RW.stats.fallback++;
+      st.task = task = here(); r = await task.promise;
     }
     if (r && r.bmp) bitmapCanvas(r.bmp, c);
   }
@@ -1945,7 +1975,8 @@ async function renderPage(i){
 async function ensureOverlay(i){
   const st = S.st[i]; if (st.ovlVer === S.version) return; st.ovlVer = S.version;
   const ver = S.version, el = S.els[i], ovl = el.querySelector('.ovl'), pg = S.pages[i];
-  const [anns, imgs, lnks] = await Promise.all([getAnns(i), detectImages(i), pageLinks(i), S.hasGroups !== false ? loadGroups(i) : null]);   // (which objects are grouped: known before they can be clicked)
+  const [anns, lnks] = await Promise.all([getAnns(i), pageLinks(i), S.hasGroups !== false ? loadGroups(i) : null]);   // (which objects are grouped: known before they can be clicked)
+  const imgsP = detectImages(i);   // (the pictures' boxes: put in when they are known, the rest is not held up by them)
   if (ver !== S.version) return;
   ovl.querySelectorAll('.annhit,.imgbox,.lnk').forEach(n => n.remove());
   const pct = (v, t) => (v / t * 100) + '%';
@@ -1981,13 +2012,13 @@ async function ensureOverlay(i){
     d.addEventListener('click', ev => { if (S.tool === 'select' && !S.spaceDown && a.sig) { ev.stopPropagation(); hideTip(); showAnnPop(ev, i, a); } });
     ovl.appendChild(d);
   });
-  imgs.forEach((b, k) => {
+  imgsP.then(imgs => { if (ver !== S.version || !ovl.isConnected) return; ovl.querySelectorAll('.imgbox').forEach(n => n.remove()); imgs.forEach((b, k) => {
     const d = document.createElement('div'); d.className = 'imgbox';
     d.style.left = pct(b.x, pg.w); d.style.top = pct(b.y, pg.h); d.style.width = pct(b.w, pg.w); d.style.height = pct(b.h, pg.h);
     d.innerHTML = `<span>圖片 ${k + 1}${b.nw ? ' · ' + b.nw + '×' + b.nh : ''}</span>`;
     d.dataset.k = k;   // click selects the image; dragging from it starts a new selection (handled in startExtractDraw)
     ovl.appendChild(d);
-  });
+  }); });
   lnks.forEach(l => {   // (shown only with the link tool) a click changes or deletes the link; Ctrl+click is left to followLinkAt
     const d = document.createElement('div'); d.className = 'lnk'; d.title = linkText(l);
     d.style.left = pct(l.box.x, pg.w); d.style.top = pct(l.box.y, pg.h); d.style.width = pct(l.box.w, pg.w); d.style.height = pct(l.box.h, pg.h);
@@ -10038,6 +10069,9 @@ function refreshPanels(){
 }
 
 let thumbObs = null;
+// thumbnails are drawn one at a time (a page in view asked for meanwhile goes first: rwPagesIdle before each)
+let THUMB_Q = Promise.resolve();
+const thumbTurn = fn => (THUMB_Q = THUMB_Q.then(fn, fn).catch(() => {}));
 // map: for each page, the index of the same page before the edit (-1 = new); pre: pictures already drawn for new pages
 function buildThumbs(map = null, pre = null){
   const panel = $('#p-thumbs');
@@ -10054,14 +10088,18 @@ function buildThumbs(map = null, pre = null){
     const c = document.createElement('canvas'); c.className = 'tc'; c.style.cssText = shown.style.cssText;
     const s = (parseFloat(shown.style.width) * dpr) / pg.w, vp = pg.page.getViewport({scale:s});
     c.width = vp.width; c.height = vp.height;
-    await rwPagesIdle(); if (ver !== S.version || !shown.isConnected) return;
-    try {
-      const task = rwRender(i, s, {thumb:true});
-      let r = null; if (task) { try { r = await task.promise; } catch (_) { r = null; } }
-      if (r && r.bmp) bitmapCanvas(r.bmp, c);
-      else { RW.stats.main++; await pg.page.render({canvasContext:c.getContext('2d'), viewport:vp, annotationMode:pdfjsLib.AnnotationMode.ENABLE}).promise; }
-    } catch (_) { return; }
-    if (ver === S.version && shown.isConnected) shown.replaceWith(c);
+    await thumbTurn(async () => {
+      if (ver !== S.version || !shown.isConnected) return;
+      await rwPagesIdle(); if (ver !== S.version || !shown.isConnected) return;
+      try {
+        const task = rwRender(i, s, {thumb:true});
+        let r = null; if (task) { try { r = await task.promise; } catch (_) { r = null; } }
+        if (ver !== S.version || !shown.isConnected) { if (r && r.bmp) r.bmp.close(); return; }
+        if (r && r.bmp) bitmapCanvas(r.bmp, c);
+        else { RW.here.has(ver + ':' + i) ? RW.stats.hereDrawn++ : RW.stats.main++; await pg.page.render({canvasContext:c.getContext('2d'), viewport:vp, annotationMode:pdfjsLib.AnnotationMode.ENABLE}).promise; }
+      } catch (_) { return; }
+      if (ver === S.version && shown.isConnected) shown.replaceWith(c);
+    });
   }), {root:panel, rootMargin:'200px'});
   S.pages.forEach((pg, i) => {
     const t = document.createElement('div'); t.className = 'thumb' + (pageShown(i) ? '' : ' pf-off'); t.dataset.i = i;
@@ -13408,7 +13446,7 @@ window.__pdfapp = {
       groups:[...p.querySelectorAll('.fi-img .fi-grp')].map(g => ({title:(g.querySelector('.fi-h') || {}).textContent || '', rows:[...g.querySelectorAll('.fi-row')].map(row)}))}; },
   fontIdGoogle:(fn, {timeout = 8000, deadline = 12000} = {}) => { FONTID.fetchCss = fn || null; FONTID.timeout = timeout; FONTID.deadline = deadline; },
   fontIdRecent:() => FONTID.recent.map(r => ({...r})),
-  rw:{stats:() => ({...RW.stats, worker:RW.ok && !!RW.w}), fail:why => rwFail(why || 'test')}, detectImages,
+  rw:{stats:() => ({...RW.stats, worker:RW.ok && !!RW.w}), fail:why => rwFail(why || 'test'), probe:rwProbe}, detectImages,
   S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box, tidyOcr, denoiseCanvas,
   fontCat:() => ({ok:FONTCAT.ok, fams:FONTCAT.fams.map(f => ({...f}))}), fontLoad:loadFontCatalog,
   registerTestFont,

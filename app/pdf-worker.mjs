@@ -5,7 +5,7 @@
 // for a large photo. Used as pdf.js's workerSrc (index.html, with isImageDecoderSupported) and inside the render worker.
 import '../node_modules/pdfjs-dist/build/pdf.worker.min.mjs';
 
-// a JPEG without its Exif segments (APP1 starting "Exif\0\0"); the same bytes when it has none
+// a JPEG without its Exif segments (APP1 starting "Exif\0"); the same bytes when it has none
 export function stripExif(d){
   if (!(d instanceof Uint8Array) || d.length < 4 || d[0] !== 0xff || d[1] !== 0xd8) return d;
   const keep = [[0, 2]]; let i = 2, cut = false;
@@ -17,7 +17,7 @@ export function stripExif(d){
     if (m === 0xda || m === 0xd9) break;   // (the picture's data from here on: kept as it is)
     const len = (d[i + 2] << 8) | d[i + 3];
     if (len < 2 || i + 2 + len > d.length) break;
-    const isExif = m === 0xe1 && len >= 8 && d[i + 4] === 0x45 && d[i + 5] === 0x78 && d[i + 6] === 0x69 && d[i + 7] === 0x66 && d[i + 8] === 0 && d[i + 9] === 0;
+    const isExif = m === 0xe1 && len >= 7 && d[i + 4] === 0x45 && d[i + 5] === 0x78 && d[i + 6] === 0x69 && d[i + 7] === 0x66 && d[i + 8] === 0;   // ("Exif\0", whatever follows)
     if (isExif) cut = true; else keep.push([i, i + 2 + len]);
     i += 2 + len;
   }

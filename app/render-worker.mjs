@@ -17,10 +17,13 @@ class OffCanvasFactory {
   reset(cc, w, h){ cc.canvas.width = Math.max(1, w); cc.canvas.height = Math.max(1, h); }
   destroy(cc){ if (cc.canvas) { cc.canvas.width = 0; cc.canvas.height = 0; } cc.canvas = null; cc.context = null; }
 }
+// a page that needs one (a soft mask, a transfer function) is not drawn here: the window draws it (filterUses changed
+// while it was drawn → the answer says so)
+let filterUses = 0;
 class NoFilterFactory {
   constructor(){}
-  addFilter(){ return 'none'; } addHCMFilter(){ return 'none'; } addAlphaFilter(){ return 'none'; } addLuminosityFilter(){ return 'none'; }
-  addHighlightHCMFilter(){ return 'none'; } destroy(){}
+  addFilter(m){ if (m) filterUses++; return 'none'; } addHCMFilter(){ filterUses++; return 'none'; } addAlphaFilter(){ filterUses++; return 'none'; }
+  addLuminosityFilter(){ filterUses++; return 'none'; } addHighlightHCMFilter(){ filterUses++; return 'none'; } destroy(){}
 }
 const ownerDocument = {fonts:self.fonts, createElement:n => { if (n === 'canvas') return new OffscreenCanvas(1, 1); throw new Error('no DOM in the render worker: ' + n); }};
 
@@ -28,7 +31,9 @@ let opts = null;
 const docs = new Map();      // version → Promise<PDFDocumentProxy> (the last three kept)
 const boxes = new Map();     // 'version:page' → boxes of the pictures
 const tasks = new Map();     // request id → render task
-const cancelled = new Set(); // ids cancelled before their drawing began
+const pending = new Set();   // render ids asked for and not answered yet
+const cancelled = new Set(); // of those, the ones cancelled before their drawing began
+const yieldNow = () => new Promise(r => setTimeout(r, 0));   // (lets a 取消 that is waiting be read)
 function loadDoc(ver, bytes){
   const p = pdfjs.getDocument({...opts, data:bytes, useWorkerFetch:true, ownerDocument, CanvasFactory:OffCanvasFactory, FilterFactory:NoFilterFactory, isOffscreenCanvasSupported:true}).promise;
   p.catch(() => {});
@@ -51,31 +56,44 @@ self.addEventListener('message', async e => {
   if (m.type === 'init') { opts = m.opts; return; }
   if (m.type === 'doc') { loadDoc(m.ver, m.bytes); return; }
   if (m.type === 'drop') { const p = docs.get(m.ver); docs.delete(m.ver); if (p) p.then(d => d.destroy(), () => {}); return; }
-  if (m.type === 'cancel') { const t = tasks.get(m.id); if (t) t.cancel(); else cancelled.add(m.id); return; }
+  if (m.type === 'cancel') { const t = tasks.get(m.id); if (t) t.cancel(); else if (pending.has(m.id)) cancelled.add(m.id); return; }
   if (m.type === 'render') {
+    pending.add(m.id);
+    const stop = () => { if (cancelled.delete(m.id)) throw Object.assign(new Error('cancelled'), {name:'RenderingCancelledException'}); };
     try {
-      if (cancelled.delete(m.id)) throw Object.assign(new Error('cancelled'), {name:'RenderingCancelledException'});
+      await yieldNow(); stop();
       const page = await pageOf(m.ver, m.i), vp = page.getViewport({scale:m.scale});
-      if (cancelled.delete(m.id)) throw Object.assign(new Error('cancelled'), {name:'RenderingCancelledException'});
+      stop();
       const canvas = new OffscreenCanvas(Math.max(1, Math.floor(vp.width)), Math.max(1, Math.floor(vp.height)));
+      const f0 = filterUses;
       const task = page.render({canvasContext:canvas.getContext('2d'), viewport:vp, annotationMode:m.annotationMode});
+      task.onContinue = next => setTimeout(next, 0);   // (each slice of the drawing lets a 取消 in: no window here, so pdf.js would not wait)
+      // the operator list it is drawn from (pdf.js keeps it on the page's state for this drawing): where the pictures are
+      const state = [...(page._intentStates || new Map()).values()].find(st => st.renderTasks && st.renderTasks.size);
       tasks.set(m.id, task);
       try { await task.promise; } finally { tasks.delete(m.id); }
-      let bx = boxes.get(m.ver + ':' + m.i);
-      if (!bx) { try { const ops = task._internalRenderTask && task._internalRenderTask.operatorList; if (ops && ops.fnArray) boxes.set(m.ver + ':' + m.i, bx = boxesOf(page, ops, true)); } catch (_) {} }
+      if (filterUses !== f0) { reply({type:'page', id:m.id, ok:false, filters:true, err:'needs filters'}); return; }
+      let bx = boxes.get(m.ver + ':' + m.i), fromRender = false;
+      if (!bx) { try { const ops = state && state.operatorList; if (ops && ops.fnArray && ops.lastChunk !== false) { boxes.set(m.ver + ':' + m.i, bx = boxesOf(page, ops, true)); fromRender = true; } } catch (_) {} }
       const bmp = canvas.transferToImageBitmap();
-      reply({type:'page', id:m.id, ok:true, bmp, boxes:bx || null}, [bmp]);
+      reply({type:'page', id:m.id, ok:true, bmp, boxes:bx || null, fromRender}, [bmp]);
     } catch (err) {
       reply({type:'page', id:m.id, ok:false, cancelled:!!(err && err.name === 'RenderingCancelledException'), err:String(err && err.message || err)});
-    }
+    } finally { pending.delete(m.id); cancelled.delete(m.id); }
     return;
   }
   if (m.type === 'boxes') {   // the pictures of a page not drawn here yet: from its operator list without annotations
     try {
       let bx = boxes.get(m.ver + ':' + m.i);
-      if (!bx) { const page = await pageOf(m.ver, m.i); bx = boxesOf(page, await page.getOperatorList({annotationMode:pdfjs.AnnotationMode.DISABLE}), false); boxes.set(m.ver + ':' + m.i, bx); }
+      if (!bx) {
+        const page = await pageOf(m.ver, m.i); bx = boxesOf(page, await page.getOperatorList({annotationMode:pdfjs.AnnotationMode.DISABLE}), false); boxes.set(m.ver + ':' + m.i, bx);
+        try { page.cleanup(); } catch (_) {}   // (the pictures decoded for it are not kept)
+      }
       reply({type:'boxes', id:m.id, ok:true, boxes:bx});
     } catch (err) { reply({type:'boxes', id:m.id, ok:false, err:String(err && err.message || err)}); }
   }
 });
+// an error nothing caught: the window stops using this worker (it draws the pages itself)
+self.addEventListener('unhandledrejection', e => { self.postMessage({type:'fatal', err:String(e.reason && e.reason.message || e.reason)}); });
+self.addEventListener('error', e => { self.postMessage({type:'fatal', err:String(e.message || e)}); });
 self.postMessage({type:'ready'});

@@ -537,7 +537,14 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - JPEG 用瀏覽器內建的解碼器（約快五倍）：pdf.js 在 Chromium 預設不用，因為它會照 Exif 方向轉圖。`app/pdf-worker.mjs` 包住 `ImageDecoder`：先拿掉 Exif（`stripExif`）、`colorSpaceConversion:'none'`，再交給原生解碼器；它是 pdf.js 的 `workerSrc`，`PDF_OPTS.isImageDecoderSupported = true`。
 - worker 出錯（`rwFail`）就全部改回在視窗裡畫（原本的做法），單頁畫失敗也會改在視窗裡畫（`RW.stats.fallback`）。移動物件時的「底圖」（`renderUnder`）、編輯後先畫好的新頁（`prerenderNew`）、匯出、列印仍在視窗裡畫。
 - 量測（xvfb）：65 MB 單張照片首頁 10.3 秒 → 2.5 秒；30 頁 A0 向量圖首頁 7 秒 → 1.5 秒、捲動時視窗不再被卡住（原本 20 秒裡卡 20 秒）。
-- 測試：`smooth-render.mjs`（Exif 方向、原生解碼、背景畫頁面與縮圖、重的頁不卡、圖片位置、編輯後重畫、worker 失敗改回）。
+- 審查後：
+  - 需要 SVG 濾鏡的頁（柔和遮罩 SMask、轉換函數）worker 畫不對：`NoFilterFactory` 被叫到就回 `filters`，那一頁改在視窗畫並記在 `RW.here`（之後直接在視窗畫）。
+  - worker 裡 pdf.js 沒有 rAF，一頁畫完前讀不到「取消」：`task.onContinue = next => setTimeout(next, 0)`，每個請求開始前也先讓出一次。
+  - 圖片位置真的從畫頁面的運算清單算（`page._intentStates` 裡正在畫的那份；`RenderTask` 的內部欄位是私有的）。
+  - 縮圖一個一個畫（`thumbTurn`），每張之前等頁面畫完、檢查版本；註解與連結的點擊區不等圖片位置。
+  - 兩分鐘沒回應就不用 worker（`RW_LIMIT`）；worker 裡沒接住的錯誤送 `fatal`。
+  - 文件複本用轉移送；編輯前的版本與關掉分頁的版本會 `drop`。`stripExif` 只看「Exif\0」。
+- 測試：`smooth-render.mjs`（Exif 方向、原生解碼、背景畫頁面與縮圖、重的頁不卡、圖片位置、編輯後重畫、worker 失敗改回、柔和遮罩、沒內嵌字型的中文、取消）。
 - 測試：`open-word.mjs`（主程式的 word:open 換成假的 Word）、`word-main.mjs`（wordToPdf 的流程）。在真的 Windows＋Word 上還沒有實測。
 
 ### 3.10 其他

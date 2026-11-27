@@ -3,7 +3,8 @@
 // their Exif orientation ignored as a PDF reader must; the boxes of the pictures (擷取圖片) come from the drawing itself
 // (the picture is not decoded a second time). Should the worker fail, pages are drawn as before.
 import { launch, TMP } from './_env.mjs';
-import { PDFDocument, PDFName } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFString } from 'pdf-lib';
+const PDFLibString = t => PDFString.of(t);
 import fs from 'fs';
 import path from 'path';
 
@@ -36,6 +37,17 @@ const content = s => ctx.register(ctx.flateStream(Buffer.from(s)));
   for (let k = 0; k < 120000; k++) { const x = rnd() * 1600, y = rnd() * 1100; parts.push(`${x.toFixed(1)} ${y.toFixed(1)} m ${(x + rnd() * 40 - 20).toFixed(1)} ${(y + rnd() * 40 - 20).toFixed(1)} l S\n`); }
   doc.addPage([1600, 1100]).node.set(N('Contents'), content(parts.join(''))); }
 { const p = doc.addPage([595, 842]); p.node.set(N('Resources'), ctx.obj({XObject:{Im1:jpgObj(Buffer.from(jpegs.big), 3000, 2000)}})); p.node.set(N('Contents'), content('q 300 0 0 200 100 542 cm /Im1 Do Q\n')); }
+// (review) page 4: a soft mask (Luminosity): left half masked away, right half red — the worker cannot draw it (no SVG
+// filters there): drawn in the window
+{ const mask = ctx.register(ctx.flateStream(Buffer.from('0 g 0 0 300 300 re f 1 g 300 0 300 300 re f\n'), {Type:'XObject', Subtype:'Form', BBox:[0, 0, 600, 300], Group:{S:'Transparency', CS:'DeviceRGB'}}));
+  const p = doc.addPage([600, 300]); p.node.set(N('Resources'), ctx.obj({ExtGState:{GS1:{Type:'ExtGState', SMask:{Type:'Mask', S:'Luminosity', G:mask}}}}));
+  p.node.set(N('Contents'), content('q /GS1 gs 1 0 0 rg 0 0 600 300 re f Q\n')); }
+// (review) page 5: Chinese in a font that is not embedded (MSung-Light, a predefined CMap): drawn in the worker too
+{ const desc = ctx.obj({Type:'FontDescriptor', FontName:'MSung-Light', Flags:6, FontBBox:[0, -200, 1000, 900], ItalicAngle:0, Ascent:880, Descent:-120, CapHeight:880, StemV:93});
+  const cid = ctx.obj({Type:'Font', Subtype:'CIDFontType0', BaseFont:'MSung-Light', CIDSystemInfo:{Registry:PDFLibString('Adobe'), Ordering:PDFLibString('CNS1'), Supplement:0}, FontDescriptor:desc, DW:1000});
+  const f = ctx.register(ctx.obj({Type:'Font', Subtype:'Type0', BaseFont:'MSung-Light', Encoding:'UniCNS-UCS2-H', DescendantFonts:[cid]}));
+  const p = doc.addPage([600, 200]); p.node.set(N('Resources'), ctx.obj({Font:{F1:f}}));
+  p.node.set(N('Contents'), content('BT /F1 60 Tf 30 70 Td <4E2D65876E2C8A6665875B57> Tj ET\n')); }
 const file = path.join(TMP, 'smooth.pdf'); fs.writeFileSync(file, await doc.save());
 
 await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), file);
@@ -68,6 +80,24 @@ await win.waitForTimeout(500);
 await Ev(() => window.__pdfapp.scrollToPage(2)); await win.waitForTimeout(2500);
 { const b = await Ev(() => window.__pdfapp.detectImages(2)), s = await stats();
   check('the picture\'s box on page 3: 300 × 200 at (100, 100), 3000 × 2000 pixels — from the worker', Array.isArray(b) && b.length === 1 && Math.abs(b[0].x - 100) < 1 && Math.abs(b[0].y - 100) < 1 && Math.abs(b[0].w - 300) < 1 && Math.abs(b[0].h - 200) < 1 && b[0].nw === 3000 && b[0].nh === 2000 && s.boxes >= 1, {b, s}); }
+
+ { const s = await stats(); check('(review) the boxes come from the drawing itself (the picture not decoded again to find them)', s.renderBoxes >= 1, s); }
+
+// ---- (review) a soft mask: drawn in the window, as it should look -----------------------------------------------------------
+await Ev(() => window.__pdfapp.scrollToPage(3)); await win.waitForTimeout(3000);
+{ const l = await px(3, .25, .5), r = await px(3, .75, .5), s = await stats();
+  check('(review) a soft mask (Luminosity): drawn in the window (the worker has no filters): left masked away (white), right red', !!l && l[0] > 230 && l[1] > 230 && l[2] > 230 && red(r) && s.here >= 1, {l, r, s}); }
+// ---- (review) Chinese in a font that is not embedded: drawn in the worker as in the window -------------------------------------
+await Ev(() => window.__pdfapp.scrollToPage(4)); await win.waitForTimeout(3000);
+{ const r = await Ev(async () => { const c = document.querySelector('.page[data-i="4"] canvas.pc'); if (!c) return null;
+    const dark = cv => { const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data; let n = 0; for (let k = 0; k < d.length; k += 4) if (d[k] < 128 && d[k + 3] > 0) n++; return n; };
+    const pg = window.__pdfapp.S.pages[4], vp = pg.page.getViewport({scale:c.width / pg.w}), m = document.createElement('canvas'); m.width = c.width; m.height = c.height;
+    await pg.page.render({canvasContext:m.getContext('2d'), viewport:vp}).promise;
+    return {worker:dark(c), window:dark(m)}; });
+  check('(review) Chinese in a font that is not embedded: the worker draws the text as the window does', !!r && r.window > 500 && r.worker > r.window * .6 && r.worker < r.window * 1.6, r); }
+// ---- (review) 取消 stops a page that takes long to draw at once ----------------------------------------------------------------
+{ const r = await Ev(() => window.__pdfapp.rw.probe(1, 2.5, 60));
+  check('(review) a long drawing (120 000 lines) cancelled after 60 ms: it stops at once (not drawn to the end first)', !!r && r.cancelled && r.ms < 900, r); }
 
 // ---- an edit: the page drawn again (in the worker) -----------------------------------------------------------------------
 await Ev(() => window.__pdfapp.scrollToPage(0)); await win.waitForTimeout(1200);
