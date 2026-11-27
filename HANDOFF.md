@@ -546,11 +546,12 @@ npm start          # 開啟程式（開發模式不會檢查更新）
   - 文件複本用轉移送；編輯前的版本與關掉分頁的版本會 `drop`。`stripExif` 只看「Exif\0」。
 - 測試：`smooth-render.mjs`（Exif 方向、原生解碼、背景畫頁面與縮圖、重的頁不卡、圖片位置、編輯後重畫、worker 失敗改回、柔和遮罩、沒內嵌字型的中文、取消）。
 
+- 測試：`open-word.mjs`（主程式的 word:open 換成假的 Word）、`word-main.mjs`（wordToPdf 的流程）。在真的 Windows＋Word 上還沒有實測。
 ### 3.9.37 檔案資訊（v4.14.0）
 - 〔開啟 ▾〕→〔檔案資訊〕（`showFileInfo`）：使用者不必把檔案傳出來，就能看出為什麼開得慢。列出開啟每一步的時間（`S.timing`：`OPEN_T` 從讀檔開始，`loadDoc` 記錄讀取 PDF、頁面大小，`pageDrawn` 記錄第一個畫好的頁）、頁面在背景或視窗畫、內建 JPEG 解碼的張數，以及前 60 頁每張圖（`pageImagesInfo`：pdf-lib 讀 XObject，表單裡的也看）的格式、像素、檔案中的大小、那一頁畫了多久（`S.renderMs`）。JPEG 2000、JBIG2／CCITT、超過 5,000 萬像素時附說明。〔複製文字〕把整份報告複製成文字。
 - 第一個頁面超過 4 秒（`SLOW_OPEN`）才顯示時提示一次，指向檔案資訊。`timing`、`renderMs` 是每個分頁自己的（`DOC_KEYS`）。
+- 審查後：開始時間跟著這次開啟傳下去（`openPath` → `openFile` → `openInNewTab` → `loadDoc` 的 `t0`，等待列印視窗或修改的時間不算），不再用全域變數；還沒畫出頁面就切到別的分頁時記為「沒有記錄」（`stashActive`）；每頁的時間是 worker 回報的這一頁本身畫的時間（`ms`），另記背景讀取 PDF 的時間（`docMs`）；只記第一次畫的時間，編輯後依 `matchPages` 對到新頁碼；讀不到圖片資訊時仍顯示時間；整理時顯示忙碌、換了分頁或有別的視窗就不開；最多列 200 張。
 - 測試：`file-info.mjs`。
-- 測試：`open-word.mjs`（主程式的 word:open 換成假的 Word）、`word-main.mjs`（wordToPdf 的流程）。在真的 Windows＋Word 上還沒有實測。
 
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。

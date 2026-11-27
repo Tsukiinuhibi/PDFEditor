@@ -44,8 +44,9 @@ const body = await Ev(() => document.querySelector('#mask').classList.contains('
 check('the window 檔案資訊 opens', !!body && body.title === '檔案資訊', body && body.title);
 const t = body ? body.text : '';
 check('it names the file, its size and its pages', /資訊測試\.pdf/.test(t) && /3 頁/.test(t) && /MB|KB/.test(t), t.slice(0, 300));
-check('how long opening took, step by step (reading the PDF, the first page drawn), in seconds', /讀取 PDF/.test(t) && /顯示出第一個頁面/.test(t) && /\d+(\.\d+)? 秒/.test(t), t.slice(0, 500));
+check('how long opening took, step by step (reading the file, the PDF\'s structure, the first page shown), in seconds', /從磁碟讀取檔案/.test(t) && /解析 PDF 結構/.test(t) && /顯示出第一個頁面/.test(t) && /\d+(\.\d+)? 秒/.test(t), t.slice(0, 500));
 check('where pages are drawn (in the background)', /背景/.test(t), t);
+check('(review) the first page: its own drawing time and the background\'s reading of the PDF, apart', /第 1 頁本身畫了 \d/.test(t) && /背景讀取 PDF \d/.test(t), t);
 check('page 1\'s picture: JPEG, 1200 × 800', /第 1 頁[\s\S]{0,40}JPEG[\s\S]{0,60}1200 × 800/.test(t), t);
 check('page 2\'s picture inside a form: Flate (無失真壓縮), 300 × 200', /第 2 頁[\s\S]{0,40}無失真壓縮[\s\S]{0,60}300 × 200/.test(t), t);
 check('a JPEG 2000 explanation only when there is one (none here)', !/JPEG 2000/.test(t), t);
@@ -61,6 +62,22 @@ await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webC
 await win.waitForTimeout(3500);
 { const toasts = await Ev(() => [...document.querySelectorAll('.toast')].map(x => x.textContent));
   check('a first page that took long: a note says so and points to 開啟 ▾ → 檔案資訊', toasts.some(x => /檔案資訊/.test(x) && /秒/.test(x)), toasts); }
+
+// (review) a file already open, opened again (only its tab shown), then another file a while later: its times are its own
+await Ev(() => window.__pdfapp.slowOpenAfter(4000));
+await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), file);
+await win.waitForTimeout(5000);
+await Ev(() => { window.__pdfapp.actions.sample(); }); await win.waitForTimeout(3500);
+{ const toasts = await Ev(() => [...document.querySelectorAll('.toast')].map(x => x.textContent));
+  await Ev(() => { window.__pdfapp.actions.fileInfo(); }); await win.waitForTimeout(2000);
+  const tx = await Ev(() => document.querySelector('#modal .mb').innerText), m = /從磁碟讀取檔案\s*([\d.]+) 秒/.exec(tx);
+  check('(review) a file already open opened again, then another file 5 s later: no 「slow」 note, its reading time its own (< 2 s)', !toasts.some(x => /檔案資訊/.test(x)) && !!m && +m[1] < 2, {toasts, read:m && m[1]});
+  await win.keyboard.press('Escape'); await win.waitForTimeout(300); }
+// (review) the pictures cannot be read (a file pdf-lib cannot parse): the window still shows the times
+await Ev(() => window.__pdfapp.breakGeo());
+await Ev(() => { window.__pdfapp.actions.fileInfo(); }); await win.waitForTimeout(2000);
+{ const tx = await Ev(() => document.querySelector('#mask').classList.contains('show') ? document.querySelector('#modal .mb').innerText : null);
+  check('(review) pictures that cannot be read: the window still opens, with the times and a line saying so', !!tx && /顯示出第一個頁面/.test(tx) && /無法讀取/.test(tx), tx); }
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 await app.evaluate(({app}) => app.exit(0)).catch(() => {});

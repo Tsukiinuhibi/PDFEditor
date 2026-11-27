@@ -34,11 +34,13 @@ const tasks = new Map();     // request id → render task
 const pending = new Set();   // render ids asked for and not answered yet
 const cancelled = new Set(); // of those, the ones cancelled before their drawing began
 const yieldNow = () => new Promise(r => setTimeout(r, 0));   // (lets a 取消 that is waiting be read)
+const loadMs = new Map();    // version → how long reading it took here (檔案資訊)
 function loadDoc(ver, bytes){
+  const t0 = performance.now();
   const p = pdfjs.getDocument({...opts, data:bytes, useWorkerFetch:true, ownerDocument, CanvasFactory:OffCanvasFactory, FilterFactory:NoFilterFactory, isOffscreenCanvasSupported:true}).promise;
-  p.catch(() => {});
+  p.then(() => loadMs.set(ver, performance.now() - t0), () => {});
   docs.set(ver, p);
-  while (docs.size > 3) { const [old, op] = docs.entries().next().value; docs.delete(old); op.then(d => d.destroy(), () => {}); for (const k of [...boxes.keys()]) if (k.startsWith(old + ':')) boxes.delete(k); }
+  while (docs.size > 3) { const [old, op] = docs.entries().next().value; docs.delete(old); loadMs.delete(old); op.then(d => d.destroy(), () => {}); for (const k of [...boxes.keys()]) if (k.startsWith(old + ':')) boxes.delete(k); }
   return p;
 }
 async function pageOf(ver, i){
@@ -65,7 +67,7 @@ self.addEventListener('message', async e => {
       const page = await pageOf(m.ver, m.i), vp = page.getViewport({scale:m.scale});
       stop();
       const canvas = new OffscreenCanvas(Math.max(1, Math.floor(vp.width)), Math.max(1, Math.floor(vp.height)));
-      const f0 = filterUses;
+      const f0 = filterUses, t0 = performance.now();
       const task = page.render({canvasContext:canvas.getContext('2d'), viewport:vp, annotationMode:m.annotationMode});
       task.onContinue = next => setTimeout(next, 0);   // (each slice of the drawing lets a 取消 in: no window here, so pdf.js would not wait)
       // the operator list it is drawn from (pdf.js keeps it on the page's state for this drawing): where the pictures are
@@ -76,7 +78,7 @@ self.addEventListener('message', async e => {
       let bx = boxes.get(m.ver + ':' + m.i), fromRender = false;
       if (!bx) { try { const ops = state && state.operatorList; if (ops && ops.fnArray && ops.lastChunk !== false) { boxes.set(m.ver + ':' + m.i, bx = boxesOf(page, ops, true)); fromRender = true; } } catch (_) {} }
       const bmp = canvas.transferToImageBitmap();
-      reply({type:'page', id:m.id, ok:true, bmp, boxes:bx || null, fromRender}, [bmp]);
+      reply({type:'page', id:m.id, ok:true, bmp, boxes:bx || null, fromRender, ms:performance.now() - t0, docMs:loadMs.get(m.ver)}, [bmp]);   // (ms: this page's own drawing)
     } catch (err) {
       reply({type:'page', id:m.id, ok:false, cancelled:!!(err && err.name === 'RenderingCancelledException'), err:String(err && err.message || err)});
     } finally { pending.delete(m.id); cancelled.delete(m.id); }
