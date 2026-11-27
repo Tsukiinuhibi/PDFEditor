@@ -553,6 +553,12 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 審查後：開始時間跟著這次開啟傳下去（`openPath` → `openFile` → `openInNewTab` → `loadDoc` 的 `t0`，等待列印視窗或修改的時間不算），不再用全域變數；還沒畫出頁面就切到別的分頁時記為「沒有記錄」（`stashActive`）；每頁的時間是 worker 回報的這一頁本身畫的時間（`ms`），另記背景讀取 PDF 的時間（`docMs`）；只記第一次畫的時間，編輯後依 `matchPages` 對到新頁碼；讀不到圖片資訊時仍顯示時間；整理時顯示忙碌、換了分頁或有別的視窗就不開；最多列 200 張。
 - 測試：`file-info.mjs`。
 
+### 3.9.38 大檔讀取更快、記憶體更省（v4.14.1）
+- 使用者的檔案（檔案資訊回報）：430 MB、1 頁、疊了 9 張以上 4961 × 3508 的 Flate 圖片；從磁碟讀取 18.2 秒、這頁畫了 29.9 秒。
+- 讀檔不再經 ipc 訊息複製（600 MB 要 10 秒）：`file:url` 給一個一次性的 `app://bundle/__file/<token>/…`，`protocol.handle('app')` 用 `net.fetch(file://)` 串流，視窗 `fetch` 讀進來（`readLocal`；失敗才用 `file:read`，錯誤訊息照舊）。`openPath` 與 Claude 的開檔直接把位元組交給 `openFile({name, bytes})`，不再包成 File 再讀出（兩次複製）。
+- 視窗的 pdf.js 不再拿整份複本：`rangeSource` 用 `PDFDataRangeTransport` 只給它要的段落（`disableAutoFetch`）；頁面與圖片在 render worker 畫，視窗只讀文字、註解、頁面大小、字型。
+- 量測（600 MB 類似檔案）：從磁碟讀取 5.8 → 2.5 秒、解析 0.57 → 0.1 秒；畫這頁約 8 秒（13 張大圖的解碼，檔案本身的成本）。
+
 ### 3.10 其他
 - 工具列（v1.0.23）：同一類的動作用 `ACTION_MENUS`（輸出、加頁、旋轉、簽署）做成分段按鈕：按鈕本體執行上次用過的那一項（`LAST_ACT`，存 `pdfeditor.lastact.v1`），▾ 列出全部。顯示模式、頁面色彩、按鍵、軟體更新都在 `openSettings(tab)` 的設定視窗裡（`actions.themeMenu／keySettings／checkUpdate` 都導到對應的頁）；按鍵頁是 `keyEditor()`，修改後立即存檔。「只顯示圖示」存在 `pdfeditor.ribbon.v1`，加上 `#ribbon.icons-only`。工具列超出寬度時滾輪會左右捲動。新增工具列按鈕時，盡量放進現有的分段按鈕，不要讓工具列再變長。
 - 檢視列（v1.0.25）：`#viewbar` 的項目不會被壓縮（`flex-shrink:0`）。`fitViewbar()`（ResizeObserver）在放不下時依序加上 `c1`～`c5`：拿掉「縮放」「檢視」小標籤、縮放按鈕只留圖示、檢視模式只留圖示（「封面單獨」→「封面」）、輔助工具與圖層只留圖示、縮小間距；還是放不下就用滾輪左右捲動（`wheelSideways`，和上方工具列共用）。按鈕文字包在 `<span class="vt">` 裡，新增按鈕時也要這樣包。

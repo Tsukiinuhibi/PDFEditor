@@ -1536,13 +1536,21 @@ function showTabList(btn){
   };
 }
 
+// the window's pdf.js reads only the parts of the document it needs (text, annotations, page sizes, fonts), each asked for
+// from these bytes — not a whole copy of the file: the pages and their pictures are drawn in the render worker
+let RANGE_BYTES = 0;   // (tests) how much it asked for
+function rangeSource(bytes){
+  const tr = new pdfjsLib.PDFDataRangeTransport(bytes.length, null);
+  tr.requestDataRange = (begin, end) => { const b = bytes.slice(begin, end); RANGE_BYTES += b.length; Promise.resolve().then(() => tr.onDataRange(begin, b)); };
+  return {range:tr, length:bytes.length, disableAutoFetch:true, disableStream:true, rangeChunkSize:1 << 18};
+}
 async function loadDoc(bytes, {name, keepView = false, scrollToCurrent = false, t0 = null} = {}){
   let anchorOffset = 0;
   if (keepView && S.pos[S.current]) anchorOffset = viewer.scrollTop - S.pos[S.current].y;
   S.st.forEach(st => st && st.task && st.task.cancel());
   const old = S.pdf, prev = keepView ? {els:S.els, pages:S.pages} : null;
   const T = keepView ? null : {t0:t0 ?? performance.now(), load:performance.now(), first:null};
-  const pdf = await pdfjsLib.getDocument({...PDF_OPTS, data:bytes.slice()}).promise;
+  const pdf = await pdfjsLib.getDocument({...PDF_OPTS, ...rangeSource(bytes)}).promise;
   if (T) T.parsed = performance.now();
   const pages = [];
   for (let i = 1; i <= pdf.numPages; i++) {
@@ -1738,7 +1746,7 @@ async function openFile(file, handle = null, {rethrow = false, said = '', t0 = n
   busy(true, '開啟中…');
   try {
     const start = (t0 ?? w0) + (performance.now() - w0);   // (the waits above left out)
-    const bytes = new Uint8Array(await file.arrayBuffer());
+    const bytes = file.bytes instanceof Uint8Array ? file.bytes : new Uint8Array(await file.arrayBuffer());
     await openInNewTab(bytes, file.name, handle, {t0:start});
     toast(said || '已開啟 ' + file.name + '（修改不會動到原檔，完成後請另存新檔）', said ? 'long' : undefined);
   } catch (e) {
@@ -3948,19 +3956,31 @@ const canPick = () => !!DESK || typeof window.showOpenFilePicker === 'function';
 function desktopHandle(p, name){
   return {kind:'file', name, path:p,
     queryPermission: async () => 'granted', requestPermission: async () => 'granted',
-    getFile: async () => { const r = await DESK.readFile(p); return new File([r.data], r.name, {type:'application/pdf'}); },
+    getFile: async () => { const r = await readLocal(p); return new File([r.data], r.name, {type:'application/pdf'}); },
     createWritable: async () => { const parts = []; return {
       write: async b => { parts.push(b); },
       close: async () => { await DESK.writeFile(p, new Uint8Array(await new Blob(parts).arrayBuffer())); },
     }; },
   };
 }
+// a file from the disk: fetched as a stream (file:url), else through the main process (file:read: its error tells why)
+let READ_WAY = '';
+async function readLocal(p, opts){
+  if (DESK.fileUrl) {
+    try {
+      const u = await DESK.fileUrl(p, opts), res = u && await fetch(u);
+      if (res && res.ok) { const data = new Uint8Array(await res.arrayBuffer()); READ_WAY = 'stream'; return {name:String(p).split(/[\\/]/).pop(), path:p, data}; }
+    } catch (_) {}
+  }
+  READ_WAY = 'ipc';
+  return DESK.readFile(p, opts);
+}
 async function openPath(p){
   if (WORD_EXT.test(p)) return openWordPath(p);
   const t0 = performance.now();   // (檔案資訊: reading the file from disk counts)
   try {
-    const r = await DESK.readFile(p);
-    await openFile(new File([r.data], r.name, {type:'application/pdf'}), desktopHandle(p, r.name), {t0});
+    const r = await readLocal(p);
+    await openFile({name:r.name, bytes:r.data}, desktopHandle(p, r.name), {t0});   // (the bytes as they are: not copied into a File and back)
   } catch (e) { toast('無法開啟檔案：' + (e.message || e), 'err'); }
 }
 // 開啟 Word 檔: Word on this computer turns the file into a PDF (main.js word:open → word.js wordToPdf), which opens in a
@@ -12748,8 +12768,8 @@ Object.assign(CLAUDE_TOOLS, {
       throw new Error('請給 PDF 檔在這台電腦上的完整路徑（例如 C:\\Users\\名字\\Documents\\檔案.pdf），不接受網路位置或相對路徑（收到：' + p + '）');
     if (!DESK) throw new Error('這個版本不能開啟電腦裡的檔案');
     if (/^[A-Za-z]:[\\/]/.test(p)) p = p.replace(/\//g, '\\');   // (C:/a.pdf is C:\a.pdf)
-    let r; try { r = await DESK.readFile(p, {quiet:true}); } catch (_) { throw new Error('讀不到這個檔案：' + p); }
-    try { await openFile(new File([r.data], r.name, {type:'application/pdf'}), desktopHandle(p, r.name), {rethrow:true}); }
+    let r; try { r = await readLocal(p, {quiet:true}); } catch (_) { throw new Error('讀不到這個檔案：' + p); }
+    try { await openFile({name:r.name, bytes:r.data}, desktopHandle(p, r.name), {rethrow:true}); }
     catch (e) { throw new Error(e && e.name === 'PasswordException' ? '這個 PDF 需要密碼才能開啟，PDF 工作台目前不支援：' + p : '這個檔案打不開（可能不是 PDF，或檔案已損壞）：' + p); }
     if (!S.pdf || !S.handle || !samePath(S.handle.path, p)) throw new Error('這個檔案打不開（可能不是 PDF，或檔案已損壞）：' + p);
     return {text:`已開啟「${r.name}」（${S.pages.length} 頁），它現在是目前的文件。`};
@@ -13557,7 +13577,7 @@ window.__pdfapp = {
       groups:[...p.querySelectorAll('.fi-img .fi-grp')].map(g => ({title:(g.querySelector('.fi-h') || {}).textContent || '', rows:[...g.querySelectorAll('.fi-row')].map(row)}))}; },
   fontIdGoogle:(fn, {timeout = 8000, deadline = 12000} = {}) => { FONTID.fetchCss = fn || null; FONTID.timeout = timeout; FONTID.deadline = deadline; },
   fontIdRecent:() => FONTID.recent.map(r => ({...r})),
-  slowOpenAfter:ms => { SLOW_OPEN = ms; }, breakGeo:() => { GEO_DOC = {bytes:S.bytes, p:Promise.reject(new Error('test'))}; GEO_DOC.p.catch(() => {}); },
+  slowOpenAfter:ms => { SLOW_OPEN = ms; }, readWay:() => READ_WAY, rangeBytes:() => RANGE_BYTES, breakGeo:() => { GEO_DOC = {bytes:S.bytes, p:Promise.reject(new Error('test'))}; GEO_DOC.p.catch(() => {}); },
   rw:{stats:() => ({...RW.stats, worker:RW.ok && !!RW.w}), fail:why => rwFail(why || 'test'), probe:rwProbe}, detectImages,
   S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box, tidyOcr, denoiseCanvas,
   fontCat:() => ({ok:FONTCAT.ok, fams:FONTCAT.fams.map(f => ({...f}))}), fontLoad:loadFontCatalog,

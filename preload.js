@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('desktop', {
   info: () => ipcRenderer.invoke('app:info'),
   openDialog: () => ipcRenderer.invoke('file:open-dialog'),
   readFile: (p, opts) => ipcRenderer.invoke('file:read', p, opts),
+  fileUrl: (p, opts) => ipcRenderer.invoke('file:url', p, opts),
   decryptPdf: bytes => ipcRenderer.invoke('pdf:decrypt', bytes),
   writeFile: (p, data) => ipcRenderer.invoke('file:write', p, data),
   saveAs: (name, data, opts) => ipcRenderer.invoke('file:save-as', name, data, opts),

@@ -137,6 +137,16 @@ function safeName(n) {
   return s.slice(0, 200);
 }
 
+// a file read straight into the window: a one-time address (app://bundle/__file/<token>/…) the window fetches as a
+// stream — a large file copied through ipc messages is slow (600 MB: 10 s). Good for one read within a minute.
+const fileTokens = new Map();
+ipcMain.handle('file:url', (_e, p, opts) => {
+  if (typeof p !== 'string' || !p) return null;
+  if (!(opts && opts.quiet)) allowDir(path.dirname(p));
+  const t = require('crypto').randomBytes(16).toString('hex');
+  fileTokens.set(t, p); setTimeout(() => fileTokens.delete(t), 60000);
+  return `app://bundle/__file/${t}/${encodeURIComponent(path.basename(p))}`;
+});
 ipcMain.handle('file:read', async (_e, p, opts) => {
   if (!(opts && opts.quiet)) allowDir(path.dirname(p));   // (quiet: a file Claude asked for; its folder is not added)
   const data = await fs.readFile(p);
@@ -499,6 +509,12 @@ app.whenReady().then(async () => {
   protocol.handle('app', req => {
     const { host, pathname } = new URL(req.url);
     if (host !== 'bundle') return new Response('not found', { status: 404 });
+    const tok = /^\/__file\/([0-9a-f]{32})\//.exec(pathname);
+    if (tok) {   // (file:url) the file asked for, once
+      const p = fileTokens.get(tok[1]); fileTokens.delete(tok[1]);
+      if (!p) return new Response('gone', { status: 410 });
+      return net.fetch(pathToFileURL(p).toString()).catch(err => new Response(String(err && err.message || err), { status: 404 }));
+    }
     const rel = decodeURIComponent(pathname);
     const full = path.normalize(path.join(root, rel));
     if (!full.startsWith(root)) return new Response('forbidden', { status: 403 });

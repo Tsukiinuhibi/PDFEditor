@@ -34,6 +34,14 @@ await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webC
 await win.waitForFunction(() => window.__pdfapp.S.name === '資訊測試.pdf' && !!document.querySelector('.page[data-i="0"] canvas.pc'), null, {timeout:30000});
 await win.waitForTimeout(2000);
 
+// (v4.14.1) a file from the disk is read straight into the window (a stream), not copied through the main process's
+// messages (600 MB took 10 s that way); a file that is not there says so
+check('(v4.14.1) the file was read as a stream', await Ev(() => window.__pdfapp.readWay()) === 'stream', await Ev(() => window.__pdfapp.readWay()));
+await app.evaluate(({BrowserWindow}, p) => BrowserWindow.getAllWindows()[0].webContents.send('open-path', p), path.join(TMP, '沒有這個檔案.pdf'));
+await win.waitForTimeout(2000);
+{ const toasts = await Ev(() => [...document.querySelectorAll('.toast')].map(x => x.textContent)), tabs = await Ev(() => document.querySelectorAll('.dtab').length);
+  check('(v4.14.1) a file that is not there: said so, nothing opened', toasts.some(x => /無法開啟/.test(x)) && tabs === 2, {toasts, tabs}); }
+
 // 開啟 ▾ lists 檔案資訊
 await Ev(() => document.querySelector('[data-amenu="openm"] .sp-arr').click()); await win.waitForTimeout(300);
 const item = await Ev(() => { const b = [...document.querySelectorAll('#toolMenu *')].find(x => /檔案資訊/.test(x.textContent) && x.children.length <= 3 && x.closest('[data-a],[data-act],[data-i],button,div')); return b ? b.textContent.trim() : null; });

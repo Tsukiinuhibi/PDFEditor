@@ -57,6 +57,10 @@ const stats = () => Ev(() => window.__pdfapp.rw && window.__pdfapp.rw.stats());
 const px = (i, fx, fy) => Ev(([i, fx, fy]) => { const c = document.querySelector(`.page[data-i="${i}"] canvas.pc`); if (!c) return null; const d = c.getContext('2d').getImageData(Math.floor(c.width * fx), Math.floor(c.height * fy), 1, 1).data; return [d[0], d[1], d[2]]; }, [i, fx, fy]);
 const red = c => !!c && c[0] > 200 && c[1] < 60 && c[2] < 60, blue = c => !!c && c[2] > 200 && c[0] < 60 && c[1] < 60;
 
+// (v4.14.1) the window's pdf.js reads only the parts it needs (the pictures are drawn in the worker): no whole copy of
+// the file there
+{ const r = await Ev(() => ({read:window.__pdfapp.rangeBytes(), size:window.__pdfapp.S.bytes.length}));
+  check('(v4.14.1) the window\'s pdf.js read only parts of the file (less than half), not a whole copy', r.read > 0 && r.read < r.size * .5, r); }
 // ---- drawn in the worker ----------------------------------------------------------------------------------------------
 { const s = await stats(); check('pages are drawn in the background (the worker), none on the window\'s own thread', !!s && s.worker && s.pages >= 1 && s.main === 0, s); }
 { const l = await px(0, .3, .5), r = await px(0, .7, .5);
