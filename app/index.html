@@ -6479,7 +6479,7 @@ async function pageTextEdit(i, items, src = null){
   const sizes = items.map(t => t.fs).sort((a, b) => a - b), size = Math.round(sizes[sizes.length >> 1] * 10) / 10;
   // each piece in the font it was written in: bold / italic from that font's name, and the installed family it stands
   // for when that may be embedded and can be read (else 思源黑體)
-  await loadFontCatalog();
+  await loadFontCatalog(); await pageFontsLoaded(i);
   const styles = new Map(), styleOf = async key => {
     if (!styles.has(key)) styles.set(key, (async () => {
       let name = '', flags = '';
@@ -6540,11 +6540,19 @@ function googleByName(name){
 // the fonts of the PDF's own text in box, most characters first: {fonts:[{key, name, chars, embedded, generic,
 // local:{family, label, alias}|null, google}], hidden}. An OCR program's invisible text layer (GlyphLessFont) is only
 // counted in hidden: what shows there is the scanned picture
+// the page's fonts known to the window's pdf.js (commonObjs: their names, bold, italic, data): pages are drawn in the
+// render worker, so they are loaded here only when something reads them (修改原文, 字型辨識); once per version
+const PAGE_FONTS = new Map();
+function pageFontsLoaded(i){
+  const pg = S.pages[i], key = S.version + ':' + i; if (!pg) return Promise.resolve();
+  if (!PAGE_FONTS.has(key)) { if (PAGE_FONTS.size > 200) PAGE_FONTS.clear(); PAGE_FONTS.set(key, pg.page.getOperatorList({annotationMode:pdfjsLib.AnnotationMode.DISABLE}).then(() => {}, () => {})); }
+  return PAGE_FONTS.get(key);
+}
 async function pdfFontsIn(i, box){
   const pg = S.pages[i], count = new Map(); let hidden = 0;
   for (const t of await pickTextIn(i, box)) { const n = [...t.str.replace(/\s/g, '')].length; if (n) count.set(t.font, (count.get(t.font) || 0) + n); }
   if (!count.size) return {fonts:[], hidden:0};
-  await loadFontCatalog();
+  await loadFontCatalog(); await pageFontsLoaded(i);
   const byName = new Map();
   for (const [key, chars] of count) {
     let f = null; try { f = pg.page.commonObjs.has(key) ? pg.page.commonObjs.get(key) : null; } catch (_) {}
