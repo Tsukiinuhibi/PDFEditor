@@ -529,6 +529,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
   - `Documents.Open` 加上 `NoEncodingDialog`（第 15 個參數，中間用 `[Type]::Missing`），不會卡在選編碼的視窗；錯誤另外印出最內層的 HResult，`800A1520`（Word 5408：密碼錯誤）不論 Word 是什麼語言都認得。
   - 拖進不在磁碟上的 Word 檔（郵件附件）會提示先存到電腦；從 X.docx 開的分頁轉存 Word 時建議 `X_轉存.docx`；程式啟動時清掉超過一小時的暫存資料夾。
 - v4.12.1：使用者電腦上 `Documents.Open` 的 15 個位置參數（中間 `[Type]::Missing`）失敗：「無法將 "bool" 類型的 "True" 值轉換成 "Object" 類型」。兩個腳本（`WORD_PS`、`WORD_PDF_PS`）改用共用的 `psHelpers`：`Open-WordDoc` 先以參數名稱經 IDispatch 呼叫（`InvokeMember('Open', …, $names)`），只有在這種呼叫本身失敗（不是 Word 回報的 800A… 錯誤，`Test-WordError`）時才改用簡短的位置參數；`Close-WordDoc`、`Quit-Word` 同樣有不帶參數的備援；匯出 PDF 時 `ExportAsFixedFormat` 呼叫失敗就改用 `SaveAs2(…, 17)`。
+- 測試：`open-word.mjs`（主程式的 word:open 換成假的 Word）、`word-main.mjs`（wordToPdf 的流程）。在真的 Windows＋Word 上還沒有實測。
 
 ### 3.9.36 大型檔案不卡頓（v4.13.0）
 - 頁面在背景畫：`app/render-worker.mjs` 是一個 Web Worker，裡面跑 pdf.js（解析也在同一個執行緒，`pdf-worker.mjs` 被 import 後 pdf.js 用「fake worker」），用 OffscreenCanvas 畫頁面，回傳 ImageBitmap（轉移，不複製）。主畫面（`renderPage`）與縮圖（`buildThumbs`）都經 `rwRender`；回來的圖用 `bitmapCanvas` 畫進一般的 2D canvas，其他程式（`canvas.pc` 取色、快照、文字辨識）照舊可以讀。縮圖等頁面畫完才畫（`rwPagesIdle`）。
@@ -546,7 +547,6 @@ npm start          # 開啟程式（開發模式不會檢查更新）
   - 文件複本用轉移送；編輯前的版本與關掉分頁的版本會 `drop`。`stripExif` 只看「Exif\0」。
 - 測試：`smooth-render.mjs`（Exif 方向、原生解碼、背景畫頁面與縮圖、重的頁不卡、圖片位置、編輯後重畫、worker 失敗改回、柔和遮罩、沒內嵌字型的中文、取消）。
 
-- 測試：`open-word.mjs`（主程式的 word:open 換成假的 Word）、`word-main.mjs`（wordToPdf 的流程）。在真的 Windows＋Word 上還沒有實測。
 ### 3.9.37 檔案資訊（v4.14.0）
 - 〔開啟 ▾〕→〔檔案資訊〕（`showFileInfo`）：使用者不必把檔案傳出來，就能看出為什麼開得慢。列出開啟每一步的時間（`S.timing`：`OPEN_T` 從讀檔開始，`loadDoc` 記錄讀取 PDF、頁面大小，`pageDrawn` 記錄第一個畫好的頁）、頁面在背景或視窗畫、內建 JPEG 解碼的張數，以及前 60 頁每張圖（`pageImagesInfo`：pdf-lib 讀 XObject，表單裡的也看）的格式、像素、檔案中的大小、那一頁畫了多久（`S.renderMs`）。JPEG 2000、JBIG2／CCITT、超過 5,000 萬像素時附說明。〔複製文字〕把整份報告複製成文字。
 - 第一個頁面超過 4 秒（`SLOW_OPEN`）才顯示時提示一次，指向檔案資訊。`timing`、`renderMs` 是每個分頁自己的（`DOC_KEYS`）。
