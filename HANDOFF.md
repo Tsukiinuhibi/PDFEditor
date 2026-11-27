@@ -545,6 +545,11 @@ npm start          # 開啟程式（開發模式不會檢查更新）
   - 兩分鐘沒回應就不用 worker（`RW_LIMIT`）；worker 裡沒接住的錯誤送 `fatal`。
   - 文件複本用轉移送；編輯前的版本與關掉分頁的版本會 `drop`。`stripExif` 只看「Exif\0」。
 - 測試：`smooth-render.mjs`（Exif 方向、原生解碼、背景畫頁面與縮圖、重的頁不卡、圖片位置、編輯後重畫、worker 失敗改回、柔和遮罩、沒內嵌字型的中文、取消）。
+
+### 3.9.37 檔案資訊（v4.14.0）
+- 〔開啟 ▾〕→〔檔案資訊〕（`showFileInfo`）：使用者不必把檔案傳出來，就能看出為什麼開得慢。列出開啟每一步的時間（`S.timing`：`OPEN_T` 從讀檔開始，`loadDoc` 記錄讀取 PDF、頁面大小，`pageDrawn` 記錄第一個畫好的頁）、頁面在背景或視窗畫、內建 JPEG 解碼的張數，以及前 60 頁每張圖（`pageImagesInfo`：pdf-lib 讀 XObject，表單裡的也看）的格式、像素、檔案中的大小、那一頁畫了多久（`S.renderMs`）。JPEG 2000、JBIG2／CCITT、超過 5,000 萬像素時附說明。〔複製文字〕把整份報告複製成文字。
+- 第一個頁面超過 4 秒（`SLOW_OPEN`）才顯示時提示一次，指向檔案資訊。`timing`、`renderMs` 是每個分頁自己的（`DOC_KEYS`）。
+- 測試：`file-info.mjs`。
 - 測試：`open-word.mjs`（主程式的 word:open 換成假的 Word）、`word-main.mjs`（wordToPdf 的流程）。在真的 Windows＋Word 上還沒有實測。
 
 ### 3.10 其他

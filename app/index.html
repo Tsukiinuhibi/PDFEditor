@@ -1358,7 +1358,7 @@ async function saveFile(filename, data){
    Each open PDF is a document with its own pages, view, undo history and file handle.
    The active document's fields live on S; switching tabs stashes them and restores another set. */
 const DOC_KEYS = ['bytes', 'name', 'pdf', 'pages', 'scale', 'zoomMode', 'view', 'cover', 'current', 'undo', 'redo',
-  'dirty', 'signed', 'sigChecked', 'version', 'imgCache', 'annCache', 'linkCache', 'handle', 'thumbSel', 'guides', 'activeLayer', 'pageFilter', 'hasGroups'];
+  'dirty', 'signed', 'sigChecked', 'version', 'imgCache', 'annCache', 'linkCache', 'handle', 'thumbSel', 'guides', 'activeLayer', 'pageFilter', 'hasGroups', 'timing', 'renderMs'];
 const docs = [];
 let active = -1, docSeq = 0, VSEQ = 0;
 S.thumbSel = new Set();
@@ -1366,7 +1366,7 @@ const activeDoc = () => docs[active] || null;
 function blankDoc(){
   return {id:++docSeq, bytes:null, name:'', pdf:null, pages:[], scale:PX, zoomMode:'fit-width', view:S.view || 'continuous',
     cover:S.cover, current:0, undo:[], redo:[], dirty:false, signed:false, sigChecked:false, version:0, imgCache:new Map(), annCache:new Map(), linkCache:new Map(),
-    handle:null, thumbSel:new Set(), guides:{h:[], v:[]}, scrollTop:0, scrollLeft:0, activeLayer:null, pageFilter:'all', hasGroups:null};
+    handle:null, thumbSel:new Set(), guides:{h:[], v:[]}, scrollTop:0, scrollLeft:0, activeLayer:null, pageFilter:'all', hasGroups:null, timing:null, renderMs:null};
 }
 function stashActive(){
   const d = activeDoc(); if (!d) return;
@@ -1540,17 +1540,21 @@ async function loadDoc(bytes, {name, keepView = false, scrollToCurrent = false} 
   if (keepView && S.pos[S.current]) anchorOffset = viewer.scrollTop - S.pos[S.current].y;
   S.st.forEach(st => st && st.task && st.task.cancel());
   const old = S.pdf, prev = keepView ? {els:S.els, pages:S.pages} : null;
+  const T = keepView ? null : {t0:OPEN_T ? OPEN_T.t0 : performance.now(), load:performance.now(), first:null}; OPEN_T = null;
   const pdf = await pdfjsLib.getDocument({...PDF_OPTS, data:bytes.slice()}).promise;
+  if (T) T.parsed = performance.now();
   const pages = [];
   for (let i = 1; i <= pdf.numPages; i++) {
     const p = await pdf.getPage(i); const vp = p.getViewport({scale:1});
     pages.push({page:p, vp1:vp, w:vp.width, h:vp.height, rot:((p.rotate % 360) + 360) % 360});
   }
+  if (T) T.paged = performance.now();
   if (prev) { prev.map = matchPages(prev.pages, pages); prev.pre = await prerenderNew(pages, prev); }
   const verBefore = S.version;
   S.pdf = pdf; S.pages = pages; S.bytes = bytes; S.version = ++VSEQ;
   if (keepView && verBefore) setTimeout(() => rwDrop(verBefore), 3000);   // (the version before this edit: no longer drawn)
-  if (!keepView) { S.hasGroups = null; S.pageFilter = 'all'; }   // (an edit, undo or redo keeps both: only grouping and pasting make groups, and they say so)
+  if (!keepView) { S.hasGroups = null; S.pageFilter = 'all'; S.timing = T; S.renderMs = new Map(); }
+  else if (!S.renderMs) S.renderMs = new Map();   // (an edit, undo or redo keeps both: only grouping and pasting make groups, and they say so)
   else if (S.pageFilter && S.pageFilter !== 'all' && !shownPages().includes(S.current)) { const v = shownPages(); S.current = v.find(k => k > S.current) ?? v[v.length - 1]; }   // (pages added or taken away: a page shown)
   if (name) S.name = name;
   S.imgCache.clear(); S.annCache.clear(); S.linkCache.clear();
@@ -1625,10 +1629,81 @@ function mountDoc({scroll = 'current', anchorOffset = 0, scrollTop = 0, scrollLe
   }
 }
 
+/* 檔案資訊 (開啟 ▾): why a file is slow to open, told without sending it anywhere — how long each step of opening took,
+   where pages are drawn, and each picture on the pages (its kind, pixels, bytes; how long its page took to draw). A
+   file whose first page took long (SLOW_OPEN) says so once and points here. */
+let SLOW_OPEN = 4000;
+function pageDrawn(i, ms){
+  if (S.renderMs) S.renderMs.set(i, Math.max(ms, S.renderMs.get(i) || 0));
+  const T = S.timing; if (!T || T.first) return;
+  T.first = {i, at:performance.now() - T.t0, ms};
+  if (T.first.at > SLOW_OPEN) toast(`這份檔案花了 ${secs(T.first.at)} 秒才顯示出來。想知道原因，可以看〔開啟 ▾〕→〔檔案資訊〕`, 'long');
+}
+const secs = ms => (ms / 1000).toFixed(ms < 10000 ? 2 : 1);
+const IMG_KIND = {DCTDecode:'JPEG', JPXDecode:'JPEG 2000', FlateDecode:'無失真壓縮（Flate）', CCITTFaxDecode:'黑白傳真壓縮（CCITT）', JBIG2Decode:'黑白壓縮（JBIG2）', LZWDecode:'無失真壓縮（LZW）', RunLengthDecode:'簡單壓縮（RunLength）'};
+// the pictures on pages 1 … max (forms looked into): [{i, kind, filters, w, h, bytes, mask}]
+async function pageImagesInfo(max = 60){
+  const doc = await geoDoc(), ctx = doc.context, out = [], n = Math.min(doc.getPageCount(), max);
+  for (let i = 0; i < n; i++) {
+    const seen = new Set();
+    const walk = (res, depth) => {
+      const xo = res && depth < 6 && res.lookupMaybe(PDFName.of('XObject'), PDFDict); if (!xo) return;
+      for (const [, v] of xo.entries()) {
+        const key = v instanceof PDFRef ? v.toString() : null; if (key && seen.has(key)) continue; if (key) seen.add(key);
+        const obj = ctx.lookup(v), d = obj && obj.dict; if (!d) continue;
+        const st = String(d.get(PDFName.of('Subtype')) || '');
+        if (st === '/Form') { walk(d.lookupMaybe(PDFName.of('Resources'), PDFDict), depth + 1); continue; }
+        if (st !== '/Image') continue;
+        const f = d.lookup(PDFName.of('Filter')), filters = (f instanceof PDFArray ? f.asArray().map(x => ctx.lookup(x)) : f ? [f] : []).map(x => String(x).replace(/^\//, ''));
+        const main = filters.find(x => /DCT|JPX|JBIG2|CCITT/.test(x)) || filters[filters.length - 1];
+        const num = k => { const x = d.lookup(PDFName.of(k)); return x && x.asNumber ? x.asNumber() : 0; };
+        out.push({i, kind:main ? IMG_KIND[main] || main : '未壓縮', filters, w:num('Width'), h:num('Height'), bytes:obj.contents ? obj.contents.length : 0, mask:!!d.get(PDFName.of('SMask'))});
+      }
+    };
+    try { walk(doc.getPage(i).node.Resources(), 0); } catch (_) {}
+  }
+  return {list:out, scanned:n, pages:doc.getPageCount()};
+}
+const fmtBytes = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+async function fileInfoText(){
+  const T = S.timing, L = ['檔案資訊', `檔案：${S.name}（${fmtBytes(S.bytes.length)}，${S.pages.length} 頁）`];
+  if (T) {
+    L.push('開啟花的時間：');
+    L.push(`  讀取檔案　${secs(T.load - T.t0)} 秒`, `  讀取 PDF　${secs(T.parsed - T.load)} 秒`, `  讀取頁面大小　${secs(T.paged - T.parsed)} 秒`);
+    L.push(T.first ? `  顯示出第一個頁面　${secs(T.first.at)} 秒（從開始開啟算起；第 ${T.first.i + 1} 頁本身畫了 ${secs(T.first.ms)} 秒）` : '  顯示出第一個頁面　還沒畫好');
+  } else L.push('開啟花的時間：沒有記錄（這份檔案在這一版之前就開著了）');
+  L.push(`畫頁面：${RW.ok && RW.w ? '在背景畫（畫的時候視窗不會卡住）' : '在視窗裡畫' + (RW.stats.why ? `（背景畫圖沒有使用：${RW.stats.why}）` : '')}`);
+  if (RW.stats.native) L.push(`JPEG 用電腦內建的解碼器：${RW.stats.native} 張`);
+  const info = await pageImagesInfo();
+  L.push(info.list.length ? `圖片（第 1～${info.scanned} 頁${info.pages > info.scanned ? `，共 ${info.pages} 頁` : ''}）：` : `圖片：第 1～${info.scanned} 頁沒有圖片`);
+  for (const im of info.list) {
+    const ms = S.renderMs && S.renderMs.get(im.i);
+    L.push(`  第 ${im.i + 1} 頁：${im.kind}，${im.w} × ${im.h} 像素（${(im.w * im.h / 1e6).toFixed(1)} 百萬像素），檔案中 ${fmtBytes(im.bytes)}${im.mask ? '，含透明遮罩' : ''}；${ms != null ? `這頁畫了 ${secs(ms)} 秒` : '這頁還沒畫'}`);
+  }
+  const kinds = new Set(info.list.map(x => x.kind)), big = info.list.some(x => x.w * x.h > 50e6);
+  const notes = [];
+  if (kinds.has('JPEG 2000')) notes.push('圖片是 JPEG 2000 格式：電腦沒有內建這種格式的解碼器，只能用程式內的解碼器，大圖會比 JPEG 慢很多。');
+  if (kinds.has('黑白壓縮（JBIG2）') || kinds.has('黑白傳真壓縮（CCITT）')) notes.push('有黑白掃描的壓縮格式（JBIG2／CCITT）：解碼在程式內進行，大頁面會比較慢。');
+  if (big) notes.push('有超過 5,000 萬像素的圖片：顯示前要先把整張圖解出來，所需時間和電腦的處理器速度有關。');
+  if (notes.length) L.push('說明：', ...notes.map(x => '  ' + x));
+  return L.join('\n');
+}
+async function showFileInfo(){
+  if (!S.pdf) { toast('請先開啟檔案'); return; }
+  const text = await fileInfoText();
+  const body = document.createElement('div'); body.style.cssText = 'max-width:640px;white-space:pre-wrap;font-size:13px;line-height:1.6;user-select:text';
+  body.textContent = text.split('\n').slice(1).join('\n');
+  await openModal({title:'檔案資訊', body, buttons:[
+    {label:'複製文字', handler:async () => { try { await navigator.clipboard.writeText(text); toast('已複製檔案資訊，可以貼給我們看'); } catch (_) { toast('無法複製，請手動選取文字', 'err'); } return undefined; }},
+    {label:'關閉', value:null, primary:true}]});
+}
 // the same file: Windows paths ignore case and the slash's direction
 const samePath = (a, b) => !!a && !!b && (a === b || (/^[A-Za-z]:[\\/]/.test(a) && a.replace(/\//g, '\\').toLowerCase() === String(b).replace(/\//g, '\\').toLowerCase()));
+// 檔案資訊: when opening a file began (openPath: before it is read from disk; loadDoc takes it)
+var OPEN_T = null;
 async function openFile(file, handle = null, {rethrow = false, said = ''} = {}){
   if (!file) return;
+  if (!OPEN_T) OPEN_T = {t0:performance.now()};
   await whenIdle();   // (a file sent while a change is being made opens after it)
   if (PR || PRINTOPEN) {   // (the print window prints the document it was opened for: this one opens when it closes)
     toast(`關閉列印視窗後會開啟「${file.name || '檔案'}」`, 'long');
@@ -1948,6 +2023,7 @@ async function renderPage(i){
   const c = document.createElement('canvas'); c.className = 'pc';
   c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
   const here = () => { RW.here.has(ver + ':' + i) ? RW.stats.hereDrawn++ : RW.stats.main++; return pg.page.render({canvasContext:c.getContext('2d'), viewport:vp, annotationMode:pdfjsLib.AnnotationMode.ENABLE}); };
+  const tr = performance.now();
   let task = rwRender(i, rs) || here();
   st.task = task; st.taskScale = want;
   try {
@@ -1965,6 +2041,7 @@ async function renderPage(i){
   if (ver !== S.version) return;
   const el = S.els[i], oldC = el.querySelector('canvas.pc');
   if (oldC) { oldC.replaceWith(c); oldC.width = oldC.height = 0; } else el.insertBefore(c, el.firstChild);
+  pageDrawn(i, performance.now() - tr);
   const ld = el.querySelector('.ld'); if (ld) ld.remove();
   el.querySelectorAll('.hold').forEach(n => n.remove());   // what stood in for the edit until now
   st.rendered = want; st.ver = ver;
@@ -3856,6 +3933,7 @@ function desktopHandle(p, name){
 }
 async function openPath(p){
   if (WORD_EXT.test(p)) return openWordPath(p);
+  OPEN_T = {t0:performance.now()};
   try {
     const r = await DESK.readFile(p);
     await openFile(new File([r.data], r.name, {type:'application/pdf'}), desktopHandle(p, r.name));
@@ -4517,6 +4595,7 @@ const actions = {
   addPage(){ return openAddPage(); },
   themeMenu(){ return openSettings('look'); },
   settings(){ return openSettings(); },
+  fileInfo(){ return showFileInfo(); },
   aids(){ showAidsMenu(); },
   keySettings(){ return openSettings('keys'); },
   copyPages(){ return copySelected(false); },
@@ -7968,7 +8047,7 @@ document.addEventListener('pointerdown', e => { const m = $('#toolMenu'); if (m.
 /* buttons that gather a few related actions (加頁、旋轉、簽署): the main part repeats the one used last, ▾ lists them all */
 const ACTION_MENUS = {
   insert:[{tool:'image', ic:'insImg', label:'插入圖片', long:'插入圖片…（也可以把圖片檔拖到頁面上）'}, {tool:'link', ic:'link', label:'連結', long:'連結（網址、本文件的頁面、電子郵件）'}, {act:'imageUrl', ic:'web', label:'網址圖片', long:'從網址插入圖片…'}],   // (new items at the end: the last action is kept by its place)
-  openm:[{act:'open', ic:'open', label:'開啟', long:'開啟檔案…（Ctrl+O）'}, {act:'openUrl', ic:'web', label:'從網址', long:'從網址開啟…（Ctrl+Shift+O）'}],
+  openm:[{act:'open', ic:'open', label:'開啟', long:'開啟檔案…（Ctrl+O）'}, {act:'openUrl', ic:'web', label:'從網址', long:'從網址開啟…（Ctrl+Shift+O）'}, {act:'fileInfo', ic:'gear', label:'檔案資訊', long:'檔案資訊（開啟花的時間、圖片格式）…'}],
   output:[{act:'print', ic:'print', label:'列印', long:'列印…（Ctrl+P）'}, {act:'exportImages', ic:'toImage', label:'轉存圖片', long:'將頁面轉存成圖片…'}, {act:'exportWord', ic:'word', label:'轉存 Word', long:'轉存成可編輯的 Word 檔（.docx）…'}],
   pageAdd:[{act:'addPage', ic:'pageAdd', label:'加頁', long:'加入空白頁…'}, {act:'insertPdf', ic:'pageIns', label:'插入PDF', long:'從 PDF 插入頁面…'}],
   rotate:[{act:'rotL', ic:'rotL', label:'左轉', long:'向左轉 90°'}, {act:'rotR', ic:'rotR', label:'右轉', long:'向右轉 90°'}],
@@ -13454,6 +13533,7 @@ window.__pdfapp = {
       groups:[...p.querySelectorAll('.fi-img .fi-grp')].map(g => ({title:(g.querySelector('.fi-h') || {}).textContent || '', rows:[...g.querySelectorAll('.fi-row')].map(row)}))}; },
   fontIdGoogle:(fn, {timeout = 8000, deadline = 12000} = {}) => { FONTID.fetchCss = fn || null; FONTID.timeout = timeout; FONTID.deadline = deadline; },
   fontIdRecent:() => FONTID.recent.map(r => ({...r})),
+  slowOpenAfter:ms => { SLOW_OPEN = ms; },
   rw:{stats:() => ({...RW.stats, worker:RW.ok && !!RW.w}), fail:why => rwFail(why || 'test'), probe:rwProbe}, detectImages,
   S, setTool, renderForExport, renderRegion, setTheme, setPageColor, actions, scrollToPage, makeSample, pageChars:i => pageChars(i), getAnns, TBE:() => TBE && {i:TBE.i, html:TBE.el.innerHTML}, sel:() => AS && {id:AS.a.id, sub:AS.a.subtype, box:AS.box, rot:AS.rot || 0}, annRot, recolorShape, pdfeBlocks, applyTextFormat, textItems:i => pageTextItems(i), readRegion, ocrText:() => OCR.panel && OCR.panel.querySelector('.ocr-tx').value, ocrBox:() => OCR.box, tidyOcr, denoiseCanvas,
   fontCat:() => ({ok:FONTCAT.ok, fams:FONTCAT.fams.map(f => ({...f}))}), fontLoad:loadFontCatalog,
