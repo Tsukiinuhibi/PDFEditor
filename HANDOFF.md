@@ -1,6 +1,6 @@
 # PDF 工作台（PDFEditor）交接文件
 
-這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-16，最新發布版本是 **v4.12.1**。
+這份文件寫給接手開發的人或 Claude，讓你不必翻過去的對話就能繼續做。最後更新：2026-11-16，最新發布版本是 **v4.13.0**。
 
 ---
 
@@ -536,7 +536,7 @@ npm start          # 開啟程式（開發模式不會檢查更新）
 - 圖片位置（擷取圖片、`detectImages`）由 worker 從畫頁面用的運算清單算出（`imgboxes.mjs` 的 `imageBoxesOf`，`skipAnnotations` 跳過註解），同一張圖不再為了找位置再解碼一次；還沒畫過的頁用 `rwBoxes`。`imageBoxesOf`、`boxMeet`、`sameBox` 搬到 `app/imgboxes.mjs`，主程式 import。
 - JPEG 用瀏覽器內建的解碼器（約快五倍）：pdf.js 在 Chromium 預設不用，因為它會照 Exif 方向轉圖。`app/pdf-worker.mjs` 包住 `ImageDecoder`：先拿掉 Exif（`stripExif`）、`colorSpaceConversion:'none'`，再交給原生解碼器；它是 pdf.js 的 `workerSrc`，`PDF_OPTS.isImageDecoderSupported = true`。
 - worker 出錯（`rwFail`）就全部改回在視窗裡畫（原本的做法），單頁畫失敗也會改在視窗裡畫（`RW.stats.fallback`）。移動物件時的「底圖」（`renderUnder`）、編輯後先畫好的新頁（`prerenderNew`）、匯出、列印仍在視窗裡畫。
-- 量測（xvfb）：65 MB 單張照片首頁 10.3 秒 → 2.5 秒；30 頁 A0 向量圖首頁 7 秒 → 1.5 秒、捲動時視窗不再被卡住（原本 20 秒裡卡 20 秒）。
+- 量測（xvfb，審查修正後）：65 MB 單張照片首頁 10.3 秒 → 2.6 秒；30 頁 A0 向量圖首頁 7 秒 → 2.7 秒（每段讓出執行緒以便取消，比不讓出的 1.5 秒慢），捲動時視窗不再被卡住（原本 20 秒裡卡 20 秒）。修改原文、字型辨識要讀字型時才在視窗載入該頁字型（`pageFontsLoaded`）。
 - 審查後：
   - 需要 SVG 濾鏡的頁（柔和遮罩 SMask、轉換函數）worker 畫不對：`NoFilterFactory` 被叫到就回 `filters`，那一頁改在視窗畫並記在 `RW.here`（之後直接在視窗畫）。
   - worker 裡 pdf.js 沒有 rAF，一頁畫完前讀不到「取消」：`task.onContinue = next => setTimeout(next, 0)`，每個請求開始前也先讓出一次。
@@ -720,6 +720,7 @@ node tests/e2e/run.mjs layers         # 只跑檔名包含 layers 的腳本
 | 4.11.0 | 頁面符合圖片（`fitPageToBox`，見 3.9.34）|
 | 4.12.0 | 開啟 Word 檔（`openWordPath`、`wordToPdf`，見 3.9.35）|
 | 4.12.1 | Word 開檔改以參數名稱呼叫（`psHelpers`，見 3.9.35）|
+| 4.13.0 | 大型檔案不卡頓：背景畫頁面、內建 JPEG 解碼（見 3.9.36）|
 
 ---
 
